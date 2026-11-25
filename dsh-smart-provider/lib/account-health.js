@@ -75,10 +75,27 @@ const KIND_ALIASES = Object.freeze({
   UNKNOWN: 'UNKNOWN', EMPTY_RESPONSE: 'UNKNOWN', ABORTED: 'UNKNOWN',
 })
 
-/** Ledger failure_code -> FailureKind (used by rebuildFromLedger). */
+/**
+ * Ledger failure_code -> FailureKind (used by rebuildFromLedger).
+ *
+ * The adapter writes SYMBOLIC codes (QUOTA / AUTH / SERVER / UNKNOWN_MODEL ...),
+ * and those are the primary path. Older or third-party ledgers may instead have
+ * recorded the bare HTTP status; the §4 table maps those unambiguously, so cold
+ * rebuild stays faithful instead of degrading a known failure to UNKNOWN.
+ */
 export function kindFromLedgerCode(code) {
   if (code == null || code === '') return null
-  return KIND_ALIASES[String(code).toUpperCase()] ?? 'UNKNOWN'
+  const key = String(code).toUpperCase()
+  const aliased = KIND_ALIASES[key]
+  if (aliased) return aliased
+  if (/^\d{3}$/.test(key)) {
+    if (key === '402') return 'QUOTA'
+    if (key === '429') return 'RATE_LIMIT'
+    if (key === '401' || key === '403') return 'AUTH'
+    if (key === '404') return 'RENAMED'
+    if (key.startsWith('5')) return 'SERVER_JITTER'
+  }
+  return 'UNKNOWN'
 }
 
 /**

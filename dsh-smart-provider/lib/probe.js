@@ -25,7 +25,8 @@
  */
 
 import { appendFile, readFile, mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { join, dirname } from 'node:path'
+import { homedir } from 'node:os'
 import { updateHealth, registryKey } from './availability.js'
 
 /** Tiny, bounded probe request. One token is enough to observe cost/billing. */
@@ -35,8 +36,13 @@ const PROBE_MAX_TOKENS = 1
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 /** Hard cap on probes per call — never batch-probe hundreds of models. */
 const DEFAULT_MAX_PER_CALL = 3
-/** Default cache path, in the plugin's own data dir (never in user config). */
-const DEFAULT_CACHE_FILE = '/home/pt/.dsh/smart-provider/probe-cache.jsonl'
+/**
+ * Default cache path, in the plugin's own data dir (never in user config).
+ * Derived from the current user's home — the same convention cost-meter.js and
+ * cost-stats.js use. A literal home directory here would be another user's
+ * path and would make persist() fail with EACCES on every probe.
+ */
+const DEFAULT_CACHE_FILE = join(homedir(), '.dsh', 'smart-provider', 'probe-cache.jsonl')
 
 /** Load the persistent probe cache. Latest record per (provider,model) wins. */
 async function loadCache(file, warn) {

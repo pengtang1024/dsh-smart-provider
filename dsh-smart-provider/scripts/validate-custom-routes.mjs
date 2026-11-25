@@ -50,7 +50,8 @@ for (const r of doc.routes) {
 let existingProviderIds = []
 let existingModelsByRoute = new Map()
 try {
-  const patch = readFileSync(join(homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml'), 'utf8')
+  const profile = process.env.DSH_PROFILE || 'desktop'
+  const patch = readFileSync(join(homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml'), 'utf8')
   const marker = patch.indexOf('providers:')
   const tail = patch.slice(marker)
   const routeLineRe = /^ {6}([a-zA-Z0-9_.-]+):\s*$/gm

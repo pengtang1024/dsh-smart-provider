@@ -25,7 +25,10 @@ import {
 } from '../registry/registry-lib.mjs'
 
 const WRITE = process.argv.includes('--write')
-const CORDIS = join(homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml')
+// Resolve the profile the same way DSH itself does (DSH_PROFILE, default
+// 'desktop'), so this script also works for users on a non-desktop profile.
+const PROFILE = process.env.DSH_PROFILE || 'desktop'
+const CORDIS = join(homedir(), '.dsh', 'profiles', PROFILE, 'cordis.patch.yml')
 
 // Distinct marker texts — no one is a substring of another.
 const PM_B = '      # >>> custom-routes:providers >>>'
