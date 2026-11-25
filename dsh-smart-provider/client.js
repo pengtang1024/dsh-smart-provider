@@ -909,7 +909,23 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi }) {
+    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi, costService }) {
+      // Hero 数字 = DSH 运行时账号池的真实账号数（含自动派生），数据源与
+      // 成本 Tab 的健康面板同一个 smartProvider/accountHealth() 快照，避免两处
+      // 数字打架。config.accounts 只代表用户手动写入，未配置时恒为 0，不能冒充
+      // 运行时真实账号数；快照尚未读到时显示「正在读取」，不显示误导性的 0。
+      const [accountCount, setAccountCount] = useState(null)
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          const res = await costService?.accountHealth?.()
+          const value = res && res.ok ? res.value : null
+          if (!alive) return
+          setAccountCount(Array.isArray(value?.accounts) ? value.accounts.length : null)
+        }
+        void load()
+        return () => { alive = false }
+      }, [costService])
       const provOpts = providerOptions(pi)
       const modelOpts = modelOptions(pi)
       const configuredAccounts = arr(config?.accounts)
@@ -971,7 +987,12 @@ window.__ModuleLoader__.load({
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, t('accounts.plainTitle')),
           h('div', { style: S.heroText }, t('accounts.plainExplain')),
-          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, fmt(t, 'accounts.plainCount', { n: configuredAccounts.length })),
+          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } },
+            accountCount === null
+              ? t('accounts.countLoading')
+              : accountCount === 0
+                ? t('accounts.countEmpty')
+                : fmt(t, 'accounts.plainCount', { n: accountCount })),
         ),
         h('div', null,
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
@@ -1808,7 +1829,7 @@ window.__ModuleLoader__.load({
         presetNotice ? h('div', { style: S.ok }, presetNotice) : null,
         tab === 'overview' ? h(Overview, { t, localConfig: config, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe: runProbe, applyPreset, working }) : null,
         tab === 'chains' ? h(ChainsTab, { t, form, revision, mutate, config, pi }) : null,
-        tab === 'accounts' ? h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi }) : null,
+        tab === 'accounts' ? h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService }) : null,
         tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}` }) : null,
       )
     }
@@ -1877,7 +1898,9 @@ window.__ModuleLoader__.load({
       'chains.step': '{name}',
       'accounts.plainTitle': '账号（一般不用管）',
       'accounts.plainExplain': '会自动使用你已经在 DSH 里配置好的 API Key（比如 OpenCode Go、小米等），你不用在这里填任何密钥。',
-      'accounts.plainCount': '已手动配置 {n} 个账号（0 个时由路由链自动派生，无需手动填写）。',
+      'accounts.plainCount': '当前有 {n} 个账号（DSH 已配置的路由 + 路由链自动派生）。',
+      'accounts.countLoading': '正在读取账号池…',
+      'accounts.countEmpty': '尚未在 DSH 中配置任何 API Key，请先在 DSH 设置里添加。',
       'chains.hint': '每个键是一个外层模型，值是按顺序尝试的 {provider, model} 数组。保存后热更新生效。',
       'chains.defaultHint': '当前显示内置默认链（你还没配置 chains）。编辑后点保存即写入你的配置并生效。',
       'chains.empty': '尚无链路配置（使用内置默认链）。',
@@ -1996,7 +2019,9 @@ window.__ModuleLoader__.load({
       'chains.step': '{name}',
       'accounts.plainTitle': 'Accounts (usually nothing to do)',
       'accounts.plainExplain': 'It automatically uses the API keys you already configured in DSH (e.g. OpenCode Go, Xiaomi). You don\'t need to enter any key here.',
-      'accounts.plainCount': '{n} account(s) manually configured (0 means auto-derived from routing chains).',
+      'accounts.plainCount': '{n} account(s) in the live pool (DSH-configured routes + chain-derived accounts).',
+      'accounts.countLoading': 'Reading the account pool…',
+      'accounts.countEmpty': 'No API keys configured in DSH yet — add one in DSH settings first.',
       'chains.hint': 'Each key is an outer model; value is an ordered {provider, model} array. Changes apply live.',
       'chains.defaultHint': 'Built-in default chain shown (no chains configured). Edit and save to write your own.',
       'chains.empty': 'No chain config (using built-in defaults).',
