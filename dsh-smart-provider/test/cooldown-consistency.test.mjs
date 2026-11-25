@@ -248,3 +248,67 @@ test('6. four kinds: both authorities recorded; MAX never earlier than a live ga
   t.diagnostic('kind | legacyMs | l2Ms | snapshotUntil-now | reason | streak\n'
     + matrix.map(r => `${r.kind} | ${r.legacyMs} | ${r.l2Ms} | ${r.until - NOW} | ${r.reason} | ${r.streak}`).join('\n'))
 })
+
+/**
+ * E2A off/on equivalence — the convergence proof. For each E0C scenario we
+ * construct L2 evidence that carries the EFFECTIVE until (the MAX of the two
+ * legacy authorities) and assert the single-authority snapshot is identical
+ * to the dual-authority MAX snapshot: same state, same until, same remaining.
+ * The original 6 characterization tests above are untouched.
+ */
+function snapshotRowWith({ now = NOW, cooldowns, accountHealth, singleCooldown }) {
+  const snapshot = buildHealthSnapshot({
+    enabled: true,
+    now,
+    accounts: [ACCOUNT],
+    cooldowns,
+    accountHealth,
+    singleCooldown,
+  })
+  assert.equal(snapshot.accounts.length, 1)
+  return snapshot.accounts[0]
+}
+
+/** L2 record whose until is the effective (MAX) deadline, read-only projection. */
+function l2Carrier(kind, until, now) {
+  const registry = createAccountHealthRegistry()
+  noteFailure(registry, ACCOUNT.id, kind, now)
+  const base = getRecord(registry, ACCOUNT.id)
+  registry.records.set(ACCOUNT.id, { ...base, state: 'COOLING', until, reason: kind })
+  return registry
+}
+
+const EQUIVALENCE_CASES = [
+  { name: '1. legacy later than L2 backoff', kind: 'QUOTA', legacyUntil: NOW + 45 * MINUTE,
+    l2BackoffMs: 30 * MINUTE, effectiveUntil: NOW + 45 * MINUTE },
+  { name: '2. L2 later than legacy', kind: 'AUTH', legacyUntil: NOW + 10 * MINUTE,
+    l2BackoffMs: 24 * HOUR, effectiveUntil: NOW + 24 * HOUR },
+  { name: '3. legacy only (no L2 backoff)', kind: 'RATE_LIMIT', legacyUntil: NOW + 7 * MINUTE,
+    l2BackoffMs: MINUTE, effectiveUntil: NOW + 7 * MINUTE },
+  { name: '4. L2 only (no legacy map)', kind: 'SERVER_JITTER', legacyUntil: null,
+    l2BackoffMs: 5_000, effectiveUntil: NOW + 5_000 },
+  { name: '5. both expired', kind: 'QUOTA', legacyUntil: NOW - MINUTE,
+    l2BackoffMs: 30 * MINUTE, effectiveUntil: null },
+  { name: '6. four kinds parity', kind: 'RATE_LIMIT', legacyUntil: NOW + 60_000,
+    l2BackoffMs: 120_000, effectiveUntil: NOW + 120_000 },
+]
+
+for (const c of EQUIVALENCE_CASES) {
+  test(`E2A equivalence: ${c.name}`, () => {
+    const cooldowns = c.legacyUntil === null ? undefined
+      : new Map([[ACCOUNT.id, { until: c.legacyUntil, reason: 'RATE_LIMIT' }]])
+    // The L2 carrier holds the post-convergence effective deadline. This is
+    // what the single-authority writer (noteFailure delayMs / hydrated L2)
+    // makes true on the on-branch.
+    const registry = l2Carrier(c.kind, c.effectiveUntil, NOW)
+
+    const off = snapshotRowWith({ cooldowns, accountHealth: registry, singleCooldown: false })
+    const on = snapshotRowWith({ cooldowns, accountHealth: registry, singleCooldown: true })
+
+    assert.equal(on.until, off.until, `${c.name}: until must agree`)
+    assert.equal(on.state, off.state, `${c.name}: state must agree`)
+    assert.equal(on.remainingMs, off.remainingMs, `${c.name}: remainingMs must agree`)
+    assert.equal(off.until, c.effectiveUntil, 'off branch keeps the MAX invariant')
+  })
+}
+

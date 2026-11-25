@@ -119,6 +119,20 @@ export function sanitizeFailureMessage(message) {
   return masked.length > 300 ? masked.slice(0, 300) + '…[truncated]' : masked
 }
 
+/** E2A: an EXPLICIT upstream Retry-After hint (ms), or undefined. Unlike
+ * cooldownFor() this never falls back to a per-code constant — the L2 owner
+ * keeps its own streak backoff when no real hint exists, so convergence does
+ * not shorten a cooling account. */
+function retryAfterMs(failure) {
+  const hinted = Number(failure?.providerRetryAfterMs)
+  if (Number.isFinite(hinted) && hinted > 0 && hinted <= 24 * 60 * 60 * 1000) return hinted
+  const message = failure?.message ?? ''
+  const seconds = message.match(/retry[- ]after\s*:?\s*(\d{1,7})/i)
+  if (!seconds) return undefined
+  const ms = Math.min(24 * 60 * 60 * 1000, Math.max(0, Number(seconds[1]) * 1000))
+  return ms > 0 ? ms : undefined
+}
+
 /** Extract a cooldown duration from an upstream failure. */
 function cooldownFor(failure, now) {
   const hinted = Number(failure.providerRetryAfterMs)
@@ -178,6 +192,9 @@ export class SmartAdapter {
     // in. Absent config keeps every downstream field undefined so no new call
     // can touch the legacy request path.
     this.health = health && health.enabled === true ? health : undefined
+    // E2A: L2-only cooldown authority. Default OFF. A health-disabled adapter
+    // never consults this field, so the legacy path stays byte-for-byte.
+    this.healthSingleCooldown = this.health?.healthSingleCooldown === true
     this.availabilityRegistry = this.health ? (this.health.availabilityRegistry ?? {}) : undefined
     this.accountHealth = this.health
       ? (this.health.accountHealth && typeof this.health.accountHealth === 'object'
@@ -231,6 +248,8 @@ export class SmartAdapter {
       // never freezes other accounts serving the same model. (Model-specific
       // failures still only freeze that account, via the same key.)
       isHealthy: (accountId, now) => {
+        // E2A on: L2 is the sole authority — the legacy Map never gates.
+        if (this.healthSingleCooldown) return true
         const cool = this.cooldowns.get(accountId)
         return !cool || cool.until <= now
       },
@@ -241,6 +260,7 @@ export class SmartAdapter {
         availabilityRegistry: this.availabilityRegistry,
         virtualProviders: this.virtualProviders,
         topologyOpts: this.health.topologyOpts,
+        singleCooldown: this.healthSingleCooldown,
       } : {}),
     })
   }
@@ -483,12 +503,23 @@ export class SmartAdapter {
         })
         this.cooldowns.delete(account.id) // HALF_OPEN -> ACTIVE, real success clears it
       } else {
+        // E2A on: the legacy Map is no longer written; hand the parsed
+        // cooldown duration to L2 via E1D's delayMs override so L2 becomes
+        // the single authority. Off: options stay undefined -> byte-for-byte.
+        const options = this.healthSingleCooldown
+          && SWITCHABLE_CODES.has(failure.code)
+          && failure.code !== 'ABORTED'
+          ? (() => {
+              const hint = retryAfterMs(failure)
+              return hint === undefined ? undefined : { delayMs: hint }
+            })()
+          : undefined
         noteFailure(this.accountHealth, account.id, {
           ...(verdict ?? { kind: failure.code ?? 'UNKNOWN' }),
           provider: hop.provider,
           routeKey: key,
           aggregator: false,
-        }, now)
+        }, now, options)
       }
     } catch (error) {
       this.logger.warn?.('smart: account health update failed: %o', error)
@@ -725,6 +756,9 @@ export class SmartAdapter {
       if (this.#topologyOf(routeKey.provider).aggregator === true) return
     }
     if (!SWITCHABLE_CODES.has(failure.code)) return
+    // E2A on: L2 already received this duration via noteFailure's delayMs;
+    // the legacy Map stays untouched. Off: write below stays byte-for-byte.
+    if (this.healthSingleCooldown) return
     const until = cooldownFor(failure, Date.now())
     if (until <= Date.now()) return
     this.cooldowns.set(account.id, { until, reason: failure.code })

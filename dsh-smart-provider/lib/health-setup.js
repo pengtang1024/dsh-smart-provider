@@ -126,6 +126,14 @@ export function buildHealthDeps(rawConfig) {
     }
   }
 
+  // E2A: single cooldown authority (health registry is the only owner).
+  // DEFAULT OFF — only a strict `true` opts in, so every existing config keeps
+  // the dual-gate + MAX behavior byte-for-byte. The deprecated nested surface
+  // is read for symmetry with the other nested health options, never warned:
+  // this is a new opt-in flag, not one of the deprecated opt-out forms.
+  const healthSingleCooldown = healthCfg.healthSingleCooldown === true
+    || nested.healthSingleCooldown === true
+
   return {
     enabled: true,
     availabilityRegistry: {},
@@ -133,5 +141,6 @@ export function buildHealthDeps(rawConfig) {
     virtualProviders,
     topologyOpts: healthCfg.topologyOpts ?? nested.topologyOpts ?? {},
     currentIdList: Array.isArray(healthCfg.currentIdList) ? healthCfg.currentIdList : undefined,
+    healthSingleCooldown,
   }
 }

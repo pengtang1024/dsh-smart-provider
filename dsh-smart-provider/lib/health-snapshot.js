@@ -130,7 +130,21 @@ export function deriveState(record, now, legacy) {
  * layers block a dispatch, so the later one wins. Kept as a separate export for
  * the phase-2 authority convergence to retire — DO NOT delete it yet.
  */
-export function mergeCooldown(record, legacy, now) {
+/** E2A single-authority until: only a COOLING record with a finite future until blocks. */
+function stateOfL2(record, now) {
+  const state = str(isObject(record) ? record.state : undefined, UNKNOWN)
+  if (!ACCOUNT_STATES.has(state) || state !== COOLING) return null
+  const until = isObject(record) ? record.until : undefined
+  return Number.isFinite(until) && until > now ? until : null
+}
+
+export function mergeCooldown(record, legacy, now, singleCooldown = false) {
+  // E2A on: L2 is the sole authority — read its until directly. The legacy
+  // argument is ignored on this branch. Off (default): the MAX below stays
+  // byte-for-byte, preserving the frozen dual-authority invariant.
+  if (singleCooldown === true) {
+    return stateOfL2(record, now)
+  }
   const state = deriveState(record, now, legacy)
   const recordUntil = isObject(record) ? record.until : undefined
   const legacyUntil = isObject(legacy) ? legacy.until : undefined
@@ -148,8 +162,10 @@ export function projectAccount(input) {
   const id = account.id
   const record = records ? records.get(id) : undefined
   const legacy = lookup(source.cooldowns, id)
-  const state = deriveState(record, now, legacy)
-  const until = mergeCooldown(record, legacy, now)
+  // E2A: when the caller opts into single authority, even the state
+  // projection ignores the legacy Map so state/until agree on one owner.
+  const state = deriveState(record, now, source.singleCooldown === true ? undefined : legacy)
+  const until = mergeCooldown(record, legacy, now, source.singleCooldown === true)
 
   const recordReason = state === COOLING && isObject(record) ? str(record.reason, null) : null
   const legacyReason = isObject(legacy) ? str(legacy.reason, null) : null
@@ -232,6 +248,7 @@ export function projectRoutes(input) {
  *   usage?: Map<string, number>,
  *   accountHealth?: {records: Map<string, object>}|Map<string, object>,
  *   availabilityRegistry?: Record<string, object>,
+ *   singleCooldown?: boolean,
  * }} [input]
  * @returns {{
  *   enabled: boolean,
