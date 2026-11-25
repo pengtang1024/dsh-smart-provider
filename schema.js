@@ -46,13 +46,13 @@ export const Config = z.object({
    */
   health: z.any().default(undefined).volatile(),
   /**
-   * P2 two-layer routing (opt-in, advanced only). Nested under ranking by
-   * convention: ranking.routing = {enabled, strategy, tierPolicy, weights,
-   * positionOverrides, tierLimit}. Kept in the same volatile object so the
-   * settings page can edit it without a restart. Absent/disabled = legacy.
+   * P2 two-layer routing (default ON with neutral equal weights; explicitly
+   * disableable). Nested under ranking by convention: ranking.routing =
+   * {enabled, strategy, tierPolicy, weights, positionOverrides, tierLimit}.
+   * Kept in the same volatile object so the settings page can edit it without
+   * a restart. Absent = DEFAULT_RANKING_CONFIG.routing (enabled:true,
+   * balanced, four factors .25); explicit enabled:false = byte-for-byte legacy.
    */
-  // Capability stage 2: default ON with neutral balanced. Users who set a
-  // value override it entirely; absent uses DEFAULT_RANKING_CONFIG.routing.
   routing: z.any().default(undefined).volatile(),
   /** Enable the JSONL cost meter (volatile: editable without restart). */
   costEnabled: z.boolean().default(true).volatile(),

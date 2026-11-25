@@ -32,7 +32,7 @@
 
 `chains`、`accounts`、`ranking`、`ranking.routing`、`health` / `ranking.health` 均为 volatile 配置，设置页改完即时生效，无需重启。健康层可调 `health.accountHealth`（半开许可数 / 退避倍数 / 冷却上限）与 `health.topologyOpts`（拓扑证据），`health.virtualProviders` 追加虚拟路由（`smart` 永远在内）。routing 配置嵌在 `ranking.routing` 下（`schema.js` 的 `routing` 字段），字段：`enabled` / `strategy` / `tierPolicy` / `weights` / `positionOverrides` / `tierLimit` / `longContextTokens` / `dynamicAuto`。未配置时代码路径完全不运行；显式 `chains` 键与 `*` 始终优先于 `dynamicAuto`，老配置不会被动。账号池 `accounts` 每项形如 `{id, provider, credentialRef, models[]}`，省略时按旧 per-hop 模式运行。自建路由只在 `registry/custom-routes.user.yaml` 声明（`credentialRef` 只放引用名，绝不放明文 key）。
 
-详细设计依据父工作区的文档：`meta-provider-设计方案.md`、`多账号池设计方案.md`、`方案盲点审查.md`、`可用性自动管理设计.md`、`账号池自动管理深化设计.md`、`落地规格.md`。验证入口见包根目录 `npm test`（`scripts/run-tests.mjs`）：门禁自动发现 `test/*.test.mjs` 并全部执行（**新增测试文件无需注册**），并带发现守卫 —— `test/` 下存在未被执行的 `.mjs` 就非 0 退出并点名。当前全套（`node scripts/run-tests.mjs`，需 Electron 的 Node）19 个 suite / tests 254 / pass 254 / fail 0、`node scripts/run-tests.mjs --unit`（14 个纯逻辑 suite）tests 207 / pass 207 / fail 0（均为 2026-11-26 实测，退出码 0）。两套门禁应串行执行：`--unit` 的探针 TTL 用例用 5ms 边界，并发负载下会偶发假红。
+详细设计依据父工作区的文档：`meta-provider-设计方案.md`、`多账号池设计方案.md`、`方案盲点审查.md`、`可用性自动管理设计.md`、`账号池自动管理深化设计.md`、`落地规格.md`。验证入口见包根目录 `npm test`（`scripts/run-tests.mjs`）：门禁自动发现 `test/*.test.mjs` 并全部执行（**新增测试文件无需注册**），并带发现守卫 —— `test/` 下存在未被执行的 `.mjs` 就非 0 退出并点名。当前全套（`node scripts/run-tests.mjs`，需 Electron 的 Node）19 个测试文件 / tests 254 / pass 254 / fail 0、`node scripts/run-tests.mjs --unit`（14 个纯逻辑测试文件）tests 207 / pass 207 / fail 0（均为 2026-11-26 实测，退出码 0）。探针 TTL 用例用注入时钟推进过期（不再用 5ms 真实 TTL 竞速），TTL 判定不依赖真实时序；两套门禁并发跑也不会再偶发假红，仍建议串行便于读数对账。
 
 ---
 

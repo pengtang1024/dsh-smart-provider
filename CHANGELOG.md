@@ -48,10 +48,11 @@
 
 ### 验证（2026-11-26 实测）
 
-- 全量门禁 `DSH_NODE_EXECUTABLE="/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT" node scripts/run-tests.mjs`：**19 个 suite / 254 条测试，pass 254 / fail 0，退出码 0**。
-- 纯逻辑子集 `env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit`：**14 个 suite / 207 条测试，pass 207 / fail 0，退出码 0**。
+- 全量门禁 `DSH_NODE_EXECUTABLE="/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT" node scripts/run-tests.mjs`：**19 个测试文件 / 254 条测试，pass 254 / fail 0，退出码 0**。
+- 纯逻辑子集 `env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit`：**14 个测试文件 / 207 条测试，pass 207 / fail 0，退出码 0**。
 - `node --check client.js`：退出码 0。
 - 相对 2.1.0 记录的 233 / 197 条，两套门禁分别增加 21 / 10 条断言（新增覆盖：`costDetail` strict schema 形状与 catch 路径、本地日分桶、水合同毫秒平局、探针 unknown 短 TTL、自建路由生成幂等与写前校验、实测 ttft 择优）。
+- `test/probe.test.mjs` 的 TTL 用例改为**注入时钟**推进过期（原写法用 5ms 真实 TTL 卡「刚写完还算新鲜」，与 `appendFile` 落盘排队竞速，并发负载下 25 次跑出现过 2 次假红）。断言一条没删、语义未放宽，过期靠推进 `Date.now` 而不是睡眠。稳定性证明：`--unit` **连跑 10 次全部 exit 0**（每次 207/207）、全量 **连跑 3 次全部 exit 0**（每次 254/254）。
 - 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.2.0`。
 
 ## 2.1.0

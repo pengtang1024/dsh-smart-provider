@@ -79,18 +79,18 @@ dsh-smart-provider/
 │   ├── health-snapshot.test.mjs 健康快照纯函数回归测试（16 条纯逻辑，--unit 白名单）
 │   ├── health-taxonomy.test.mjs 健康失败码分类一致性回归测试（E0A1，10 条纯逻辑，--unit 白名单）
 │   ├── health.test.mjs       健康层回归测试（65 条纯逻辑，--unit 白名单）
-│   ├── hydration-billing.test.mjs 水合计费证据回归测试（9 条纯逻辑，--unit 白名单）
+│   ├── hydration-billing.test.mjs 水合计费证据回归测试（12 条纯逻辑，--unit 白名单）
 │   ├── latency.test.mjs      延迟度量与速度因子回归测试（需 DSH runtime；全量门禁）
 │   ├── loading.test.mjs      加载路径回归测试（需 DSH runtime；全量门禁）
 │   ├── note-failure-override.test.mjs noteFailure 冷却覆盖契约回归测试（E1D，3 条纯逻辑，--unit 白名单）
 │   ├── persistence.test.mjs  冷启动水合回归测试（task-6，19 条纯逻辑，--unit 白名单）
 │   ├── pricing.test.mjs      定价降级与解析顺序回归测试（纯逻辑，--unit 白名单）
-│   ├── probe.test.mjs        probe 缓存新鲜度回归测试（D1，3 条纯逻辑，--unit 白名单）
+│   ├── probe.test.mjs        probe 缓存新鲜度回归测试（D1，8 条纯逻辑，--unit 白名单）
 │   ├── query-cost.test.mjs   query-cost 报表段回归测试（task-8，11 条纯逻辑，--unit 白名单）
 │   ├── ranking.test.mjs      路由排序回归测试（纯逻辑，--unit 白名单）
-│   ├── remote-surface.test.mjs @Remote 路由面契约回归测试（7 条纯逻辑，--unit 白名单）
+│   ├── remote-surface.test.mjs @Remote 路由面契约回归测试（9 条纯逻辑，--unit 白名单）
 │   └── routing-tier.test.mjs tier 选择 / relax 诊断 / 手填标签回归测试（task-7，14 条纯逻辑，--unit 白名单）
-│                             共 19 个 suite / 233 条断言（全量）；--unit 白名单 14 个 suite / 197 条（纯逻辑）
+│                             共 19 个测试文件 / 254 条断言（全量）；--unit 白名单 14 个测试文件 / 207 条（纯逻辑）
 ├── locale/{en,zh}.json       插件显示元数据
 ├── docs/DETAIL.md            插件管理器详情页
 ├── icon.svg                  原创图标
@@ -529,16 +529,16 @@ FAIL: 1 file(s) under test/ are never executed by the full gate:
 Rename it to <name>.test.mjs (or move it out of test/) so it actually runs.
 ```
 
-`--unit` 是一个**纯逻辑白名单**（当前 14 个 suite：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config`），其余需要 DSH runtime 的 suite 会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
+`--unit` 是一个**纯逻辑白名单**（当前 14 个测试文件：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config`），其余需要 DSH runtime 的测试文件会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
 
 ```bash
 # 1) 一条命令跑完整验证门槛（语法检查 + 全部自动发现的测试，自动选运行时）
 npm test
-# => 发现 19 个 suite；语法检查逐文件 ok；tests 254 / pass 254 / fail 0（2026-11-26 实测，退出码 0）
+# => 发现 19 个测试文件；语法检查逐文件 ok；tests 254 / pass 254 / fail 0（2026-11-26 实测，退出码 0）
 
-# 2) 只跑纯逻辑子集（14 个 suite，任何 Node 都行，无需 DSH；会打印未覆盖的 suite）
+# 2) 只跑纯逻辑子集（14 个测试文件，任何 Node 都行，无需 DSH；会打印未覆盖的文件）
 npm run test:unit
-# => 14 个 suite，tests 207 / pass 207 / fail 0（2026-11-26 实测，退出码 0）
+# => 14 个测试文件，tests 207 / pass 207 / fail 0（2026-11-26 实测，退出码 0）
 
 # 3) 不带 npm 时等价写法（全量就是发现出来的那批文件）
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/*.test.mjs
@@ -556,14 +556,14 @@ node -e 'const p=require("./lib/pricing.json"); if(p._rows!==p.entries.length)th
 ```bash
 # 纯逻辑子集：任何 Node 都行，不需要 DSH runtime
 env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit
-# => 14 个 suite / tests 207 / pass 207 / fail 0
+# => 14 个测试文件 / tests 207 / pass 207 / fail 0
 
 # 全量：必须用 Electron 的 Node（@deepseek-ai/* 在 app.asar 内部）
 DSH_NODE_EXECUTABLE="/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT" node scripts/run-tests.mjs
-# => 19 个 suite / tests 254 / pass 254 / fail 0
+# => 19 个测试文件 / tests 254 / pass 254 / fail 0
 ```
 
-两套门禁**不要并发跑**：`--unit` 里的探针 TTL 用例用 5ms TTL 卡「刚写完还算新鲜」的边界，并发负载下 `probe.peek` 可能因为调度延迟被判过期 —— 本机实测过一次这种假红（同一提交单独跑全绿）。门禁要串行执行，读数才可信。
+此前两套门禁并发跑会出现偶发假红：`--unit` 里的探针 TTL 用例用 5ms TTL 卡「刚写完还算新鲜」的边界，与 `appendFile` 的落盘排队竞速（verifier 复现 25 次跑 2 次红）。该用例已改为**注入时钟**推进 —— TTL 判定是纯 `probedAt + ttl > Date.now()` 比较，用例内把 `Date.now` 换成可控值并在 `finally` 还原，过期靠推进时钟而不是睡眠，语义不变、不再依赖真实时序。并发跑也不会再假红；仍建议串行，便于读数对账。
 
 运行时冒烟验证了：`LlmRuntime.prototype.resolveModel` 不存在而 `resolveModelInfo` 存在（task-25 的 bug）；零重试策略；`listModels` 中的 `smart/auto`；仅在建立前回退（AUTH 切跳、发出内容后的错误不切、ABORTED 永不切）；带 `usage_complete` 的 JSONL 行写入；真实会话中出现的 `plugin:dsh-smart-provider/hop-selected` 记录；以及该记录在会话恢复时被保留。
 

@@ -77,15 +77,23 @@ test('probe.peek: a verdict written to cache is immediately readable', async () 
 
 test('probe.peek: a verdict past TTL is invisible and matches probeModels freshness', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'smart-peek-'))
+  // Deterministic clock, no sleeping: the TTL gate is a pure
+  // `probedAt + ttl > Date.now()` comparison, so a 5ms TTL used to race the
+  // writer's appendFile queue (a >5ms delay between write and assert made this
+  // test red). We advance a patched clock past the TTL instead of racing the
+  // real one — same semantics, zero flake. Restored in finally.
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
   try {
     const runtime = fakeRuntime({ r1: FREE })
     const probe = createProbe({
-      runtime, availabilityRegistry: {}, cacheFile: join(dir, 'cache.jsonl'), ttlMs: 5,
+      runtime, availabilityRegistry: {}, cacheFile: join(dir, 'cache.jsonl'), ttlMs: 1000,
     })
     await probe.probeModels([{ provider: 'r1', model: 'm1' }])
     assert.ok(probe.peek('r1', 'm1'), 'fresh right after the probe')
 
-    await new Promise(resolve => setTimeout(resolve, 30))
+    now += 1001
     assert.equal(probe.peek('r1', 'm1'), undefined, 'past TTL, peek must not leak a stale verdict')
 
     const again = await probe.probeModels([{ provider: 'r1', model: 'm1' }])
@@ -93,6 +101,7 @@ test('probe.peek: a verdict past TTL is invisible and matches probeModels freshn
     assert.doesNotMatch(again.results[0].evidence, /cached/, 'probeModels uses the same freshness rule')
     assert.equal(runtime.calls.length, 2, 'the expired row triggered a real re-probe')
   } finally {
+    Date.now = realNow
     await rm(dir, { recursive: true, force: true })
   }
 })
