@@ -7,13 +7,18 @@
  * every cached verdict. These tests pin the single TTL contract now shared
  * by probeOne / probeModels / peek.
  *
+ * P2 (unknown verdicts are cached too): an inconclusive probe is cached so a
+ * settings-page open cannot re-issue a real billed request, under a short TTL,
+ * while it still never becomes free/metered evidence (peek stays undefined).
+ * The last two tests pin the hydrated-cache rule for persisted unknown rows.
+ *
  *   node --test test/probe.test.mjs
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 
 import { createProbe } from '../lib/probe.js'
 
@@ -36,6 +41,11 @@ function fakeRuntime(scripts) {
 
 const FREE = [
   { type: 'usage', usage: { cost: 0, billingSource: 'free-tier' } },
+  { type: 'finish', reason: { kind: 'stop' } },
+]
+
+const METERED = [
+  { type: 'usage', usage: { cost: 0.001, billingSource: 'credit' } },
   { type: 'finish', reason: { kind: 'stop' } },
 ]
 
@@ -111,6 +121,164 @@ test('probe.peek: a hydrated cache keeps the live-cache rule for fresh and unkno
     assert.ok(hit, 'hydrated free row is visible to peek — same rule as the in-memory cache')
     assert.equal(hit.verdict, 'free')
     assert.equal(reader.peek('r2', 'm2'), undefined, 'unknown verdict is never projected (matches :127/:203)')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe: an unknown verdict is cached under the short TTL and never re-probed inside it', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'smart-unknown-'))
+  try {
+    const cacheFile = join(dir, 'cache.jsonl')
+    const runtime = fakeRuntime({ r2: [] }) // empty stream -> no usage signal -> honest unknown
+    const probe = createProbe({
+      runtime, availabilityRegistry: {}, cacheFile, ttlMs: 60_000, unknownTtlMs: 60_000,
+    })
+
+    const first = await probe.probeModels([{ provider: 'r2', model: 'm2' }])
+    assert.equal(first.results[0].verdict, 'unknown')
+    assert.equal(first.results[0].ok, false, 'return contract: ok mirrors verdict !== unknown')
+    assert.equal(runtime.calls.length, 1)
+
+    // The unknown row really lands in the persistent cache.
+    const rows = (await readFile(cacheFile, 'utf8')).trim().split('\n').map(JSON.parse)
+    assert.equal(rows.at(-1).verdict, 'unknown')
+
+    // Inside the short TTL: cache hit, so no second (billed) upstream request.
+    const second = await probe.probeModels([{ provider: 'r2', model: 'm2' }])
+    assert.equal(runtime.calls.length, 1, 'a cached unknown must not re-probe inside the short TTL')
+    assert.equal(second.results[0].verdict, 'unknown')
+    assert.equal(second.results[0].ok, false, 'return shape unchanged for a cached unknown')
+    assert.match(second.results[0].evidence, /^cached: /)
+    assert.equal(second.results[0].cost, 0)
+
+    // Admission semantics untouched: a cached unknown is still not evidence.
+    assert.equal(probe.peek('r2', 'm2'), undefined, 'unknown is never projected as free/metered evidence')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe: an unknown caused by a probe error is cached too', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'smart-unknown-'))
+  try {
+    const calls = []
+    const runtime = {
+      stream() {
+        calls.push('stream')
+        throw new Error('transport down')
+      },
+    }
+    const probe = createProbe({
+      runtime, availabilityRegistry: {}, cacheFile: join(dir, 'cache.jsonl'),
+      ttlMs: 60_000, unknownTtlMs: 60_000,
+    })
+
+    const first = await probe.probeModels([{ provider: 'r1', model: 'm1' }])
+    assert.equal(first.results[0].verdict, 'unknown')
+    assert.match(first.results[0].evidence, /probe error: TRANSPORT/)
+
+    const second = await probe.probeModels([{ provider: 'r1', model: 'm1' }])
+    assert.equal(calls.length, 1, 'a failed probe is cached, not retried on the next open')
+    assert.match(second.results[0].evidence, /^cached: probe error: TRANSPORT/)
+    assert.equal(second.results[0].ok, false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe: free and metered keep the long TTL while the unknown expires on the short one', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'smart-unknown-'))
+  try {
+    const runtime = fakeRuntime({ r1: FREE, r2: [], r3: METERED })
+    const probe = createProbe({
+      runtime, availabilityRegistry: {}, cacheFile: join(dir, 'cache.jsonl'),
+      ttlMs: 60_000, unknownTtlMs: 5,
+    })
+    const candidates = [
+      { provider: 'r1', model: 'm1' },
+      { provider: 'r2', model: 'm2' },
+      { provider: 'r3', model: 'm3' },
+    ]
+
+    const first = await probe.probeModels(candidates)
+    assert.deepEqual(first.results.map(r => r.verdict), ['free', 'unknown', 'metered'])
+    assert.equal(runtime.calls.length, 3)
+
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    const second = await probe.probeModels(candidates)
+    assert.equal(runtime.calls.length, 4, 'only the expired unknown was re-probed')
+    assert.deepEqual(runtime.calls[3], { provider: 'r2', model: 'm2' })
+    assert.match(second.results[0].evidence, /^cached: /, 'free is untouched by the short unknown TTL')
+    assert.match(second.results[2].evidence, /^cached: /, 'metered is untouched by the short unknown TTL')
+    assert.equal(second.results[2].verdict, 'metered')
+    assert.equal(second.results[2].cost, 0.001, 'cost survives the cache round-trip')
+    assert.equal(second.results[1].verdict, 'unknown')
+    assert.doesNotMatch(second.results[1].evidence, /^cached: /, 'the expired unknown really re-ran')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe: a hydrated unknown row past the short TTL is not adopted', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'smart-unknown-'))
+  try {
+    const cacheFile = join(dir, 'cache.jsonl')
+    const now = Date.now()
+    const rows = [
+      {
+        provider: 'r1', model: 'm1', verdict: 'free', ok: true, cost: 0,
+        evidence: 'upstream usage cost=0 + free billing source', probedAt: now - 60_000,
+      },
+      {
+        provider: 'r2', model: 'm2', verdict: 'unknown', ok: false, cost: 0,
+        evidence: 'probe error: TRANSPORT', probedAt: now - 60_000,
+      },
+    ]
+    await writeFile(cacheFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n', 'utf8')
+
+    const runtime = fakeRuntime({ r1: FREE, r2: [] })
+    const probe = createProbe({
+      runtime, availabilityRegistry: {}, cacheFile, ttlMs: 600_000, unknownTtlMs: 1_000,
+    })
+
+    const unknown = await probe.probeModels([{ provider: 'r2', model: 'm2' }])
+    assert.equal(runtime.calls.length, 1, 'the expired persisted unknown must be re-probed')
+    assert.equal(unknown.results[0].verdict, 'unknown')
+    assert.doesNotMatch(unknown.results[0].evidence, /^cached: /)
+
+    const free = await probe.probeModels([{ provider: 'r1', model: 'm1' }])
+    assert.equal(runtime.calls.length, 1, 'the fresh persisted free row is still adopted')
+    assert.match(free.results[0].evidence, /^cached: /)
+    assert.equal(probe.peek('r1', 'm1').verdict, 'free')
+    assert.equal(probe.peek('r2', 'm2'), undefined)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe: a hydrated unknown row inside the short TTL suppresses the re-probe', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'smart-unknown-'))
+  try {
+    const cacheFile = join(dir, 'cache.jsonl')
+    const row = {
+      provider: 'r2', model: 'm2', verdict: 'unknown', ok: false, cost: 0,
+      evidence: 'probe error: TRANSPORT', probedAt: Date.now() - 1_000,
+    }
+    await writeFile(cacheFile, JSON.stringify(row) + '\n', 'utf8')
+
+    const runtime = fakeRuntime({ r2: [] })
+    const probe = createProbe({
+      runtime, availabilityRegistry: {}, cacheFile, ttlMs: 600_000, unknownTtlMs: 600_000,
+    })
+
+    const { results } = await probe.probeModels([{ provider: 'r2', model: 'm2' }])
+    assert.equal(runtime.calls.length, 0, 'a fresh persisted unknown must not re-probe')
+    assert.equal(results[0].verdict, 'unknown')
+    assert.equal(results[0].ok, false)
+    assert.match(results[0].evidence, /^cached: probe error: TRANSPORT/)
+    assert.equal(probe.peek('r2', 'm2'), undefined, 'still not free/metered evidence')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
