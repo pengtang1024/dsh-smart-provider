@@ -52,7 +52,7 @@ test('remote.js loads the Typert base class without a profile-local copy', async
   assert.equal(marker.value.version, 1)
   assert.deepEqual(
     marker.value.methods.map(entry => entry.method),
-    ['cost', 'costDetail', 'availabilityStatus', 'probeModels'],
+    ['cost', 'costDetail', 'availabilityStatus', 'probeModels', 'accountHealth'],
   )
 })
 
