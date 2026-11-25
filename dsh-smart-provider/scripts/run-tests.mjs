@@ -49,6 +49,8 @@ const UNIT_TESTS = [
   'test/probe.test.mjs',
   'test/health-taxonomy.test.mjs',
   'test/cooldown-consistency.test.mjs',
+  'test/note-failure-override.test.mjs',
+  'test/config.test.mjs',
 ]
 
 /** Every source file worth a syntax check (client.js is browser code too). */

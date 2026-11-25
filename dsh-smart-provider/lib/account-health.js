@@ -252,8 +252,14 @@ export function noteSuccess(registry, accountId, now = Date.now(), kind) {
  *
  * `kind` may be a FailureKind string, a classifyFailure() result object, or a
  * raw adapter code — all are normalized. Returns a record snapshot.
+ *
+ * Optional `options.delayMs` (alias `options.retryAfterMs`) carries an upstream
+ * Retry-After duration in milliseconds. When it is a finite positive number it
+ * replaces the streak backoff below; otherwise the backoff is unchanged. No
+ * caller passes it yet — stage 2 will wire it in when cooldown authority moves
+ * onto this single L2 owner.
  */
-export function noteFailure(registry, accountId, kind, now = Date.now()) {
+export function noteFailure(registry, accountId, kind, now = Date.now(), options = undefined) {
   const config = configOf(registry)
   const records = recordsOf(registry)
   const previous = records?.get(accountId)
@@ -295,7 +301,9 @@ export function noteFailure(registry, accountId, kind, now = Date.now()) {
   // "30min 起", so exponent streak-1 keeps the FIRST failure at the base value.
   const exponent = Math.max(0, streak - 1)
   const baseMs = BASE_COOLDOWN_MS[normalized.kind] ?? config.defaultCooldownMs
-  const delay = Math.min(config.maxCooldownMs, Math.round(baseMs * Math.pow(config.backoffFactor, exponent)))
+  const backoff = Math.min(config.maxCooldownMs, Math.round(baseMs * Math.pow(config.backoffFactor, exponent)))
+  const hinted = Number(options?.delayMs ?? options?.retryAfterMs)
+  const delay = Number.isFinite(hinted) && hinted > 0 ? hinted : backoff
   const { until, reason, ...clean } = base
   const next = {
     ...clean,
