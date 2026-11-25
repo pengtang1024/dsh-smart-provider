@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "title": "Fournisseur intelligent",
+    "description": "Méta-fournisseur qui bascule en cas d'échec entre des routes de fournisseurs économiques, avec repli uniquement à l'établissement de la connexion, temporisation par saut, journaux de session par saut, estimation des coûts hors ligne et classement des comptes. Une section de paramètres dédiée propose une page de configuration (aperçu / chaînes / groupe de comptes+classement / coût+santé).",
+    "detail": "docs/DETAIL.fr.md"
+  },
+  "nav": "Fournisseur intelligent",
+  "setting": {
+    "title": "Fournisseur intelligent",
+    "description": "Configurez les chaînes, le groupe de comptes, la stratégie de classement et le coût/santé ; toutes les modifications s'appliquent à chaud, sans redémarrage."
+  }
+}
