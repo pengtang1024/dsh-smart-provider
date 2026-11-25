@@ -294,13 +294,16 @@ window.__ModuleLoader__.load({
     // (below) override these when available.
     const STATIC_STRATEGIES = [
       { id: 'legacy', label: '兼容模式', description: '完全保持旧行为：route 优先 + 最少使用', weights: null },
-      { id: 'balanced', label: '均衡（推荐）', description: '日常自动模式', weights: { cost: 0.4, speed: 0.2, tier: 0.15, load: 0.25 } },
+      { id: 'balanced', label: '均衡（推荐）', description: '各项均衡，不偏向省钱或速度', weights: { cost: 0.25, speed: 0.25, tier: 0.25, load: 0.25 } },
       { id: 'cost-first', label: '成本优先', description: '长任务、批量、后台跑', weights: { cost: 0.7, speed: 0.05, tier: 0.1, load: 0.15 } },
       { id: 'speed-first', label: '速度优先', description: '交互、低延迟需求', weights: { cost: 0.1, speed: 0.65, tier: 0.1, load: 0.15 } },
       { id: 'tier-first', label: '等级优先', description: '先用高等级；配 low 方向先耗备份', weights: { cost: 0.1, speed: 0.1, tier: 0.65, load: 0.15 } },
       { id: 'custom', label: '自定义', description: '自定义权重', weights: null },
     ]
-    const DEFAULT_WEIGHTS = { cost: 0.4, speed: 0.2, tier: 0.15, load: 0.25 }
+    // Must mirror lib/ranking.js BALANCED_WEIGHTS exactly: balanced is neutral
+    // (0.25 × 4), never cost-biased. A drifted client copy would silently
+    // rewrite a user's weights the moment they click a preset.
+    const DEFAULT_WEIGHTS = { cost: 0.25, speed: 0.25, tier: 0.25, load: 0.25 }
     // P2 两层路由的 8 个预设：大白话中文名 + 一句说明，不暴露 tierPolicy 原始字段。
     // id 与 lib/routing.js resolveRoutingPolicy 的预设一一对应。
     const ROUTING_PRESETS = [
@@ -364,6 +367,16 @@ window.__ModuleLoader__.load({
     }
     const clone = v => {
       try { return JSON.parse(JSON.stringify(v ?? null)) } catch { return v }
+    }
+    // 顺序无关的 JSON 指纹：用来区分「用户真的动过这个表单」和「表单只是把
+    // Host 默认值渲染出来」。裸 JSON.stringify 在配置往返后键序可能不同，
+    // 会产生"幽灵写入"——账号保存过去正是这样把 ranking 整块覆盖掉的。
+    const stableSig = v => {
+      if (Array.isArray(v)) return '[' + v.map(stableSig).join(',') + ']'
+      if (v && typeof v === 'object') {
+        return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stableSig(v[k])).join(',') + '}'
+      }
+      return JSON.stringify(v) ?? 'null'
     }
 
     // ---- styles: only --dsw-alias-* tokens --------------------------------
@@ -728,7 +741,10 @@ window.__ModuleLoader__.load({
           model, hops: arr(hops).map(x => ({ provider: str(x?.provider), model: str(x?.model) })),
         })))
       }, [config?.chains])
-      const [msg, setMsg] = useState('')
+      // 提示状态是显式 {ok,msg}：早先用正则 /error|失败/i 猜颜色，英文失败
+      // 文案（Save failed）匹配不到就显示成绿色"成功"。
+      const [msg, setMsg] = useState(null)
+      const [rowErrors, setRowErrors] = useState({})
       const update = (gi, fn) => setGroups(prev => prev.map((g, i) => i === gi ? fn(g) : g))
       const moveHop = (gi, hi, dir) => update(gi, g => {
         const hops = [...g.hops], j = hi + dir
@@ -736,15 +752,31 @@ window.__ModuleLoader__.load({
         ;[hops[hi], hops[j]] = [hops[j], hops[hi]]
         return { ...g, hops }
       })
+      // 保存前校验：过去空 hop / 空模型的行被 filter 掉还提示"已保存"，
+      // 用户的输入静默消失。现在逐行报出原因并阻止保存。
+      const validate = () => {
+        const problems = {}
+        groups.forEach((g, gi) => {
+          const badHop = g.hops.findIndex(h => !str(h.provider) || !str(h.model))
+          if (!str(g.model)) problems[gi] = fmt(t, 'chains.errNoModel', { n: gi + 1 })
+          else if (!g.hops.length) problems[gi] = fmt(t, 'chains.errNoHop', { n: gi + 1 })
+          else if (badHop >= 0) problems[gi] = fmt(t, 'chains.errEmptyHop', { n: gi + 1, step: badHop + 1 })
+        })
+        return problems
+      }
       const save = async () => {
-        const out = {}
-        for (const g of groups) {
-          const hops = g.hops.filter(h => h.provider && h.model)
-          if (g.model && hops.length) out[g.model] = hops
+        const problems = validate()
+        setRowErrors(problems)
+        const bad = Object.keys(problems).length
+        if (bad > 0) {
+          setMsg({ ok: false, msg: fmt(t, 'chains.errBlocked', { n: bad }) })
+          return
         }
+        const out = {}
+        for (const g of groups) out[g.model] = g.hops.map(h => ({ provider: h.provider, model: h.model }))
         const r = await mutate([{ op: 'set', path: ['chains'], value: out }], revision)
         const ok = r?.ok === true
-        setMsg(ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}`)
+        setMsg({ ok, msg: ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}` })
       }
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
         h('div', { style: S.hero },
@@ -770,6 +802,7 @@ window.__ModuleLoader__.load({
             type: 'button', style: S.btn,
             onClick: () => update(gi, x => ({ ...x, hops: [...x.hops, { provider: provOpts[0]?.v, model: modelOpts[0]?.v }] })),
           }, t('action.addHop')),
+          rowErrors[gi] ? h('div', { style: S.err }, rowErrors[gi]) : null,
         )),
         h('div', { style: S.row },
           h('button', {
@@ -777,7 +810,7 @@ window.__ModuleLoader__.load({
             onClick: () => setGroups(p => [...p, { model: modelOpts[0]?.v, hops: [{ provider: provOpts[0]?.v, model: modelOpts[1]?.v ?? modelOpts[0]?.v }] }]),
           }, t('action.addChain')),
           h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
-          msg ? h('span', { style: /error|失败/i.test(msg) ? S.err : S.ok }, msg) : null,
+          msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
         ),
       )
     }
@@ -800,8 +833,10 @@ window.__ModuleLoader__.load({
       const number = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback)
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
         h(Field, { label: t('ranking.enabled'), help: t('ranking.enabledHelp') },
+          // Host 语义：ranking 块整体缺省 = enabled true；块内 enabled 缺省才是 false。
+          // 所以"没设置"必须显示为已开启，只有用户主动取消勾选才写 false。
           h('input', {
-            type: 'checkbox', checked: c.enabled === true,
+            type: 'checkbox', checked: c.enabled !== false,
             onChange: e => set('enabled', e.target.checked),
           }),
         ),
@@ -876,7 +911,8 @@ window.__ModuleLoader__.load({
     // 开关默认启用均衡；策略用大白话预设；定位/识别规则为只读说明，不造假数据。
     function RoutingForm({ t, cfg, onChange }) {
       const c = obj(cfg)
-      const enabled = c.enabled === true
+      // 未设置 = 开启（Host 默认 routing.enabled true）；只有显式 false 才是关。
+      const enabled = c.enabled !== false
       const strategy = str(c.strategy) || 'balanced'
       const selected = ROUTING_PRESETS.find(p => p.id === strategy)
       const set = (key, value) => onChange({ ...c, [key]: value })
@@ -950,29 +986,59 @@ window.__ModuleLoader__.load({
         return ['', ...[...seen].sort()]
       })()
       const configuredRanking = obj(config?.ranking)
-      const rankingCfg = Object.keys(configuredRanking).length === 0
-        ? { enabled: false, strategy: 'balanced', weights: { ...DEFAULT_WEIGHTS }, tierDirection: 'high', respectHopRoute: true, priorityMode: 'hard' }
-        : configuredRanking
-      const [rankingDraft, setRankingDraft] = useState(() => clone(rankingCfg) || {})
-      const [msg, setMsg] = useState('')
-      useEffect(() => { setRankingDraft(clone(Object.keys(obj(config?.ranking)).length ? config.ranking : rankingCfg) || {}) }, [config?.ranking])
+      // 初值只能是「真实已存的 ranking」，绝不合成 enabled:false 的默认块：
+      // ranking 整体缺省时 Host 是 enabled=true（lib/ranking.js
+      // DEFAULT_RANKING_CONFIG），合成出来的 false 一旦被保存，就成了
+      // "只想加个账号，结果把择优全关掉"。
+      const rankingBaseline = stableSig(configuredRanking)
+      const [rankingDraft, setRankingDraft] = useState(() => clone(configuredRanking) || {})
+      const [msg, setMsg] = useState(null)
+      const [rowErrors, setRowErrors] = useState({})
+      useEffect(() => { setRankingDraft(clone(obj(config?.ranking)) || {}) }, [config?.ranking])
       const update = (i, fn) => setRows(prev => prev.map((r, j) => j === i ? fn(r) : r))
       const toggleModel = (i, m) => update(i, r => ({
         ...r, models: r.models.includes(m) ? r.models.filter(x => x !== m) : [...r.models, m],
       }))
+      // 写 ranking 时必须把默认值为「开」的开关物化：块一旦存在，
+      // Host 读的是 enabled === true（lib/ranking.js:163）、
+      // adapter 读的是 routing.enabled === true（lib/adapter.js:232）。
+      const withOnDefaults = draft => {
+        const d = obj(draft)
+        const routing = obj(d.routing)
+        return { ...d, enabled: d.enabled !== false, routing: { ...routing, enabled: routing.enabled !== false } }
+      }
       const save = async () => {
-        const out = rows.filter(r => r.id && r.provider).map(r => ({
-          id: r.id, provider: r.provider,
-          credentialRef: r.credentialRef || undefined,
-          models: r.models,
-          tier: r.tier,
-        }))
-        const r = await mutate([
-          { op: 'set', path: ['accounts'], value: out },
-          { op: 'set', path: ['ranking'], value: rankingDraft },
-        ], revision)
+        const problems = {}
+        const out = []
+        rows.forEach((r, i) => {
+          const id = str(r.id).trim()
+          const provider = str(r.provider).trim()
+          // 过去这两种行被 filter 掉、还提示"已保存"，输入静默消失。
+          if (id && !provider) { problems[i] = fmt(t, 'accounts.errNoProvider', { name: id }); return }
+          if (!id && provider) { problems[i] = fmt(t, 'accounts.errNoName', { n: i + 1 }); return }
+          if (!id) return
+          out.push({
+            id, provider,
+            credentialRef: r.credentialRef || undefined,
+            models: r.models,
+            tier: r.tier,
+          })
+        })
+        setRowErrors(problems)
+        const bad = Object.keys(problems).length
+        if (bad > 0) {
+          setMsg({ ok: false, msg: fmt(t, 'accounts.errBlocked', { n: bad }) })
+          return
+        }
+        const ops = [{ op: 'set', path: ['accounts'], value: out }]
+        // 只有用户真的改过 ranking / routing 才写 ranking；否则只写 accounts，
+        // 「加个账号」不会顺手把择优配置改掉。
+        if (stableSig(rankingDraft) !== rankingBaseline) {
+          ops.push({ op: 'set', path: ['ranking'], value: withOnDefaults(rankingDraft) })
+        }
+        const r = await mutate(ops, revision)
         const ok = r?.ok === true
-        setMsg(ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}`)
+        setMsg({ ok, msg: ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}` })
       }
 
       // 只有用户真的写入过 ranking 才高亮某个预设；缺省不高亮，
@@ -1046,6 +1112,7 @@ window.__ModuleLoader__.load({
                 r.tier, v => update(i, x => ({ ...x, tier: v })), t('field.tier'),
               ),
             ),
+            rowErrors[i] ? h('div', { style: S.err }, rowErrors[i]) : null,
           )),
           h('button', { type: 'button', style: S.btn, onClick: () => setRows(p => [...p, blankAccount()]) }, t('action.addAccount')),
           h('div', { style: S.card },
@@ -1060,7 +1127,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', { style: S.row },
             h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
-            msg ? h('span', { style: /error|失败/i.test(msg) ? S.err : S.ok }, msg) : null,
+            msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
           ),
         ),
       )
@@ -1521,7 +1588,7 @@ window.__ModuleLoader__.load({
     function SmartSettingsSection({ t, form, remote, llm: injectedLlm, session: injectedSession, settings: injectedSettings, smartProvider, costService: propCostService, mountDiag, close }) {
       const [tab, setTab] = useState('overview')
       const [working, setWorking] = useState(false)
-      const [presetNotice, setPresetNotice] = useState('')
+      const [presetNotice, setPresetNotice] = useState(null)
       // @Remote 成本服务：由 injected() 软探测（ctx.get，非 inject）透传。
       // 绝不把它加进模块 inject —— 那是本模块 $mount 产出的，会死锁。
       const costService = smartProvider ?? propCostService
@@ -1811,12 +1878,17 @@ window.__ModuleLoader__.load({
           enabled: true,
           strategy: id,
           weights: preset.weights ? { ...preset.weights } : { ...DEFAULT_WEIGHTS },
+          // 第一层档位读的是 ranking.routing.strategy（lib/routing.js
+          // resolveRoutingPolicy，它按 {routing:{strategy}} 解析）；只写
+          // ranking.strategy 等于"点了一键预设但档位没变"。保留用户已有的
+          // 其它 routing 字段（tierPolicy / positionOverrides / weights…）。
+          routing: { ...obj(current.routing), enabled: true, strategy: id },
         }
-        setWorking(true); setPresetNotice('')
+        setWorking(true); setPresetNotice(null)
         const r = await mutate([{ op: 'set', path: ['ranking'], value: next }], revision)
         setWorking(false)
         const ok = r?.ok === true
-        setPresetNotice(ok ? fmt(t, 'preset.applied', { name: str(preset.label) || id }) : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}`)
+        setPresetNotice({ ok, msg: ok ? fmt(t, 'preset.applied', { name: str(preset.label) || id }) : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}` })
       }, [config, revision, mutate, t])
 
       return h('div', { style: S.wrap },
@@ -1826,7 +1898,7 @@ window.__ModuleLoader__.load({
             onClick: () => setTab(item.id),
           }, t(item.labelKey))),
         ),
-        presetNotice ? h('div', { style: S.ok }, presetNotice) : null,
+        presetNotice ? h('div', { style: presetNotice.ok ? S.ok : S.err }, presetNotice.msg) : null,
         tab === 'overview' ? h(Overview, { t, localConfig: config, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe: runProbe, applyPreset, working }) : null,
         tab === 'chains' ? h(ChainsTab, { t, form, revision, mutate, config, pi }) : null,
         tab === 'accounts' ? h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService }) : null,
@@ -1850,7 +1922,7 @@ window.__ModuleLoader__.load({
     const zh = {
       nav: 'Smart 智能路由',
       'tab.overview': '总览', 'tab.chains': '切换链', 'tab.accounts': '账号池 + 择优', 'tab.cost': '成本 / 健康',
-      'action.save': '保存', 'action.saved': '已保存，立即生效（无需重启）', 'action.saveFailed': '保存失败（错误：失败）',
+      'action.save': '保存', 'action.saved': '已保存，立即生效（无需重启）', 'action.saveFailed': '保存失败',
       'action.refresh': '刷新',
       'status.registered': '已注册', 'status.yes': '是', 'status.no': '否', 'status.chains': '链路数',
       'status.accounts': '账号数', 'status.cooldowns': '冷却中', 'status.strategyEnabled': '择优配置（用户设置）',
@@ -1904,11 +1976,18 @@ window.__ModuleLoader__.load({
       'chains.hint': '每个键是一个外层模型，值是按顺序尝试的 {provider, model} 数组。保存后热更新生效。',
       'chains.defaultHint': '当前显示内置默认链（你还没配置 chains）。编辑后点保存即写入你的配置并生效。',
       'chains.empty': '尚无链路配置（使用内置默认链）。',
+      'chains.errNoModel': '第 {n} 组还没选模型，保存已取消。',
+      'chains.errNoHop': '第 {n} 组还没有任何一步（服务商 / 模型），保存已取消。',
+      'chains.errEmptyHop': '第 {n} 组第 {step} 步还没选全服务商 / 模型，保存已取消。',
+      'chains.errBlocked': '有 {n} 组链路没填完整（见下方红字），这次没有保存；补齐后再点保存。',
       'accounts.title': '账号池', 'accounts.hint': '密钥只存引用名（credentialRef），不在此显示明文。',
       'accounts.templateHint': '你还没配置账号池，系统会自动使用你在 DSH 里登录的账号直连。想加账号？点下面的"添加一个账号"，从下拉里选就行。',
       'accounts.empty': '尚无账号配置。', 'accounts.raw': '账号 JSON（高级）',
+      'accounts.errNoProvider': '账号「{name}」还没选服务商，保存已取消。',
+      'accounts.errNoName': '第 {n} 个账号还没填名字，保存已取消（不想加就点删除）。',
+      'accounts.errBlocked': '有 {n} 个账号没填完整（见下方红字），这次没有保存；补齐后再点保存。',
       'ranking.title': '分级择优（详细）', 'ranking.enabled': '启用智能选择',
-      'ranking.enabledHelp': '关闭时完全保持旧行为：route 优先 + 最少使用。',
+      'ranking.enabledHelp': '不勾选 = 关闭；从未设置时默认开启（勾选态即 Host 的默认值）。关闭后完全保持旧行为：route 优先 + 最少使用。',
       'ranking.strategy': '策略预设', 'ranking.w.cost': '成本', 'ranking.w.speed': '速度',
       'ranking.w.tier': '等级', 'ranking.w.load': '负载',
       'ranking.tierDirection': '等级方向', 'ranking.tierDirectionHelp': 'high=高等级先用；low=先消耗备份额度。',
@@ -1916,7 +1995,7 @@ window.__ModuleLoader__.load({
       'ranking.priorityHelp': '注意：priority 数字越小越优先，与等级（tier 越高越优先）方向相反。',
       'ranking.probeEnabled': '新模型自动探测（默认开启）', 'ranking.probeEnabledHelp': '默认开启：新模型自动发一次极小请求判断是否免费（免费0成本，付费≤1 token，结果缓存7天不重复花钱）。不需要可关掉。',
       'routing.title': '智能路由（两层）', 'routing.intro': '这里保存你对智能路由的设置。保存后立即生效，无需重启。',
-      'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '内置默认启用，各策略中立等权、不偏向省钱或速度；你也可以显式关闭。',
+      'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '不勾选 = 关闭；从未设置时默认开启（勾选态即 Host 的默认值）。各策略中立等权、不偏向省钱或速度。',
       'routing.strategy': '选哪种路由风格',
       'routing.position': '模型定位', 'routing.positionHelp': '这是只读说明，不是可编辑的表格。',
       'routing.positionExplain': '每台模型的定位由自身能力自动推导（如是否支持推理、图片、长上下文）；个别模型可另外手填。当前页面不读取逐台模型的定位结果。',
@@ -2025,11 +2104,18 @@ window.__ModuleLoader__.load({
       'chains.hint': 'Each key is an outer model; value is an ordered {provider, model} array. Changes apply live.',
       'chains.defaultHint': 'Built-in default chain shown (no chains configured). Edit and save to write your own.',
       'chains.empty': 'No chain config (using built-in defaults).',
+      'chains.errNoModel': 'Model #{n} has no model selected — save cancelled.',
+      'chains.errNoHop': 'Model #{n} has no step (provider / model) yet — save cancelled.',
+      'chains.errEmptyHop': 'Model #{n} step {step} is missing a provider or model — save cancelled.',
+      'chains.errBlocked': '{n} chain(s) are incomplete (see the red notes) — nothing was saved. Fix them and save again.',
       'accounts.title': 'Account pool', 'accounts.hint': 'Secrets stay as references (credentialRef); no plaintext is shown.',
       'accounts.templateHint': 'No account pool configured — the system uses your signed-in DSH accounts directly. To add one, tap "Add an account" and choose from the dropdown.',
       'accounts.empty': 'No accounts configured.', 'accounts.raw': 'Accounts JSON (advanced)',
+      'accounts.errNoProvider': 'Account "{name}" has no provider selected — save cancelled.',
+      'accounts.errNoName': 'Account #{n} has no name — save cancelled (delete the row if you do not want it).',
+      'accounts.errBlocked': '{n} account(s) are incomplete (see the red notes) — nothing was saved. Fix them and save again.',
       'ranking.title': 'Ranking', 'ranking.enabled': 'Enable ranking',
-      'ranking.enabledHelp': 'Off keeps legacy behavior: route-first then least-used.',
+      'ranking.enabledHelp': 'Unchecked = off; when never set it is ON by default (the checked state mirrors the Host default). Off keeps legacy behavior: route-first then least-used.',
       'ranking.strategy': 'Strategy', 'ranking.w.cost': 'Cost', 'ranking.w.speed': 'Speed',
       'ranking.w.tier': 'Tier', 'ranking.w.load': 'Load',
       'ranking.tierDirection': 'Tier direction', 'ranking.tierDirectionHelp': 'high = premium first; low = burn backups first.',
@@ -2037,7 +2123,7 @@ window.__ModuleLoader__.load({
       'ranking.priorityHelp': 'Note: lower priority number wins — opposite to tier (higher wins).',
       'ranking.probeEnabled': 'Auto-probe new models (on by default)', 'ranking.probeEnabledHelp': 'On by default: new models get one tiny request to detect if free (free=0 cost, paid ≤1 token, cached 7 days). Turn off to opt out.',
       'routing.title': 'Two-layer smart routing', 'routing.intro': 'These are your saved routing settings. Saving applies them live — no restart.',
-      'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'On by default with neutral, equal-weight strategies — no bias toward cost or speed. You can turn it off explicitly.',
+      'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'Unchecked = off; when never set it is ON by default (the checked state mirrors the Host default). Strategies are neutral and equal-weight — no bias toward cost or speed.',
       'routing.strategy': 'Routing style',
       'routing.position': 'Model position', 'routing.positionHelp': 'Read-only explanation, not an editable table.',
       'routing.positionExplain': 'Each model position is derived from its own capabilities (reasoning, vision, long context); some can be declared manually. This page does not read per-model derived results.',
