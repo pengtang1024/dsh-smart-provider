@@ -44,6 +44,7 @@ const UNIT_TESTS = [
   'test/routing-tier.test.mjs',
   'test/persistence.test.mjs',
   'test/hydration-billing.test.mjs',
+  'test/health-snapshot.test.mjs',
 ]
 
 /** Every source file worth a syntax check (client.js is browser code too). */
