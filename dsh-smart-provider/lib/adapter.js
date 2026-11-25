@@ -27,7 +27,7 @@ import {
 } from './availability.js'
 import {
   createAccountHealthRegistry, stateOf as healthStateOf, noteSuccess, noteFailure,
-  getRecord as healthGetRecord, ACCOUNT_STATES,
+  getRecord as healthGetRecord, releaseHalfOpen, ACCOUNT_STATES,
 } from './account-health.js'
 import { resolveTopology } from './provider-topology.js'
 
@@ -644,6 +644,16 @@ export class SmartAdapter {
             if (failure.code === 'ABORTED' || kind === 'aborted') {
               // Never fall back on user cancellation.
               this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message), { startedAt, firstTokenAt, finishedAt: Date.now() })
+              // A cancellation is not evidence: hand back the HALF_OPEN permit
+              // reserved by plan() so the account stays selectable (P0 permit
+              // leak). Observation must never break the request path.
+              if (this.accountHealth) {
+                try {
+                  releaseHalfOpen(this.accountHealth, account.id)
+                } catch (error) {
+                  this.logger.warn?.('smart: release half-open permit failed: %o', error)
+                }
+              }
               yield chunk
               return
             }

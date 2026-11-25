@@ -335,6 +335,34 @@ export function reserveHalfOpen(registry, accountId, amount = 1) {
 }
 
 /**
+ * Return a consumed half-open permit when a request ends WITHOUT evidence.
+ *
+ * A user cancellation (ABORTED) is neither success nor failure: the real
+ * request never produced a verdict, so the permit reserved by plan() must be
+ * handed back or the account would stay HALF_OPEN with zero permits forever
+ * (only a restart would restore it). This restores the permit but deliberately
+ * does NOT change state — "no evidence, no recovery" (design §8) still holds;
+ * only noteSuccess/noteFailure may promote the account. No cooldown fields are
+ * written and the input record is never mutated (cloneRecord per file rule).
+ *
+ * @returns {boolean} true only when a HALF_OPEN record existed and was updated
+ */
+export function releaseHalfOpen(registry, accountId, permits) {
+  const records = recordsOf(registry)
+  const record = records?.get(accountId)
+  if (!record || record.state !== ACCOUNT_STATES.HALF_OPEN) return false
+  const restored = Number.isFinite(permits)
+    ? Math.max(1, Math.floor(permits))
+    : DEFAULT_HEALTH_CONFIG.halfOpenPermits
+  records.set(accountId, {
+    ...cloneRecord(record),
+    halfOpenPermits: restored,
+    updatedAt: Date.now(),
+  })
+  return true
+}
+
+/**
  * Final dispatch decision (design §1.2): model-layer permission ∩ account
  * state, with aggregator routes bypassing the account layer entirely.
  *
@@ -395,6 +423,7 @@ export default {
   noteSuccess,
   noteFailure,
   reserveHalfOpen,
+  releaseHalfOpen,
   isDispatchable,
   rebuildFromLedger,
 }

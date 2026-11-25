@@ -16,7 +16,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
 
 import {
   HEALTH, BILLING_TIER, FAILURE_KIND,
@@ -26,7 +26,7 @@ import {
 import {
   ACCOUNT_STATES, STATE_WEIGHTS, DEFAULT_HEALTH_CONFIG,
   kindFromLedgerCode, createAccountHealthRegistry, stateOf, weightOf, getRecord,
-  noteSuccess, noteFailure, reserveHalfOpen, isDispatchable, rebuildFromLedger,
+  noteSuccess, noteFailure, reserveHalfOpen, releaseHalfOpen, isDispatchable, rebuildFromLedger,
 } from '../lib/account-health.js'
 import {
   AGGREGATOR, DIRECT, UNKNOWN,
@@ -319,6 +319,48 @@ test('account health: reserveHalfOpen refuses non-half-open accounts', () => {
   noteSuccess(registry, 'acct-a')
   assert.equal(reserveHalfOpen(registry, 'acct-a'), false)
   assert.equal(reserveHalfOpen(registry, 'unknown-account'), false)
+})
+
+// --- P0-1: user cancellation must hand back the half-open permit -----------
+test('account health: releaseHalfOpen restores a spent permit without changing state', () => {
+  const registry = createAccountHealthRegistry({ halfOpenPermits: 1 })
+  const t0 = 1_700_000_000_000
+  const record = noteFailure(registry, 'acct-a', 'QUOTA', t0)
+  stateOf(registry, 'acct-a', record.until) // COOLING -> HALF_OPEN
+  assert.equal(reserveHalfOpen(registry, 'acct-a'), true)
+  const spent = getRecord(registry, 'acct-a')
+  assert.equal(spent.halfOpenPermits, 0)
+
+  assert.equal(releaseHalfOpen(registry, 'acct-a'), true)
+  const restored = getRecord(registry, 'acct-a')
+  assert.equal(restored.halfOpenPermits, 1, 'permit is returned')
+  assert.equal(restored.state, ACCOUNT_STATES.HALF_OPEN, 'no evidence: never promotes to ACTIVE')
+  assert.equal(restored.until, spent.until, 'no cooldown field is written or cleared')
+  assert.equal(spent.halfOpenPermits, 0, 'the input record is never mutated in place')
+
+  // A caller can override the restored permit count; invalid values fall back
+  // to the configured default (not a NaN / 0 permit that re-leaks the account).
+  assert.equal(releaseHalfOpen(registry, 'acct-a', 3), true)
+  assert.equal(getRecord(registry, 'acct-a').halfOpenPermits, 3)
+  assert.equal(releaseHalfOpen(registry, 'acct-a', Number.NaN), true)
+  assert.equal(getRecord(registry, 'acct-a').halfOpenPermits, DEFAULT_HEALTH_CONFIG.halfOpenPermits)
+})
+
+test('account health: releaseHalfOpen refuses non-half-open accounts', () => {
+  const registry = createAccountHealthRegistry()
+  const active = noteSuccess(registry, 'acct-a')
+  assert.equal(releaseHalfOpen(registry, 'acct-a'), false)
+  assert.deepEqual(getRecord(registry, 'acct-a'), active, 'ACTIVE record is unchanged')
+  const t0 = 1_700_000_000_000
+  const cooling = noteFailure(registry, 'acct-b', 'QUOTA', t0)
+  assert.equal(releaseHalfOpen(registry, 'acct-b'), false)
+  assert.deepEqual(getRecord(registry, 'acct-b'), cooling, 'COOLING record is unchanged')
+})
+
+test('account health: releaseHalfOpen does not create a missing record', () => {
+  const registry = createAccountHealthRegistry()
+  assert.equal(releaseHalfOpen(registry, 'ghost'), false)
+  assert.equal(getRecord(registry, 'ghost'), undefined)
 })
 
 test('account health: a real success restores ACTIVE and clears the streak', () => {
@@ -629,6 +671,82 @@ test('probe: cost 0 without a billing source is an honest unknown, never "free"'
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+// --- P0-1 end-to-end: ABORTED returns the permit so the account stays usable -
+// SmartAdapter's constructor loads LlmAdapter from @deepseek-ai/dsh-llm (inside
+// the DSH app.asar, unreadable by plain Node). Supply a throwaway profile with a
+// stub package so this suite stays in the plain-Node --unit gate while still
+// exercising the REAL constructor, REAL stream() and the REAL ABORTED branch.
+async function withStubDshProfile(fn) {
+  const dir = await mkdtemp(join(tmpdir(), 'smart-halfopen-'))
+  const previous = process.env.DSH_PROFILE_DIR
+  try {
+    const pkg = join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm')
+    await mkdir(pkg, { recursive: true })
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'halfopen-stub', version: '1.0.0' }))
+    await writeFile(join(pkg, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-llm', version: '1.0.0', main: 'index.js',
+    }))
+    await writeFile(join(pkg, 'index.js'), 'exports.LlmAdapter = class LlmAdapter {};')
+    process.env.DSH_PROFILE_DIR = dir
+    return await fn()
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR
+    else process.env.DSH_PROFILE_DIR = previous
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+test('P0-1 e2e: an ABORTED half-open attempt hands back the permit and the account is selectable again', async () => {
+  await withStubDshProfile(async () => {
+    const { SmartAdapter } = await import('../lib/adapter.js')
+    const { AccountPool } = await import('../lib/account-pool.js')
+    const chains = { auto: [{ provider: 'p', model: 'm' }] }
+    const accounts = [{ id: 'acctA', provider: 'p', credentialRef: 'K', models: ['m'] }]
+
+    const registry = createAccountHealthRegistry({ halfOpenPermits: 1 })
+    const t0 = 1_700_000_000_000
+    noteFailure(registry, 'acctA', 'QUOTA', t0)
+    stateOf(registry, 'acctA', getRecord(registry, 'acctA').until) // -> HALF_OPEN
+
+    const runtime = {
+      stream() {
+        return (async function* () {
+          yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'user cancelled' } } }
+        })()
+      },
+    }
+    const adapter = new SmartAdapter({
+      runtime, chains, accounts, meter: { record: () => {} },
+      health: { enabled: true, accountHealth: registry },
+      logger: { warn: () => {}, error: () => {} },
+    })
+
+    // First call: stream() -> plan() reserves the only permit -> ABORTED return.
+    const first = []
+    for await (const chunk of adapter.stream({ model: 'auto', sessionId: 's1' })) first.push(chunk)
+    assert.equal(first.at(-1).reason.kind, 'aborted', 'user cancellation still passes through unchanged')
+    assert.equal(getRecord(registry, 'acctA').state, ACCOUNT_STATES.HALF_OPEN)
+    assert.equal(getRecord(registry, 'acctA').halfOpenPermits, 1, 'ABORTED returned the consumed permit')
+
+    // The acceptance signal: the SAME account is selected again — without this
+    // the permit leak froze it permanently until restart.
+    const runtime2 = {
+      stream() {
+        return (async function* () {
+          yield { type: 'text-delta', text: 'ok' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()
+      },
+    }
+    adapter.runtime = runtime2
+    const second = []
+    for await (const chunk of adapter.stream({ model: 'auto', sessionId: 's2' })) second.push(chunk)
+    assert.equal(second.at(-1).reason.kind, 'stop', 'the recovered account serves a real request')
+    const planned = new AccountPool({ accounts, chains }).plan(chains.auto, Date.now())
+    assert.ok(planned.some(a => a.account.id === 'acctA'))
+  })
 })
 
 test('probe: the meta-provider "smart" is never probed', async () => {
