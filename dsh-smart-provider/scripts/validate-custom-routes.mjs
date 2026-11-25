@@ -49,10 +49,20 @@ for (const r of doc.routes) {
 // Existing route ids from the live pi-ai providers block (cordis.patch.yml).
 let existingProviderIds = []
 let existingModelsByRoute = new Map()
+let markerAbsent = false
 try {
   const profile = process.env.DSH_PROFILE || 'desktop'
   const patch = readFileSync(join(homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml'), 'utf8')
   const marker = patch.indexOf('providers:')
+  // Honest degrade (C3 follow-up): a live cordis managed by the DSH app may
+  // have no llm-pi-ai providers block at all. Searching from -1 would slice
+  // the whole file and silently pass zero checks, so surface it instead.
+  if (marker === -1) {
+    notes.push('  --  no "providers:" anchor in cordis.patch.yml (app-managed shape, no llm-pi-ai block): existing-provider overlap check SKIPPED, not passed')
+    existingProviderIds = []
+    existingModelsByRoute = new Map()
+    markerAbsent = true
+  }
   const tail = patch.slice(marker)
   const routeLineRe = /^ {6}([a-zA-Z0-9_.-]+):\s*$/gm
   for (const m of tail.matchAll(routeLineRe)) existingProviderIds.push(m[1])
@@ -64,7 +74,7 @@ try {
     const ids = [...body.matchAll(/^ {10}- id:\s*([^\s#]+)/gm)].map(x => x[1])
     existingModelsByRoute.set(id, new Set(ids))
   }
-  ok(`read ${existingProviderIds.length} existing provider ids from cordis.patch.yml`)
+  if (!markerAbsent) ok(`read ${existingProviderIds.length} existing provider ids from cordis.patch.yml`)
 } catch (e) {
   notes.push('  --  could not read existing providers, overlap check degraded: ' + e.message)
 }

@@ -20,7 +20,7 @@
 - **智能路由默认生效。** `smart/auto` 是默认模型，已在真实会话中验证选路、回退、成本记录与会话记录。
 - **省钱真落地（用户可选，不是默认）。** 自建免费路由 `x-opencode-free`（`hy4-flash-free`）排在 `auto` 链首，真实账本里该路由的每一笔 `estimated_cost_usd` 都是 `0`（已核对 213+ 笔，最近一次全量统计 487 笔 cost=0）；遇到 402/配额错误自动 fallback 到付费路由（`opencode-go`）。免费档由 `registry/custom-routes.user.yaml` 的 `tier: free` 自动排首，不需要改代码。
 - **配置页真读写。** 设置页展示来自 pi-ai 的真实资源（当前约 49 provider / 58 model，数量随你的 DSH 实时注册表变化）、真实凭据名与账号健康，并可写回插件配置；成本/健康 Tab 走 `@Remote` 真账通道（`lib/cost-stats.js` 读真实 `cost.jsonl` + `lib/remote.js` 暴露 `smartProvider.cost()`），不再依赖硬编码或空壳状态。
-- **P1（资源自适应）。** `chains` 动态生成（`discoverAutoChain()` 从实时注册表按 provider/model 名排序建中立 `auto` 链，不内置任何具体用户的模型 id）；内置默认链刻意为空 `DEFAULT_CHAINS={auto:[]}`，没配时使用用户当前真实拥有的路由；老配置（`chains` / `accounts` / `custom-routes.user.yaml`）原样保留、不覆盖；定价表缺失字段有降级 example（reasoning / cacheOutput 回退到 output，cacheRead / cacheWrite 回退到 input）；策略默认中立 `.25`（`balanced`）。
+- **P1（资源自适应）。** `chains` 动态生成（`discoverAutoChain()` 从实时注册表按 provider/model 名排序建中立 `auto` 链，不内置任何具体用户的模型 id）；内置默认链刻意为空 `DEFAULT_CHAINS={auto:[]}`，没配时使用用户当前真实拥有的路由；老配置（`chains` / `accounts` / `custom-routes.user.yaml`）原样保留、不覆盖；定价表缺失字段有降级回退（reasoning / cacheOutput 回退到 output，cacheRead / cacheWrite 回退到 input）；策略默认中立 `.25`（`balanced`）。
 - **三层健康自动管理默认开启。** 模型层（L1 `availability.js`）、账号层（L2 `account-health.js`）、拓扑层（L2a `provider-topology.js`）分开记账，注册表与设置页首屏共享同一对象引用。关键纠偏：参数不兼容/缺 header 的 4xx **不再连累模型健康**；冷却到期只变 `HALF_OPEN`，要一次真实请求成功才回到 `ACTIVE`（没有证据就没有恢复）；自带账号池的路由不会被再套一层。默认开启、可显式 opt-out，关闭后逐字节回 legacy。详见 §六。
 - **P2（两层智能路由）。** `lib/routing.js` 四个纯函数：`classifyTask`（请求分类）、`derivePosition`（模型位置标签）、`selectTiers`（层一候选层选择）、`resolveRoutingPolicy`（预设解析）。**默认关闭：只有 `ranking.routing.enabled=true` 才激活**；未配置或关闭时，代码路径逐字节等于现状（legacy），不选路、不加评分。支持的策略预设共 8 种：`balanced` / `cost-first` / `speed-first` / `reasoning-first` / `longctx-first` / `vision-first` / `legacy` / `custom`。
 
@@ -49,8 +49,9 @@ dsh-smart-provider/
 │   ├── cost-meter.js         非阻塞批量 JSONL 写入（含 account_id 字段）
 │   ├── cost-stats.js         读取真实 cost.jsonl 并聚合（供成本 Tab / @Remote）
 │   ├── remote.js             @Remote 服务 smartProvider.cost()
-│   ├── pricing.js            离线价格查询 + 美元估算（含字段降级）
-│   └── pricing.json          从 Bifrost config.db 只读导出的价格行
+│   ├── pricing.js            离线价格查询 + 美元估算（零价默认表 + tier 粗估降级）
+│   ├── pricing.json          产品默认价格表：仅零价（免费档）声明，不含真实单价
+│   └── pricing.example.json  作者 151 行真实价格导出（仅示例，不在默认加载路径）
 ├── registry/
 │   ├── custom-routes.user.yaml  自建路由唯一人工编辑点（x-opencode-free 在此）
 │   ├── custom-routes.yaml    生成后的自定义路由配置
@@ -63,7 +64,11 @@ dsh-smart-provider/
 ├── test/
 │   ├── account-pool.test.mjs 账号池回归测试（需 DSH runtime 读 app.asar）
 │   ├── health.test.mjs       健康层回归测试（纯逻辑，任何 Node 可跑）
-│   └── ranking.test.mjs      路由排序回归测试（纯逻辑）
+│   ├── ranking.test.mjs      路由排序回归测试（纯逻辑）
+│   ├── pricing.test.mjs      定价降级与解析顺序回归测试（纯逻辑）
+│   ├── latency.test.mjs      延迟度量与速度因子回归测试（需 DSH runtime）
+│   ├── loading.test.mjs      加载路径回归测试（需 DSH runtime）
+│   └── compaction.test.mjs   虚拟模型 contextWindow / 压缩预检回归测试（task-5，需 DSH runtime）
 ├── locale/{en,zh}.json       插件显示元数据
 ├── docs/DETAIL.md            插件管理器详情页
 ├── icon.svg                  原创图标
@@ -157,6 +162,8 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 ## 五、账号择优 ranking（P1，默认关闭）
 
 `ranking.js` 提供多因子账号评分（成本 / 速度 / 等级 / 负载），**默认关闭**；关闭或 `strategy:'legacy'` 时排序完全保持旧行为（路线优先 + 最少使用）。启用后策略预设：`legacy` / `balanced`（中立 .25）/ `cost-first` / `speed-first` / `tier-first` / `custom`。权重可自定义并在保存时归一化到和 = 1；典型 token 配比仅影响排序、不影响计费；`historical` 账本反哺用最近 N 条真实成本记录校正配比，但**不能反推真实单价**。配置字段清单见 `lib/ranking.js` 的 `RANKING_CONFIG_SCHEMA`。
+
+**速度因子的取值顺序（已落地）**：优先用本次会话账本里的真实延迟证据（`ctx.speedEvidence`，来自 `cost.jsonl` 的 `ttft_ms` / `tokens_per_second`，按 `account_id` 归集）；没有实测数据时回退到手填的 `speedTier`（fast/normal/slow）；两者都没有时取中性值 0.5。未启用 routing 或无任何证据时，评分结果与旧版逐字节一致（有回归测试锁定：`speed factor fallback chain: measured > speedTier > neutral`）。
 
 ---
 
@@ -299,8 +306,9 @@ P2 的全部逻辑前置于 `if (this.routing)`，未启用时 `classifyTask` / 
 DSH 自身没有货币级计量（`dsh-token-meter` 明确说 “not a billing record”），因此本包自行计量：
 
 1. **token 来源** —— 适配器在终止 `finish` 块之前捕获 `{type:'usage'}` 块（携带 `inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheWriteTokens`）。正常、出错、中止的流都会保留 usage，因此 token 计数可靠。
-2. **价格来源** —— `lib/pricing.json`，从 Bifrost 的 `governance_model_pricing` 表只读导出，限定为实际在用 provider 路由。记录的是公开标价/token，**不是账单** —— 未建模订阅与折扣；缺字段按降级表回退。
+2. **价格来源** —— 定价是用户数据，不随包分发真实单价。默认加载的是 `lib/pricing.json`（产品默认表，只含由 `scripts/gen-custom-routes.mjs` 从本地注册表生成的零价免费档声明，当前 4 行）；真实单价通过 `DSH_SMART_PRICING_FILE` 环境变量或 `registry/pricing.user.json` 导入（解析顺序：环境变量 → `registry/pricing.user.json` → 产品默认表）。两者都缺时，无表可查的模型返回 tier 粗估（`known:false` / `estimated:true`，金额恒为 0），绝不用任何账号的历史价格冒充单价。作者当时的 151 行真实价格导出降级为 `lib/pricing.example.json`，仅作导入格式示例，**不在默认加载路径**。记录的是公开标价/token，**不是账单** —— 未建模订阅与折扣；缺字段按降级表回退。
 3. **JSONL 行** —— 每个完成的 hop 追加一行到 `~/.dsh/smart-provider/cost.jsonl`，字段包括：`timestamp`、`outer_model`、`actual_provider`、`actual_model`、`input_tokens`、`output_tokens`、`estimated_cost_usd`、`hop_index`、`failure_code`，以及 `account_id`（服务该尝试的池账号；未配置池时为 `hop:provider/model`）和诊断字段：`cache_read_tokens`、`cache_write_tokens`、`usage_complete`、`price_known`、`request_id`、`seq`。
+   **延迟度量字段（缺数据时整段不写，不留 0 或 null）**：`started_at` / `first_token_at` / `finished_at`（ISO 时间戳）、`ttft_ms`（首 token 延迟 = first_token_at − started_at，两端点齐备且有序才写）、`duration_ms`（本次尝试总耗时）、`tokens_per_second`（输出 token 数 ÷ 全时长；DSH 的 usage 块只有 token 计数、没有逐 token 时间线，因此刻意用全时长而非 first_token_at 之后的时间窗，不做无依据的细化）。`lib/cost-stats.js` 对含这些键的行原样聚合，对不含的旧行行为不变。
    `usage_complete=false` 表示没有上报 usage 块（不是“零 token”）。
 4. **非阻塞写入** —— 入队只是内存 push；后台 flusher 按批（默认 16 条或 2 秒）执行一次 `fs.appendFile`。不等待流。磁盘错误转给 `ctx.logger.warn`，绝不传播进 LLM 流。
 5. **成本 Tab 真账** —— `lib/cost-stats.js` 读真实 `cost.jsonl` 并聚合（总花费 / 免费笔数 / 付费笔数 / 失败笔数 / 按 provider 拆分），经 `lib/remote.js` 的 `@Remote` 服务 `smartProvider.cost()` 提供给设置页，不依赖估算占位。
@@ -328,6 +336,8 @@ node scripts/query-cost.mjs --since 2026-11-23
 默认链在 `lib/chains.js`，内置表刻意为空；未配置时由 `discoverAutoChain()` 从实时 DSH 注册表生成中立 `auto` 链。插件配置的 `chains` / `accounts` / `ranking.routing` 都是 volatile（配置页改完即时生效，无需重启）。
 
 自建路由（如 `x-opencode-free`）只在 `registry/custom-routes.user.yaml` 声明（唯一人工编辑点），改完跑 `node scripts/validate-custom-routes.mjs` 与 `node scripts/gen-custom-routes.mjs --write`；`credentialRef` 只放凭据引用名，绝不放明文 key。
+
+**导入真实价格表**：定价是用户数据，插件不随包分发真实单价。把你的价格表写成一个 JSON 文件（格式参照 `lib/pricing.example.json`），然后二选一：设 `DSH_SMART_PRICING_FILE` 环境变量指向该文件，或放到 `registry/pricing.user.json`（随包一起被读取）。解析顺序：`DSH_SMART_PRICING_FILE` → `registry/pricing.user.json` → 产品默认表 `lib/pricing.json`（仅零价免费档声明）。都没有匹配行时，该模型返回 tier 粗估（`known:false` / `estimated:true`，金额恒 0），不会静默用错价。
 
 要新增同厂商的第二个账号，在 `llm-pi-ai.providers` 里用独立的 `apiKeyEnv` 注册第二条路由（例如 `opencode-go-alt`）。然后要么加一条指向它的 hop（旧的扁平写法），要么——推荐——在 `accounts` 池数组里同时声明两条路由，使账号级冷却生效。两种方式都不需要改 DSH 生产代码。
 
@@ -366,16 +376,16 @@ dsh-smart-provider: discovered N neutral auto hop(s) from live registry
 ```bash
 # 1) 一条命令跑完整验证门槛（语法检查 + 全套测试，自动选运行时）
 npm test
-# => 语法检查逐文件 ok；tests 83 / pass 83 / fail 0
+# => 语法检查逐文件 ok；tests 109 / pass 109 / fail 0（2026-11-25 实测，退出码 0）
 
-# 2) 只跑纯逻辑套件（health + ranking + routing，任何 Node 都行，无需 DSH）
+# 2) 只跑纯逻辑套件（health + ranking + pricing，任何 Node 都行，无需 DSH）
 npm run test:unit
-# => tests 69 / pass 69 / fail 0
+# => tests 79 / pass 79 / fail 0（退出码 0）
 
 # 3) 不带 npm 时等价写法
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/*.test.mjs
 
-# 4) JSON 完整性
+# 4) JSON 完整性（默认表当前 4 行零价声明；示例导出 151 行）
 node -e 'const p=require("./lib/pricing.json"); if(p._rows!==p.entries.length)throw Error("mismatch")'
 # 退出码：0
 
@@ -414,7 +424,7 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 - 成本估算是离线标价，未与 provider 真实账单对账；订阅与折扣未建模。
 - 健康层的判定逻辑有完整单元回归，但**尚未与真实多账号故障场景对账**：半开恢复、连击退避、拓扑自动升级的收益数字依赖用户自己的资源和流量，本文档不承诺具体收益。真实效果的观察口径是 `cost.jsonl` 里的 `failure_code` 分布与 `smart-health` 命令输出的账号状态。
 - P2 两层路由默认关闭；开启后 8 预设在真实多账号场景下的效果，依赖用户自己的配置与资源，本文档不承诺具体收益数字。
-- 自动测速属于 future（账本无起止时间）；`speedTier` 需手填。
+- 自动测速已落地：`cost.jsonl` 每行带 `started_at` / `first_token_at` / `ttft_ms` / `duration_ms` / `tokens_per_second`（缺数据不写字段），ranking 的速度因子按「实测优先 → `speedTier` → 中性回退」取值。仍缺的是真实多账号场景下实测证据对选路效果的量化收益——那依赖用户自己的流量，本文档不承诺数字。
 - HMR 的监听列表可能为空（日志 `watching []`）：此时**源码改动不会自动重载**，需要触发一次 profile 重组合（改配置 / 重装）或重启，宿主才会跑新代码。安装新组合包本身会立即触发重组合，不需要重启。
 - 最小 profile 里没有 `sessions` 服务，因此没有 `hop-selected` 会话记录；该记录依赖 `sessions`，属可选降级（账本中的 `account_id` 仍然完整）。
 - 配置页显示的 provider / model 数量随用户 DSH 实时注册表变化，文档不写死。

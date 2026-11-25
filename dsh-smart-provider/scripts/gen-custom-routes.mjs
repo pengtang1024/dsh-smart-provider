@@ -9,7 +9,9 @@
  *   1. cordis.patch.yml  -> x-* route under llm-pi-ai.providers
  *                        -> smart-provider config.chains (volatile, free-first)
  *   2. client.js         -> CUSTOM_PROVIDERS / CUSTOM_MODELS candidates
- *   3. lib/pricing.json  -> zero-priced entries for free models
+ *   3. lib/pricing.json  -> zero-priced entries for free models (the ONLY
+ *                           content this script ever writes there;
+ *                           lib/pricing.example.json is never touched)
  *
  * It NEVER edits an existing provider route or its models. The two cordis
  * marker pairs use deliberately DISTINCT text so one cannot substring-match
@@ -39,7 +41,10 @@ const JS_B = '// >>> custom-routes:candidates >>>'
 const JS_E = '// <<< custom-routes:candidates <<<'
 
 /** Replace an exact marker block, or insert `body` right after `anchor`.
- *  `begin` must be unique in the document; we guard against duplicates. */
+ *  `begin` must be unique in the document; we guard against duplicates.
+ *  Returns null when `anchorAfter` is given but absent — callers decide
+ *  whether to degrade honestly (warn + skip) or fail hard. Never silently
+ *  injects a synthetic block into a document that has no anchor for it. */
 function upsertBlock(text, begin, end, body, anchorAfter) {
   const a = text.indexOf(begin)
   const b = text.indexOf(end)
@@ -55,7 +60,7 @@ function upsertBlock(text, begin, end, body, anchorAfter) {
     return text.trimEnd() + '\n\n' + body + '\n'
   }
   const i = text.indexOf(anchorAfter)
-  if (i === -1) throw new Error(`anchor not found: ${JSON.stringify(anchorAfter)}`)
+  if (i === -1) return null // anchor absent: caller degrades (warn+skip); no injection
   const at = i + anchorAfter.length
   return text.slice(0, at) + '\n' + body + '\n' + text.slice(at)
 }
@@ -83,7 +88,19 @@ const providersYaml = yaml.stringify(providers, { indent: 2 }).trimEnd()
   .split('\n').map(l => '      ' + l).join('\n')
 const providersBlock = `${PM_B}\n${providersYaml}\n${PM_E}`
 const providersAnchor = '    providers:\n'
-cordis = upsertBlock(cordis, PM_B, PM_E, providersBlock, providersAnchor)
+const upserted = upsertBlock(cordis, PM_B, PM_E, providersBlock, providersAnchor)
+let providersAnchorMissing = false
+let chainsAnchorMissing = false
+if (upserted === null) {
+  providersAnchorMissing = true
+  // Honest degrade (C3 follow-up): a live cordis.patch.yml managed by the DSH
+  // app may have no llm-pi-ai providers block at all (no '    providers:'
+  // anchor). Skipping is correct; injecting a synthetic llm-pi-ai block into
+  // the user's patch would not be. The reason stays visible in the report.
+  console.warn('WARN providers: live cordis.patch.yml has no llm-pi-ai "providers:" anchor (app-managed shape) — providers block NOT written; chains/client/pricing artifacts still generated. Register llm-pi-ai in this profile to enable the providers block.')
+} else {
+  cordis = upserted
+}
 
 // ---- 2. smart config.chains block (4-space indent, volatile) -------------
 const chainsSrc = readFileSync(join(PKG_DIR, 'lib', 'chains.js'), 'utf8')
@@ -92,28 +109,37 @@ const chains = buildChains(doc, existingAuto)
 const chainsYaml = yaml.stringify({ chains }, { indent: 2 }).trimEnd()
   .split('\n').map(l => '    ' + l).join('\n')
 const chainsBlock = `${CM_B}\n${chainsYaml}\n${CM_E}`
-const smartPrefix = "- id: smart-provider\n  name: '@local/dsh-smart-provider'\n  config:"
-const smartAnchor = smartPrefix + ' {}\n'
+// Quote-agnostic: yaml.stringify emits the name with double quotes while
+// hand-written patches often use single quotes; accept both shapes.
+const smartPrefixRe = /- id: smart-provider\n  name: (['"])@local\/dsh-smart-provider\1\n  config:/
+const smartAnchorRe = /- id: smart-provider\n  name: (['"])@local\/dsh-smart-provider\1\n  config: \{\}\n/
 let finalCordis
 if (cordis.includes(CM_B) && cordis.includes(CM_E)) {
   const a = cordis.indexOf(CM_B)
   const b = cordis.indexOf(CM_E, a) + CM_E.length
   finalCordis = cordis.slice(0, a) + chainsBlock + cordis.slice(b)
-} else if (cordis.includes(smartAnchor)) {
-  // Replace `config: {}` with `config:\n<chains block>` in one shot.
-  finalCordis = cordis.replace(smartAnchor, smartPrefix + '\n' + chainsBlock + '\n')
-} else if (cordis.includes(smartPrefix)) {
+} else if (smartAnchorRe.test(cordis)) {
+  // Replace `config: {}` with `config:\n<chains block>` in one shot,
+  // preserving the quote style the patch already uses.
+  const matched = cordis.match(smartAnchorRe)[0]
+  finalCordis = cordis.replace(matched, matched.replace(/config: \{\}\n$/, 'config:\n' + chainsBlock + '\n'))
+} else if (smartPrefixRe.test(cordis)) {
   // Legacy/foreign shape: `config:` already has a bare `chains:` subtree
   // (e.g. written by an older generator, or by hand). Replace exactly the
   // smart-provider config subtree up to the next top-level `- id:` row,
   // wrapping it in our markers so subsequent runs are idempotent. Never
   // touch any other entry.
-  const a = cordis.indexOf(smartPrefix)
-  const nextRow = cordis.indexOf('\n- id:', a + smartPrefix.length)
+  const m3 = cordis.match(smartPrefixRe)
+  const a = m3.index
+  const nextRow = cordis.indexOf('\n- id:', a + m3[0].length)
   const end = nextRow === -1 ? cordis.length : nextRow + 1
-  finalCordis = cordis.slice(0, a) + smartPrefix + '\n' + chainsBlock + '\n' + cordis.slice(end)
+  finalCordis = cordis.slice(0, a) + m3[0] + '\n' + chainsBlock + '\n' + cordis.slice(end)
 } else {
-  throw new Error('cordis.patch.yml: smart-provider config anchor not found')
+  // Honest degrade: no smart-provider entry in the live patch either. Warn and
+  // skip the chains artifact instead of failing the whole generation.
+  console.warn('WARN chains: live cordis.patch.yml has no recognizable smart-provider config anchor (entry missing or config shape not {}/config: subtree) — chains block NOT written; other artifacts still generated.')
+  chainsAnchorMissing = true
+  finalCordis = cordis
 }
 
 // ---- 3. client.js candidates ---------------------------------------------
@@ -142,12 +168,27 @@ const statusManifest = [
 const clientBody = `${JS_B}\nconst CUSTOM_PROVIDERS = ${JSON.stringify(provIds)};\nconst CUSTOM_MODELS = ${JSON.stringify(modelIds)};\n${statusManifest}\n${JS_E}`
 const clientAfter = upsertBlock(clientBefore, JS_B, JS_E, clientBody, undefined)
 
-// ---- 4. pricing.json ------------------------------------------------------
+// ---- 4. pricing.json (product default: zero-price declarations ONLY) ------
+// C3 ruling: pricing is user data, never a product default. This artifact
+// manages ONLY lib/pricing.json, whose entries must all be zero-priced
+// (free-tier) declarations. buildPricing() can emit REAL per-token prices when
+// a registry model declares m.price — those are user data and are refused
+// here with a loud note (they belong in the user's own table via
+// registry/pricing.user.json or DSH_SMART_PRICING_FILE). The example export
+// lib/pricing.example.json is NEVER read or written by this script.
 const pricingPath = join(PKG_DIR, 'lib', 'pricing.json')
 const pricingBefore = readFileSync(pricingPath, 'utf8')
 const pricing = JSON.parse(pricingBefore)
-const additions = buildPricing(doc).filter(e =>
-  !(pricing.entries ?? []).some(x => `${x.provider}/${x.model}` === `${e.provider}/${e.model}`))
+const pricedRows = []
+const additions = buildPricing(doc).filter(e => {
+  if ((pricing.entries ?? []).some(x => `${x.provider}/${x.model}` === `${e.provider}/${e.model}`)) return false
+  if ((Number(e.input) || 0) > 0 || (Number(e.output) || 0) > 0) { pricedRows.push(e); return false }
+  return true
+})
+if (pricedRows.length) {
+  console.warn('pricing: skipped REAL-price rows (user data never ships as a product default; declare them in registry/pricing.user.json instead):')
+  for (const e of pricedRows) console.warn(`  - ${e.provider}/${e.model} (input=${e.input}, output=${e.output})`)
+}
 pricing.entries = [...(pricing.entries ?? []), ...additions]
 pricing._rows = pricing.entries.length
 const pricingAfter = JSON.stringify(pricing, null, 2) + '\n'
@@ -157,8 +198,19 @@ const pricingAfter = JSON.stringify(pricing, null, 2) + '\n'
 // prior agent wrote cordis outside this generator and dropped
 // agent-default-model (2026-11-24 P0). A set-diff guard alone would silently
 // bake the missing entry into every future gen, so require the invariant too.
+// Required top-level ids depend on what the live patch actually hosts. On an
+// app-managed profile without an llm-pi-ai block (providers/chains degraded
+// above), demanding llm-pi-ai would misfire — require only ids that exist in
+// the starting patch's expected shape, and record what was waived.
 const REQUIRED_IDS = ['agent-default-model', 'smart-provider', 'llm-pi-ai']
-const missingRequired = REQUIRED_IDS.filter(id => !idsBefore.includes(id))
+const waivedRequired = [
+  ...(providersAnchorMissing ? ['llm-pi-ai'] : []),
+  ...(chainsAnchorMissing ? ['smart-provider'] : []),
+]
+const missingRequired = REQUIRED_IDS.filter(id => !idsBefore.includes(id) && !waivedRequired.includes(id))
+if (waivedRequired.length) {
+  console.warn('GUARD NOTE: ' + waivedRequired.join(', ') + ' not present in live cordis.patch.yml (app-managed shape) — requirement waived for this run, not baked into any file.')
+}
 if (missingRequired.length) {
   console.error('GUARD FAIL: cordis.patch.yml is missing required top-level entries: ' + missingRequired.join(', '))
   console.error('  Restore them BEFORE gen --write; refusing to bake a broken patch.')

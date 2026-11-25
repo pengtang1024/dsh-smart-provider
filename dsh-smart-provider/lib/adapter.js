@@ -43,6 +43,18 @@ const CONTENT_CHUNK_TYPES = new Set([
   'block-start', 'text-delta', 'reasoning-delta', 'tool-call-delta', 'block-end',
 ])
 
+/**
+ * task-5: conservative contextWindow floor for virtual models whose first hop
+ * has no cached capacity yet (no discovered route, or the provider's own
+ * catalog omits contextWindow). 128000 tokens is the de-facto lower bound of
+ * the current frontier models served through smart routes (128k DeepSeek/GPT
+ * class); a smaller real window only makes compaction kick in earlier, so an
+ * honest floor never fakes capacity the hop does not have. refreshDiscoveredChains()
+ * refreshes the routes cache on every llm/adapters-updated / llm/models-updated
+ * event, so a provider that later declares its real window replaces this floor.
+ */
+const VIRTUAL_CONTEXT_WINDOW_FLOOR = 128000
+
 /** Cooldown durations in milliseconds — named so no magic numbers hide in logic. */
 const COOLDOWN_MS = Object.freeze({
   quotaDefault: 30 * 60 * 1000,   // 30 min when no upstream hint is available
@@ -263,19 +275,60 @@ export class SmartAdapter {
     return resolveRetryPolicy(SMART_RETRY_CONFIG, 'llm: provider "smart" retryPolicy')
   }
 
-  /** [P0-2] The base class advertises an empty catalog; list the virtual models. */
+  /**
+   * [P0-2] The base class advertises an empty catalog; list the virtual models.
+   *
+   * task-5: each virtual model must advertise a REAL contextWindow, otherwise
+   * the host's compaction preflight (compactPressure) resolves
+   * `info.context === undefined` and refuses the model switch with
+   * "compaction-basic: no context capacity for smart/<id>". listModels is a
+   * pure synchronous catalog snapshot (the registry only awaits it), so the
+   * window is read from ALREADY-CACHED data:
+   *   1. the first hop of the model's chain (resolveChain), matched against
+   *      the routes metadata refreshDiscoveredChains() filled (each route
+   *      entry may carry a contextWindow from the provider's own listModels);
+   *   2. fall back to a deliberately conservative floor (128000, the de-facto
+   *      lower bound of current frontier models) — never a fabricated large
+   *      number, and the honest default is also what refreshDiscoveredChains
+   *      will refresh after each registry event.
+   */
   listModels(_provider) {
     const ids = Object.keys(this.chains).filter(id => id !== '*')
     const models = [{
       provider: 'smart',
       id: 'auto',
       name: 'Smart Auto (智能切换)',
+      contextWindow: this.#virtualContextWindow('auto'),
     }]
     for (const id of ids) {
       if (id === 'auto') continue
-      models.push({ provider: 'smart', id, name: `Smart / ${id}` })
+      models.push({ provider: 'smart', id, name: `Smart / ${id}`, contextWindow: this.#virtualContextWindow(id) })
     }
     return Promise.resolve(models)
+  }
+
+  /**
+   * task-5: cached contextWindow of one virtual model's first hop. Pure
+   * in-memory lookups (no I/O — listModels may be called synchronously by the
+   * registry); the routes cache is kept fresh by refreshDiscoveredChains().
+   */
+  #virtualContextWindow(outerModel) {
+    const first = resolveChain(outerModel, this.chains)[0]
+    if (!first) return VIRTUAL_CONTEXT_WINDOW_FLOOR
+    const route = this.routes.find(r => r?.provider === first.provider)
+    for (const entry of route?.models ?? []) {
+      const id = typeof entry === 'string' ? entry : entry?.id
+      if (id === first.model) {
+        const window = typeof entry === 'string' ? undefined : entry?.contextWindow
+        // Only trust a positive integer; anything else (absent, malformed,
+        // zero) falls back to the conservative floor instead of guessing.
+        if (Number.isInteger(window) && window > 0) return window
+        return VIRTUAL_CONTEXT_WINDOW_FLOOR
+      }
+    }
+    // First hop not present in the discovered route cache (e.g. chains
+    // configured before discovery ran): conservative floor, refreshed later.
+    return VIRTUAL_CONTEXT_WINDOW_FLOOR
   }
 
   /** [P0-2] Delegate image pricing to the first real hop; no I/O allowed here. */
@@ -297,10 +350,20 @@ export class SmartAdapter {
   async resolveModel(provider, model, signal) {
     const first = resolveChain(model, this.chains)[0]
     if (!first || typeof this.runtime.resolveModelInfo !== 'function') {
-      return { provider, id: model, name: model }
+      // task-5: no chain or no runtime capability — return the cached-window
+      // fallback (same conservative floor listModels uses) so the host's
+      // compaction preflight still sees a capacity instead of refusing the
+      // switch with "no context capacity for smart/<id>".
+      return { provider, id: model, name: model, context: { contextWindow: this.#virtualContextWindow(model) } }
     }
     const info = await this.runtime.resolveModelInfo(first.provider, first.model, signal)
-    return { ...info, provider, id: model }
+    // task-5: the runtime's resolveModelInfo carries { context: { contextWindow } }
+    // from the real first hop; keep it verbatim. If the hop's own catalog
+    // omitted it, backfill the cached/floor window so resolveModelInfo never
+    // returns context === undefined for a smart route.
+    const contextWindow = info?.context?.contextWindow
+      ?? this.#virtualContextWindow(model)
+    return { ...info, provider, id: model, context: { contextWindow } }
   }
 
   /** The agent loop goes through prepareCall; delegate it as well. */
@@ -344,8 +407,13 @@ export class SmartAdapter {
     }
   }
 
-  /** Record one finished attempt into the non-blocking cost meter. */
-  #recordCost(options, hopIndex, hop, usage, failureCode, accountId, failureMessage) {
+  /**
+   * Record one finished attempt into the non-blocking cost meter.
+   * P2 (task-1): `latency` carries this attempt's real stream timeline
+   * ({startedAt, firstTokenAt, finishedAt}, ms); the meter derives the ledger
+   * fields and omits any that lack data. Never blocks the stream.
+   */
+  #recordCost(options, hopIndex, hop, usage, failureCode, accountId, failureMessage, latency) {
     try {
       this.meter.record({
         outerModel: options.model,
@@ -356,6 +424,7 @@ export class SmartAdapter {
         hopIndex,
         failureCode,
         failureMessage,
+        latency,
       })
     } catch (error) {
       this.logger.warn?.('smart: cost meter enqueue failed: %o', error)
@@ -544,6 +613,14 @@ export class SmartAdapter {
         this.#recordHop(options.sessionId, hopIndex, hop, lastFailureCode, account.id)
         this.accountPool.noteAttempt(account.id)
 
+        // P2 (task-1) latency timeline for THIS attempt. Pure Date.now()
+        // reads: no I/O, no awaits, nothing that could block or reorder the
+        // stream. firstTokenAt is stamped on the first CONTENT chunk below —
+        // the same point where `emitted` flips, so the establishment boundary
+        // semantics are untouched (fallback-before-first-chunk stays as-is).
+        const startedAt = Date.now()
+        let firstTokenAt
+
         const inner = this.runtime.stream({
           ...options,
           provider: hop.provider,
@@ -556,7 +633,7 @@ export class SmartAdapter {
           if (chunk?.type === 'finish') {
             const kind = chunk.reason?.kind
             if (kind === 'stop' || kind === 'tool-calls' || kind === 'max-tokens') {
-              this.#recordCost(options, hopIndex, hop, usage, null, account.id)
+              this.#recordCost(options, hopIndex, hop, usage, null, account.id, null, { startedAt, firstTokenAt, finishedAt: Date.now() })
               this.#noteAttemptOutcome(hop, account, null, usage, now)
               this.cooldowns.delete(account.id)
               yield chunk
@@ -566,19 +643,19 @@ export class SmartAdapter {
             const failure = normalizeFailure(chunk.reason?.failure)
             if (failure.code === 'ABORTED' || kind === 'aborted') {
               // Never fall back on user cancellation.
-              this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message))
+              this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message), { startedAt, firstTokenAt, finishedAt: Date.now() })
               yield chunk
               return
             }
             if (emitted) {
               // Content already left the process; the response cannot be rewound.
-              this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message))
+              this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message), { startedAt, firstTokenAt, finishedAt: Date.now() })
               yield chunk
               return
             }
             lastFailure = chunk.reason?.failure ?? failure
             lastFailureCode = failure.code
-            this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message))
+            this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message), { startedAt, firstTokenAt, finishedAt: Date.now() })
             this.#noteAttemptOutcome(hop, account, failure, usage, now)
             if (SWITCHABLE_CODES.has(failure.code) || !emitted) {
               this.#setCooldown(account, failure, { provider: hop.provider, modelId: hop.model })
@@ -586,7 +663,10 @@ export class SmartAdapter {
             break
           }
 
-          if (CONTENT_CHUNK_TYPES.has(chunk?.type)) emitted = true
+          if (CONTENT_CHUNK_TYPES.has(chunk?.type)) {
+            if (!emitted) firstTokenAt = Date.now()
+            emitted = true
+          }
           yield chunk
         }
         // A stream that ends without a terminal finish is treated as an
@@ -601,7 +681,7 @@ export class SmartAdapter {
         if (emitted) throw error
         lastFailure = error
         lastFailureCode = failure.code
-        this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message))
+        this.#recordCost(options, hopIndex, hop, usage, failure.code, account.id, sanitizeFailureMessage(failure.message), { startedAt, firstTokenAt, finishedAt: Date.now() })
         this.#noteAttemptOutcome(hop, account, failure, usage, now)
         this.#setCooldown(account, failure, { provider: hop.provider, modelId: hop.model })
       }

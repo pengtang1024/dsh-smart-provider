@@ -13,6 +13,16 @@ import {
   resolveWeights,
 } from '../lib/ranking.js'
 
+// task-2 (pricing2) changed lib/pricing.js: with no user table the module now
+// answers coarse tier estimates instead of the historical author prices. The
+// two tests below assert the table/fallback RESOLUTION BRANCHES of
+// resolveEffectivePrice, so this suite pins the explicit author export
+// (lib/pricing.example.json) BEFORE any price lookup runs — pricing.js
+// memoizes its index on first use, and ranking.js binds priceFor statically,
+// so the env must be set before the first resolveEffectivePrice call in this
+// process. Assertions themselves are unchanged from the pre-task-2 suite.
+process.env.DSH_SMART_PRICING_FILE = new URL('../lib/pricing.example.json', import.meta.url).pathname
+
 function account(id, extra = {}) {
   // `provider` is a base field, not a ranking field: keep it out of the
   // ranking normalizer so route-layer tests see the intended provider.
