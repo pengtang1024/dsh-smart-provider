@@ -21,11 +21,19 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { buildHealthSnapshot } from '../lib/health-snapshot.js'
 import {
   ACCOUNT_STATES, createAccountHealthRegistry, getRecord, isDispatchable, noteFailure,
 } from '../lib/account-health.js'
+
+// E2A2 wiring proof: read index.js as source text (it cannot be imported under
+// plain node — it pulls @deepseek-ai/* from the app.asar runtime).
+const PKG = dirname(dirname(fileURLToPath(import.meta.url)))
+const INDEX_SRC = readFileSync(join(PKG, 'index.js'), 'utf8')
 
 const NOW = 1_700_000_000_000
 const MINUTE = 60 * 1000
@@ -311,4 +319,62 @@ for (const c of EQUIVALENCE_CASES) {
     assert.equal(off.until, c.effectiveUntil, 'off branch keeps the MAX invariant')
   })
 }
+
+/**
+ * E2A2 (task-30): NEW assertions only — the 12 characterization/equivalence
+ * tests above are untouched. Together they prove the flag is threaded from the
+ * real reader into mergeCooldown's 4th arg, not merely defined as a function.
+ */
+
+/** Minimal bracket matcher for the builder call's object literal in index.js. */
+function matchBracketLocal(source, open) {
+  const pairs = { '(': ')', '[': ']', '{': '}' }
+  const stack = [pairs[source[open]]]
+  for (let i = open + 1; i < source.length; i += 1) {
+    const ch = source[i]
+    if (ch === '(' || ch === '[' || ch === '{') stack.push(pairs[ch])
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      if (stack.pop() !== ch) return -1
+      if (stack.length === 0) return i
+    }
+  }
+  return -1
+}
+
+// 13. Behavioral: legacy later but flag on -> wire snapshot reads L2-only,
+// proving mergeCooldown received the 4th arg (not merely that it exists).
+test('E2A2 wiring: singleCooldown on -> snapshot until follows L2, off -> MAX', () => {
+  const legacyUntil = NOW + 45 * MINUTE
+  const l2Until = NOW + 5 * MINUTE
+  const cooldowns = new Map([[ACCOUNT.id, { until: legacyUntil, reason: 'QUOTA' }]])
+  const registry = l2Carrier('QUOTA', l2Until, NOW)
+
+  const off = snapshotRowWith({ cooldowns, accountHealth: registry, singleCooldown: false })
+  const on = snapshotRowWith({ cooldowns, accountHealth: registry, singleCooldown: true })
+
+  assert.equal(off.until, legacyUntil, 'off keeps the legacy MAX authority')
+  assert.equal(on.until, l2Until, 'on reads the L2-only authority via mergeCooldown 4th arg')
+  assert.notEqual(on.until, off.until, 'the flag must actually change the wire snapshot')
+})
+
+// 14. Field-level: the production healthReader closure in index.js really
+// passes adapter?.healthSingleCooldown into buildHealthSnapshot. Guards the
+// "function added but never wired" regression this task fixes.
+test('E2A2 wiring: index.js healthReader passes singleCooldown into the builder', () => {
+  const readerAt = INDEX_SRC.indexOf('const healthReader')
+  assert.notEqual(readerAt, -1, 'healthReader closure must exist')
+  const readerTail = INDEX_SRC.slice(readerAt)
+  const remoteAt = readerTail.indexOf('new SmartProviderRemote')
+  assert.notEqual(remoteAt, -1, 'healthReader must be followed by the remote construction')
+  const readerBody = readerTail.slice(0, remoteAt)
+
+  const callAt = readerBody.indexOf('buildHealthSnapshot(')
+  assert.notEqual(callAt, -1, 'the reader must delegate to buildHealthSnapshot')
+  const open = callAt + 'buildHealthSnapshot('.length - 1
+  const close = matchBracketLocal(readerBody, open)
+  assert.notEqual(close, -1, 'buildHealthSnapshot() call is unbalanced')
+  const passed = readerBody.slice(open + 1, close)
+  assert.match(passed, /singleCooldown\s*:\s*adapter\?\.healthSingleCooldown/,
+    'healthReader must thread adapter?.healthSingleCooldown into buildHealthSnapshot')
+})
 

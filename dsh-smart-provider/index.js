@@ -144,6 +144,9 @@ export function apply(ctx, config = Config({})) {
       enabled: adapter?.health !== undefined,
       accountHealth: adapter?.accountHealth,
       cooldowns: adapter?.cooldowns,
+      // E2A2: thread the opt-in through to mergeCooldown's 4th arg so the
+      // frozen wire snapshot reads the L2-only authority on the on-branch.
+      singleCooldown: adapter?.healthSingleCooldown,
       usage: pool?.usage,
       accounts,
       availabilityRegistry: adapter?.availabilityRegistry,
