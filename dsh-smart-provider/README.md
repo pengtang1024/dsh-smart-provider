@@ -276,6 +276,21 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 
 `health` 里可调 `accountHealth`（`halfOpenPermits` / `backoffFactor` / `maxCooldownMs` / `defaultCooldownMs`）、`topologyOpts`（`declaredFlag` / `observedAccountIds` / `declaration`）、`virtualProviders`（额外虚拟路由；`smart` 永远在内）、`currentIdList`（判定重命名用）。
 
+### 设置页「账号健康 / 冷却」面板（1.3.0）
+
+这一块此前只有一段占位说明。现在它读的是 Host 的实时注册表，不是估算、也不是缓存镜像：`lib/remote.js` 的 `@Remote` 方法 `smartProvider.accountHealth()` 把 `index.js` 注入的惰性 reader 结果交给纯函数 `lib/health-snapshot.js`（`buildHealthSnapshot()`：无 I/O、不改入参、永不抛错；读路径**不写注册表**，`COOLING` 过期是纯推导成 `HALF_OPEN`，有效冷却取账号记录与适配器两层 `until` 的较大值）。
+
+面板两张表：**账号池状态**（账号 / 路由 / 状态 / 剩余冷却 / 连续失败 / 尝试次数 / 成功·失败样本，链路派生的隐式账号标「自动派生」）与**各模型路由健康**（路由 / 模型 / 健康 / 计费档 / 可信度 / 样本）。状态只有四种读法：
+
+| 显示 | 什么时候 | 颜色 |
+|---|---|---|
+| 暂无数据 | 没有任何样本，或字段缺失 / 值畸形（`UNKNOWN`）| 中性灰 |
+| 健康 | 最近一次真实请求成功（`ACTIVE` / `HEALTHY`）| 绿 |
+| 冷却中 | 正在冷却；剩余时间取两层 `until` 的较大值 | 警告色（**不是红**）|
+| 半开待验证 | 冷却到期，等一次真实请求证明自己 | 警告色（**不是红**）|
+
+**诚实约定**：零样本一律显示「暂无数据」，绝不显示「不可用」，也绝不因为"没有坏消息"就涂成绿色；未知值一律退中性灰。健康层被关闭时（`health: false` / `health.enabled: false` / `ranking.health.enabled: false`）面板直接说「健康层当前是关闭的」，不假装正常、不拿空表冒充健康；通道本身不可用时显示诊断行，把失败原因摊开而不是静默留白。刷新方式是**快照时间 + 手动「重新读取」按钮**，刻意不用 `setInterval` 倒计时 —— 定时器在设置页反复挂载/卸载时会泄漏。
+
 ## 七、两层智能路由 routing（P2，默认关闭）
 
 ### 配置方式
@@ -468,16 +483,16 @@ FAIL: 1 file(s) under test/ are never executed by the full gate:
 Rename it to <name>.test.mjs (or move it out of test/) so it actually runs.
 ```
 
-`--unit` 是一个**纯逻辑白名单**（当前 6 个 suite：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence`），其余需要 DSH runtime 的 suite 会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
+`--unit` 是一个**纯逻辑白名单**（当前 9 个 suite：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface`），其余需要 DSH runtime 的 suite 会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
 
 ```bash
 # 1) 一条命令跑完整验证门槛（语法检查 + 全部自动发现的测试，自动选运行时）
 npm test
-# => 发现 11 个 suite；语法检查逐文件 ok；tests 159 / pass 159 / fail 0（2026-11-25 实测，退出码 0）
+# => 发现 14 个 suite；语法检查逐文件 ok；tests 188 / pass 188 / fail 0（2026-11-25 实测，退出码 0）
 
-# 2) 只跑纯逻辑子集（6 个 suite，任何 Node 都行，无需 DSH；会打印未覆盖的 suite）
+# 2) 只跑纯逻辑子集（9 个 suite，任何 Node 都行，无需 DSH；会打印未覆盖的 suite）
 npm run test:unit
-# => tests 123 / pass 123 / fail 0（退出码 0）
+# => tests 152 / pass 152 / fail 0（退出码 0）
 
 # 3) 不带 npm 时等价写法（全量就是发现出来的那批文件）
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/*.test.mjs
@@ -538,4 +553,4 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 ## English summary (secondary)
 
-`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a settings page with real pi-ai resources and `@Remote` real-ledger cost tab, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 opt-in two-layer routing (`ranking.routing.enabled=true`, 8 presets, byte-for-byte legacy when off; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (168 full-suite / 132 pure-logic assertions, measured 2026-11-25, exit 0). See `docs/DETAIL.md` for the plugin detail page and the three design docs in the parent workspace for the full design rationale.
+`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a settings page with real pi-ai resources and `@Remote` real-ledger cost tab, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 opt-in two-layer routing (`ranking.routing.enabled=true`, 8 presets, byte-for-byte legacy when off; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (188 full-suite / 152 pure-logic assertions across 14 / 9 suites, measured 2026-11-25, exit 0), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). See `docs/DETAIL.md` for the plugin detail page and the three design docs in the parent workspace for the full design rationale.

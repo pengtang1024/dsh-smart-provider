@@ -2,6 +2,25 @@
 
 本项目所有显著变更都记录在本文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-11-25
+
+### Added
+
+- **设置页「账号健康 / 冷却」面板读取真实运行时数据**：此前该区块只有一段占位说明。现在 `lib/remote.js` 新增第 5 个 `@Remote` 方法 `smartProvider.accountHealth()`（`invocation: direct`、零参数；任何异常都降级成显式的「未启用 / 一无所知」快照而不是抛出 —— 线上契约没有错误通道，抛出去只会让设置页永久空白且不给原因），`client.js` 新增对应的 strict codec 描述符（`@local/dsh-smart-provider#smartProvider/accountHealth`，`mode:'strict'` + 非空 `typeSymbol` + `create()`，三者缺一整个命名空间挂不上）与 `AccountHealthPanel` 渲染。`index.js` 注入的是**惰性** `healthReader`：适配器在下方才构造，提前求值会捕获 `undefined` 并让面板整场会话冻结在空快照上。
+- **`lib/health-snapshot.js` 纯函数快照构建器**：`buildHealthSnapshot(input)` 无 I/O、不 import DSH、不改入参、永不抛错，`now` 由调用方注入以便测试确定性。读路径**不写注册表**：`COOLING` 且 `until` 已过期时纯推导为 `HALF_OPEN`（这正是 `account-health` 的 `stateOf()` 规则，但 `stateOf()` 会把状态写回容器，读路径不能用它）；有效冷却取 `max(账号记录 until, adapter.cooldowns until)` 两层取大 —— 两层都能阻断派单，UI 必须与派单一致；虚拟副本（`isVirtual === true`）永不作为真实路由出现在列表里。畸形或缺失的输入降级为空数组 + `enabled:false`，不抛错。
+
+### Changed
+
+- **设置页不再显示占位说明文案**：改为「账号池状态」表（账号 / 路由 / 状态 / 剩余冷却 / 连续失败 / 尝试次数 / 成功·失败样本；链路派生的隐式账号带「自动派生」标记）与「各模型路由健康」表（路由 / 模型 / 健康 / 计费档 / 可信度 / 样本），并显示快照时间与手动「重新读取」按钮 —— **刻意不用 `setInterval` 倒计时**，避免定时器泄漏。
+- 版本号 `1.2.1 → 1.3.0`（本次为 feat 级，minor）；`client.js` 的 `PLUGIN_VERSION` 常量同步到 `1.3.0`。
+- 文档同步实测数字（2026-11-25，退出码 0）：全量门禁 **14 个 suite / 188 条断言全过**，纯逻辑子集 **9 个 suite / 152 条断言全过**；新增 `test/health-snapshot.test.mjs`（13 条）与 `test/remote-surface.test.mjs`（7 条），两者都已注册进 `--unit` 白名单。
+
+**诚实性契约（本次一并保留，新面板必须遵守）：**
+
+- **零样本显示「暂无数据」，绝不显示「不可用」**：状态为 `UNKNOWN`、字段缺失或值畸形时一律中性色 +「暂无数据」；只有 `ACTIVE` / `HEALTHY` 用绿色，冷却与降级用警告色（**不用 error 红**），未知值退中性灰。
+- **健康层关闭时明说关闭**：`health: false` / `health.enabled: false` / `ranking.health.enabled: false` 时面板显示「健康层当前是关闭的」，不假装正常、不拿空表冒充健康。
+- **通道不可用时显示诊断行**：失败原因不隐藏，也不静默留白。
+
 ## [1.2.1] - 2026-11-25
 
 ### Fixed
