@@ -19,7 +19,9 @@ import { SmartAdapter } from './lib/adapter.js'
 import { discoverAutoChain } from './lib/chains.js'
 import { CostMeter } from './lib/cost-meter.js'
 import { buildHealthDeps } from './lib/health-setup.js' // L7: three-layer health power-on (default-on, opt-out)
+import { hydrateHealthEvidence } from './lib/health-persistence.js' // task-6: cold-start replay of persisted health evidence
 import { createProbe } from './lib/probe.js' // task-107: minimal real probe replaces name guessing
+import { buildHealthSnapshot } from './lib/health-snapshot.js' // frozen accountHealth() wire shape (pure)
 import { SmartProviderRemote, readCostStats } from './lib/remote.js'
 import {
   normalizeRankingConfig, DEFAULT_RANKING_CONFIG, RANKING_STRATEGIES, RANKING_CONFIG_SCHEMA,
@@ -29,8 +31,15 @@ import {
 /**
  * Cordis service injection (root cause of the previous `failed` plugin state:
  * ReflectService throws "cannot get property \"llm\" without inject").
+ *
+ * ONLY `llm` is a hard requirement. The router merely *optionally* uses
+ * sessions (hop records), commands (read-only host commands) and credentials
+ * (credential NAME listing); declaring them here made the whole plugin refuse
+ * to load in a lean profile that provides none of them — a headless E2E failed
+ * with "pending (waiting for service: credentials)" and then NO_ADAPTER. Those
+ * three are read through ctx.get() at use time instead (see optionalService).
  */
-export const inject = ['llm', 'sessions', 'commands', 'credentials']
+export const inject = ['llm']
 
 /** Accept either a provider object ({id,...}) or a bare id string. */
 function strId(entry) {
@@ -50,6 +59,21 @@ export function apply(ctx, config = Config({})) {
   if (!runtime?.registerAdapter || !runtime?.stream) {
     throw new Error('dsh-smart-provider requires ctx.llm with registerAdapter() and stream()')
   }
+
+  /**
+   * Read an optional cordis service without making it a load dependency.
+   * `ctx.<name>` throws when the name is not injected, so `ctx.get()` is the
+   * only supported way to probe for one. A missing service degrades to
+   * undefined and every call site below already tolerates that.
+   * @param {string} name service name
+   * @returns {() => any} lazy getter
+   */
+  const optionalService = name => () => {
+    try { return ctx.get?.(name) } catch { return undefined }
+  }
+  const getSessions = optionalService('sessions')
+  const getCommands = optionalService('commands')
+  const getCredentials = optionalService('credentials')
 
   // Volatile fields are filled by the loader at activation; a direct Config({})
   // (tests, or an unconfigured row) returns schemastery marker objects for
@@ -96,7 +120,40 @@ export function apply(ctx, config = Config({})) {
   // ledger + #recordHop session signals (workbuddy routes don't write cost.jsonl).
   const registryReader = () => adapter?.availabilityRegistry
   // task-107: lazy probe reader (adapter constructed below with adapter.probe).
-  new SmartProviderRemote(ctx, statsReader, dir, registryReader, () => adapter?.probe)
+  // Account health / cooldown snapshot reader. LAZY for the same reason as the
+  // two readers above: `adapter` is constructed further down, so evaluating any
+  // of this eagerly would capture undefined and freeze the settings section on
+  // an empty snapshot for the whole session. The closure reads the raw inputs at
+  // call time and hands them to the pure builder — no derivation happens here.
+  const healthReader = () => {
+    const pool = adapter?.accountPool
+    const accounts = []
+    if (pool?.byId instanceof Map) {
+      for (const a of pool.byId.values()) {
+        accounts.push({
+          id: a.id,
+          provider: a.provider,
+          models: a.models ?? [],
+          // Chain-hop derived accounts are named `hop:<provider>/<model>` by
+          // AccountPool.implicitAccountId(); the UI shows them as implicit.
+          implicit: typeof a.id === 'string' && a.id.startsWith('hop:'),
+        })
+      }
+    }
+    return buildHealthSnapshot({
+      enabled: adapter?.health !== undefined,
+      accountHealth: adapter?.accountHealth,
+      cooldowns: adapter?.cooldowns,
+      // E2A2: thread the opt-in through to mergeCooldown's 4th arg so the
+      // frozen wire snapshot reads the L2-only authority on the on-branch.
+      singleCooldown: adapter?.healthSingleCooldown,
+      usage: pool?.usage,
+      accounts,
+      availabilityRegistry: adapter?.availabilityRegistry,
+      now: Date.now(),
+    })
+  }
+  new SmartProviderRemote(ctx, statsReader, dir, registryReader, () => adapter?.probe, healthReader)
 
   // ranking is volatile: normalize defensively (Config({}) in tests yields
   // schemastery markers for volatile paths, so never trust the raw type).
@@ -149,7 +206,9 @@ export function apply(ctx, config = Config({})) {
     chains,
     accounts,
     ranking,
-    sessions: ctx.sessions,
+    // Lazy bridge: only the hop record (P0-3) needs sessions, so the adapter
+    // keeps working when the profile has no sessions service.
+    sessions: { get: id => getSessions()?.get?.(id) },
     meter,
     logger: ctx.logger,
     health,
@@ -168,6 +227,28 @@ export function apply(ctx, config = Config({})) {
   })
 
   const handle = runtime.registerAdapter(['smart'], adapter)
+
+  // task-6 cold-start hydration: the registries buildHealthDeps() created start
+  // empty, so a reload used to erase every proven route verdict (HEALTHY /
+  // DEGRADED / DEPRECATED, free-vs-metered billing confidence) and every account
+  // cooldown/streak. Replay the persisted evidence once from cost.jsonl +
+  // probe-cache.jsonl (read-only, bounded tail window).
+  // Fire-and-forget inside ctx.effect: apply() is synchronous and activation must
+  // never wait for disk. If a real request wins the race, the replay's
+  // timestamp/updatedAt guard keeps that newer live evidence — the hydration
+  // skips rows older than what the registry already holds. health === undefined
+  // (user opted out) skips hydration entirely; nothing is even opened.
+  if (health) {
+    ctx.effect(() => {
+      void hydrateHealthEvidence({
+        dir,
+        health,
+        info: message => ctx.logger?.info?.('%s', message),
+        warn: message => ctx.logger?.warn?.('%s', message),
+      })
+      return () => {}
+    }, 'dsh-smart-provider.health-hydration')
+  }
 
   // P1 user resource adaptation: when the user has NOT configured chains,
   // build a NEUTRAL auto chain from the live DSH registry instead of shipping
@@ -272,9 +353,13 @@ export function apply(ctx, config = Config({})) {
   // credentialRef is echoed only as the configured reference name).
   ctx.effect(() => {
     const off = []
+    const commands = getCommands()
+    if (typeof commands?.register !== 'function') {
+      ctx.logger?.info?.('dsh-smart-provider: commands service unavailable; host commands stay unregistered')
+      return () => {}
+    }
     const register = (name, description, handler) => {
-      if (typeof ctx.commands?.register !== 'function') return
-      off.push(ctx.commands.register({ name, description, handler }) ?? (() => {}))
+      off.push(commands.register({ name, description, handler }) ?? (() => {}))
     }
     register('smart-schema', 'Smart provider ranking schema', () => ({
       kind: 'text',
@@ -314,7 +399,7 @@ export function apply(ctx, config = Config({})) {
     register('smart-credentials', 'Smart provider configured credential names', async () => {
       let credentials = []
       try {
-        const records = await ctx.credentials?.listRecords?.() ?? []
+        const records = await getCredentials()?.listRecords?.() ?? []
         credentials = records
           .map(r => strId(r?.key ?? r?.id ?? r))
           .filter(Boolean)

@@ -4,6 +4,10 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node scripts/run-tests.mjs --unit"
+  },
   "description": "一个 DSH 元提供商，智能调度已配置的模型路由，支持额度自动切换、多账号池与离线成本统计。",
   "license": "MIT",
   "keywords": [
@@ -17,6 +21,18 @@
     "智能调度",
     "成本统计"
   ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.2 <0.4.0-0",
+    "@deepseek-ai/dsh-session": ">=0.2.0-rc.2 <0.4.0-0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.0-rc.2 <0.4.0-0",
+    "@deepseek-ai/schemastery": ">=3.18.0 <4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
   "main": "index.js",
   "exports": {
     ".": "./index.js",

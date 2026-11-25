@@ -11,12 +11,16 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createRequire } from 'node:module'
 
 import { SmartAdapter } from '../lib/adapter.js'
 import { AccountPool, normalizeAccounts, implicitAccountId } from '../lib/account-pool.js'
+import { loadDshPackage } from '../lib/dsh.js'
 
-const dshRequire = createRequire('/opt/DSH NEXT/resources/app.asar/package.json')
+// Reuse the SAME anchor resolution the plugin uses at runtime instead of
+// hard-coding one vendor install path. lib/dsh.js derives the location from
+// DSH_NODE_EXECUTABLE / DSH_PROFILE_DIR and falls back per platform, so the
+// suite keeps working on any machine where DSH is installed.
+const dshRequire = name => loadDshPackage(name)
 
 /** A minimal fake runtime: stream routes to a per-(provider,model) script. */
 function fakeRuntime(scripts) {

@@ -126,6 +126,34 @@ window.__ModuleLoader__.load({
         force: z.boolean().optional(),
       })
     })()
+    // T3a: 账号健康 + 冷却快照（accountHealth）。strict codec 三件套同上，
+    // 字段与 Host 契约逐字对齐：Host 缺数据时发 null / 0 / []，从不省略字段，
+    // 所以可空字段一律 .nullable()，绝不用 .optional()（否则 null 会被 zod 拒掉）。
+    const ACCOUNT_HEALTH_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      const samples = z.object({ success: z.number(), failure: z.number() })
+      const account = z.object({
+        id: z.string(), provider: z.string(), implicit: z.boolean(),
+        models: z.array(z.string()), state: z.string(),
+        reason: z.string().nullable(), until: z.number().nullable(),
+        remainingMs: z.number(), streak: z.number(), samples,
+        usage: z.number(),
+        lastSuccessAt: z.number().nullable(), lastFailureAt: z.number().nullable(),
+      })
+      const route = z.object({
+        provider: z.string(), modelId: z.string(),
+        health: z.string(), tier: z.string(), confidence: z.number(),
+        samples,
+        lastSuccessAt: z.number().nullable(), lastFailureAt: z.number().nullable(),
+      })
+      return z.object({
+        enabled: z.boolean(), generatedAt: z.number(),
+        accounts: z.array(account), routes: z.array(route),
+      })
+    })()
     // $mount 的真实失败原因会写进这里，随成本页诊断文案一起显示，避免 err=? 静默。
     let mountDiag = 'unmounted'
     const makeCostContribution = () => ({
@@ -233,6 +261,27 @@ window.__ModuleLoader__.load({
           const receiver = remote.smartProvider
           const opts = input && (input.opts ?? input)
           return receiver.probeModels(opts, signal)
+        },
+      }, {
+        // T3a: 账号健康 + 冷却快照。零参数 direct 方法；result codec 必须带
+        // mode + 非空 typeSymbol + create，漏一项整个 smartProvider 命名空间挂不上。
+        id: '@local/dsh-smart-provider#smartProvider/accountHealth',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'accountHealth',
+        description: 'Read live account health + cooldown snapshot',
+        invocation: { kind: 'direct' },
+        parameters: [],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#AccountHealthSnapshot',
+          create: () => ACCOUNT_HEALTH_SCHEMA ?? { parse: v => v },
+          description: 'account health snapshot',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          return receiver.accountHealth(signal)
         },
       }],
     })
@@ -860,7 +909,23 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi }) {
+    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi, costService }) {
+      // Hero 数字 = DSH 运行时账号池的真实账号数（含自动派生），数据源与
+      // 成本 Tab 的健康面板同一个 smartProvider/accountHealth() 快照，避免两处
+      // 数字打架。config.accounts 只代表用户手动写入，未配置时恒为 0，不能冒充
+      // 运行时真实账号数；快照尚未读到时显示「正在读取」，不显示误导性的 0。
+      const [accountCount, setAccountCount] = useState(null)
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          const res = await costService?.accountHealth?.()
+          const value = res && res.ok ? res.value : null
+          if (!alive) return
+          setAccountCount(Array.isArray(value?.accounts) ? value.accounts.length : null)
+        }
+        void load()
+        return () => { alive = false }
+      }, [costService])
       const provOpts = providerOptions(pi)
       const modelOpts = modelOptions(pi)
       const configuredAccounts = arr(config?.accounts)
@@ -922,7 +987,12 @@ window.__ModuleLoader__.load({
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, t('accounts.plainTitle')),
           h('div', { style: S.heroText }, t('accounts.plainExplain')),
-          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, fmt(t, 'accounts.plainCount', { n: configuredAccounts.length })),
+          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } },
+            accountCount === null
+              ? t('accounts.countLoading')
+              : accountCount === 0
+                ? t('accounts.countEmpty')
+                : fmt(t, 'accounts.plainCount', { n: accountCount })),
         ),
         h('div', null,
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
@@ -1073,12 +1143,315 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ---- T3b: 账号健康 / 冷却面板 ------------------------------------------
+    // 数据源 = Host 实时注册表 smartProvider/accountHealth（服务对象就是已有的
+    // costService，不新建注入通道，也绝不把 smartProvider 写进 inject）。
+    // 诚实性纪律（本面板的验收核心）：
+    //   · 零样本 / 未知状态一律「暂无数据」+ 中性色，绝不显示「不可用」、绝不伪造绿；
+    //   · 健康层被配置关闭时明说关闭，不假装正常；
+    //   · 倒计时用组件内单一 setTimeout 每秒现算（不用 setInterval，避免泄漏），
+    //     卸载/隐藏时清理；保留快照时间 + 手动「重新读取」。
+    const HEALTH_SUCCESS_COLOR = 'var(--dsw-alias-state-success-primary)'
+    // 冷却/降级用警告色，**绝不用 error 红**。按卡上写法优先 --dsw-alias-state-warning-primary；
+    // 实测本构建（DSH NEXT app.asar）里该名定义数为 0，真正存在的是
+    // --dsw-alias-state-warn-primary（4 处定义），故链式兜底：
+    // warning-primary → warn-primary → label-secondary。任一级缺失都不会落红，
+    // 最差也只是退成中性灰，符合「不存在就用 label-secondary」的纪律。
+    const HEALTH_WARN_COLOR = 'var(--dsw-alias-state-warning-primary, var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary)))'
+    const HEALTH_NEUTRAL_COLOR = 'var(--dsw-alias-label-tertiary)'
+
+    const fmtClock = ms => {
+      const n = Number(ms)
+      if (!Number.isFinite(n) || n <= 0) return '—'
+      const d = new Date(n)
+      const pad = v => String(v).padStart(2, '0')
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    }
+    // 剩余冷却格式化：<1s「即将到期」；<1h「29 分 12 秒」/「12 秒」；>=1h「1 小时 3 分」。
+    const fmtDuration = (t, ms) => {
+      const n = Number(ms)
+      if (!Number.isFinite(n) || n < 1000) return t('health.soon')
+      const total = Math.ceil(n / 1000)
+      const hours = Math.floor(total / 3600)
+      const mins = Math.floor((total % 3600) / 60)
+      const secs = total % 60
+      if (hours > 0) return fmt(t, 'health.durationHour', { h: hours, m: mins })
+      if (mins > 0) return fmt(t, 'health.durationMinute', { m: mins, s: secs })
+      return fmt(t, 'health.durationSecond', { s: secs })
+    }
+    // 账号状态文案：UNKNOWN / 缺失 / 畸形 一律「暂无数据」，绝不落到「不可用」。
+    const accountStateText = (t, state) => {
+      const k = str(state).toUpperCase()
+      if (k === 'ACTIVE') return t('health.stateActive')
+      if (k === 'COOLING') return t('health.stateCooling')
+      if (k === 'HALF_OPEN') return t('health.stateHalfOpen')
+      return t('health.stateUnknown')
+    }
+    // 只有 ACTIVE 用绿；COOLING / HALF_OPEN 用警告；UNKNOWN 及一切未知值用中性。
+    const accountStateColor = state => {
+      const k = str(state).toUpperCase()
+      if (k === 'ACTIVE') return HEALTH_SUCCESS_COLOR
+      if (k === 'COOLING' || k === 'HALF_OPEN') return HEALTH_WARN_COLOR
+      return HEALTH_NEUTRAL_COLOR
+    }
+    const routeHealthText = (t, health) => {
+      const k = str(health).toUpperCase()
+      if (k === 'HEALTHY') return t('health.healthHealthy')
+      if (k === 'DEGRADED') return t('health.healthDegraded')
+      if (k === 'DEPRECATED') return t('health.healthDeprecated')
+      return t('health.healthUnknown')
+    }
+    // 只有 HEALTHY 用绿；DEGRADED / DEPRECATED 用警告；UNKNOWN 及未知值用中性。
+    const routeHealthColor = health => {
+      const k = str(health).toUpperCase()
+      if (k === 'HEALTHY') return HEALTH_SUCCESS_COLOR
+      if (k === 'DEGRADED' || k === 'DEPRECATED') return HEALTH_WARN_COLOR
+      return HEALTH_NEUTRAL_COLOR
+    }
+    const tierText = (t, tier) => {
+      const k = str(tier).toLowerCase()
+      if (k === 'free') return t('health.tierFree')
+      if (k === 'metered') return t('health.tierMetered')
+      return t('health.tierUnknown')
+    }
+    // 零样本 = 暂无数据：字段缺失或 success+failure 全为 0 都算零样本，绝不写「0 / 0」。
+    const samplesInfo = samples => {
+      const s = obj(samples)
+      const ok = Number(s.success) || 0
+      const fail = Number(s.failure) || 0
+      return { ok, fail, total: ok + fail }
+    }
+    const samplesText = (t, samples) => {
+      const { ok, fail, total } = samplesInfo(samples)
+      return total === 0 ? t('health.noSamples') : `${ok} / ${fail}`
+    }
+    // 可信度阈值与 lib/availability.js CONFIDENCE 对齐：HIGH .95 / MEDIUM .7 / LOW .25。
+    const confText = (t, conf) => {
+      const n = Number(conf)
+      if (!Number.isFinite(n) || n <= 0) return t('health.confUnknown')
+      if (n >= 0.95) return t('health.confHigh')
+      if (n >= 0.7) return t('health.confMedium')
+      if (n >= 0.25) return t('health.confLow')
+      return t('health.confUnknown')
+    }
+    // hop: 前缀只作内部标识，显示层去掉；完整值放 title，长 id 靠 overflowWrap 断行。
+    const displayId = raw => {
+      const s = str(raw)
+      return s.startsWith('hop:') ? s.slice(4) : s
+    }
+    // 倒计时现算：优先 wire 上的 until - Date.now()；until 缺失退首次生成的 remainingMs 兜底。
+    const remainNow = row => {
+      const until = Number(row.until)
+      if (Number.isFinite(until) && until > 0) return Math.max(0, until - Date.now())
+      return Number(row.remainingMs) || 0
+    }
+    // 诊断行沿用成本页的样式（11px 等宽，可断行），失败原因不隐藏。
+    const diagStyle = { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' }
+    const implicitBadge = { ...S.muted, marginLeft: 6, fontSize: 10, padding: '1px 6px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)' }
+    const idCell = { ...S.td, overflowWrap: 'anywhere' }
+
+    function AccountHealthPanel({ t, snapshot, diag, loading, onRefresh }) {
+      const snap = obj(snapshot)
+      const accounts = arr(snap.accounts)
+      const routes = arr(snap.routes)
+      const snapAt = Number(snap.generatedAt)
+      // 倒计时用组件内单一 setTimeout 每秒 tick 重绘（不用 setInterval）。
+      // tab 隐藏时暂停；卸载时 alive=false + clearTimeout + 摘监听，三重清理防泄漏。
+      const [, setTick] = useState(0)
+      const aliveRef = useRef(true)
+      useEffect(() => {
+        let alive = true
+        aliveRef.current = true
+        let timer = null
+        const schedule = () => {
+          if (!alive || (typeof document !== 'undefined' && document.hidden)) return
+          timer = setTimeout(() => {
+            if (!alive) return
+            setTick(v => v + 1)
+            schedule()
+          }, 1000)
+        }
+        const onVis = () => {
+          if (typeof document === 'undefined' || !alive) return
+          if (document.hidden) {
+            if (timer) { clearTimeout(timer); timer = null }
+          } else if (!timer) schedule()
+        }
+        schedule()
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis)
+        return () => {
+          alive = false
+          aliveRef.current = false
+          if (timer) clearTimeout(timer)
+          if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis)
+        }
+      }, [])
+
+      // 分支顺序即优先级：loading → 无通道 → 健康层关闭 → 无数据 → 两张表。
+      let body
+      if (loading) {
+        body = h('div', { style: S.muted }, t('health.loading'))
+      } else if (!snapshot) {
+        body = h('div', null,
+          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('health.noChannel')),
+          h('div', { style: diagStyle }, `${t('health.diag')}${diag ? str(diag) : '—'}`),
+        )
+      } else if (snap.enabled === false) {
+        // 明说被关闭，不假装正常；中性色，不吓人也不冒充健康。
+        body = h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('health.disabledExplain'))
+      } else if (accounts.length === 0 && routes.length === 0) {
+        // 健康层开着但确实没有数据 —— 绝不写成「不可用」。
+        body = h('div', { style: S.muted }, t('health.empty'))
+      } else {
+        body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+          h('div', null,
+            h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.accountsTitle')),
+            accounts.length === 0
+              ? h('div', { style: S.muted }, t('health.empty'))
+              : h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { ...S.table, minWidth: 640 } },
+                h('thead', null, h('tr', null,
+                  h('th', { style: S.th, scope: 'col' }, t('health.id')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.provider')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.state')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.coolRemain')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.streak')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.usage')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
+                )),
+                h('tbody', null, accounts.map((a, i) => {
+                  const row = obj(a)
+                  const models = arr(row.models).filter(m => typeof m === 'string' && m)
+                  const state = str(row.state).toUpperCase()
+                  const reason = row.reason === null || row.reason === undefined ? '' : str(row.reason)
+                  const cooling = state === 'COOLING' || state === 'HALF_OPEN'
+                  const remain = cooling ? remainNow(row) : 0
+                  const fullId = str(row.id)
+                  return h('tr', { key: `a:${fullId || i}` },
+                    h('td', { style: idCell },
+                      h('div', { title: fullId || undefined },
+                        displayId(fullId) || '—',
+                        row.implicit === true ? h('span', { style: implicitBadge }, t('health.implicit')) : null,
+                      ),
+                      h('div', { style: S.muted }, fmt(t, 'health.lastSeen', {
+                        ok: row.lastSuccessAt === null || row.lastSuccessAt === undefined ? t('health.never') : fmtClock(row.lastSuccessAt),
+                        fail: row.lastFailureAt === null || row.lastFailureAt === undefined ? t('health.never') : fmtClock(row.lastFailureAt),
+                      })),
+                    ),
+                    h('td', { style: S.td },
+                      h('div', null, str(row.provider) || '—'),
+                      models.length ? h('div', { style: S.muted }, models.join(' · ')) : null,
+                    ),
+                    h('td', { style: S.td },
+                      h('span', { style: { color: accountStateColor(row.state), fontWeight: 500 } }, accountStateText(t, row.state)),
+                      reason ? h('div', { style: S.muted }, `${t('health.coolReason')}: ${reason}`) : null,
+                    ),
+                    h('td', { style: S.td }, cooling && remain > 0 ? fmtDuration(t, remain) : '—'),
+                    h('td', { style: S.td }, String(Number(row.streak) || 0)),
+                    h('td', { style: S.td }, String(Number(row.usage) || 0)),
+                    h('td', { style: S.td }, samplesText(t, row.samples)),
+                  )
+                })),
+                ),
+              ),
+          ),
+          h('div', null,
+            h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.routesTitle')),
+            routes.length === 0
+              ? h('div', { style: S.muted }, t('health.empty'))
+              : h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { ...S.table, minWidth: 560 } },
+                h('thead', null, h('tr', null,
+                  h('th', { style: S.th, scope: 'col' }, t('health.provider')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.model')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.health')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.tier')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.confidence')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
+                )),
+                h('tbody', null, routes.map((r, i) => {
+                  const row = obj(r)
+                  const conf = Number(row.confidence)
+                  return h('tr', { key: `r:${str(row.provider)}::${str(row.modelId)}:${i}` },
+                    h('td', { style: S.td }, str(row.provider) || '—'),
+                    h('td', { style: S.td }, str(row.modelId) || '—'),
+                    h('td', { style: S.td },
+                      h('span', { style: { color: routeHealthColor(row.health), fontWeight: 500 } }, routeHealthText(t, row.health)),
+                    ),
+                    h('td', { style: S.td }, tierText(t, row.tier)),
+                    h('td', { style: S.td }, confText(t, conf), Number.isFinite(conf) ? h('div', { style: S.muted, title: `${t('health.confidence')}: ${conf.toFixed(2)}` }, conf.toFixed(2)) : null),
+                    h('td', { style: S.td }, samplesText(t, row.samples)),
+                  )
+                })),
+                ),
+              ),
+          ),
+        )
+      }
+
+      return h('div', { style: S.card },
+        h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', marginBottom: 8 } },
+          h('div', { style: { flex: 1, minWidth: 160 } },
+            h('div', { style: { fontWeight: 500 } }, t('health.title')),
+            h('div', { style: { ...S.muted, marginTop: 2 } }, t('health.plainExplain')),
+          ),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+            h('span', { style: S.muted }, fmt(t, 'health.snapshotAt', { time: snapshot && Number.isFinite(snapAt) && snapAt > 0 ? fmtClock(snapAt) : '—' })),
+            h('button', {
+              type: 'button',
+              style: { ...S.btn, opacity: loading ? 0.6 : 1, cursor: loading ? 'not-allowed' : undefined },
+              disabled: loading,
+              'aria-busy': loading ? 'true' : undefined,
+              onClick: () => { try { void onRefresh?.(() => aliveRef.current) } catch { /* 刷新失败由 diag 行自曝 */ } },
+            }, loading ? t('health.refreshing') : t('health.refresh')),
+          ),
+        ),
+        body,
+      )
+    }
+
     function CostHealthTab({ t, localConfig, remote, costService, costDiag }) {
       const cfg = obj(localConfig)
       const [live, setLive] = useState(null)
       const [detail, setDetail] = useState(null)
       const [page, setPage] = useState(0)
       const [diag, setDiag] = useState('')
+      // T3b: 账号健康快照三态。loading 初值 true —— 首屏必须先显示「正在读取」，
+      // 绝不能在拿到数据前就渲染成空表（那会被误读成「没有账号 / 一切正常」）。
+      const [healthSnap, setHealthSnap] = useState(null)
+      const [healthDiag, setHealthDiag] = useState('')
+      const [healthLoading, setHealthLoading] = useState(true)
+      // 重新读取按钮复用同一个 loader；不做 setInterval（避免定时器泄漏）。
+      // isAlive 由调用方传入：卸载后不再 setState（避免卸载后写状态）。
+      const loadHealth = useCallback(async (isAlive) => {
+        const live = typeof isAlive === 'function' ? isAlive : () => true
+        if (!live()) return
+        setHealthLoading(true)
+        let d = `accountHealth.callable=${typeof costService?.accountHealth === 'function'}`
+        let next = null
+        try {
+          const res = await costService?.accountHealth?.()
+          d += ` accountHealth.ok=${res?.ok === true}`
+          if (res && res.ok) {
+            next = res.value ?? null
+            d += ` enabled=${res.value?.enabled === true}`
+          } else {
+            // 拿不到就诚实清空，绝不保留上一次的旧快照冒充当前状态。
+            d += ` accountHealth.err=${String(res?.error?.code ?? res?.error?.message ?? '?')}`
+          }
+        } catch (error) {
+          d += ` accountHealth.throw=${String(error?.message ?? error)}`
+        }
+        if (!live()) return
+        setHealthSnap(next)
+        setHealthDiag(d)
+        setHealthLoading(false)
+      }, [costService])
+      useEffect(() => {
+        let alive = true
+        void loadHealth(() => alive)
+        return () => { alive = false }
+      }, [loadHealth])
       useEffect(() => {
         let alive = true
         const load = async () => {
@@ -1127,10 +1500,13 @@ window.__ModuleLoader__.load({
             h('div', { style: { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `诊断：${diag}`),
           ),
         h(CostDetailBlocks, { t, detail, page, setPage }),
-        h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('health.title')),
-          h('div', { style: S.muted }, t('health.simpleExplain')),
-        ),
+        h(AccountHealthPanel, {
+          t,
+          snapshot: healthSnap,
+          diag: healthDiag,
+          loading: healthLoading,
+          onRefresh: loadHealth,
+        }),
       )
     }
 
@@ -1453,7 +1829,7 @@ window.__ModuleLoader__.load({
         presetNotice ? h('div', { style: S.ok }, presetNotice) : null,
         tab === 'overview' ? h(Overview, { t, localConfig: config, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe: runProbe, applyPreset, working }) : null,
         tab === 'chains' ? h(ChainsTab, { t, form, revision, mutate, config, pi }) : null,
-        tab === 'accounts' ? h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi }) : null,
+        tab === 'accounts' ? h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService }) : null,
         tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}` }) : null,
       )
     }
@@ -1522,7 +1898,9 @@ window.__ModuleLoader__.load({
       'chains.step': '{name}',
       'accounts.plainTitle': '账号（一般不用管）',
       'accounts.plainExplain': '会自动使用你已经在 DSH 里配置好的 API Key（比如 OpenCode Go、小米等），你不用在这里填任何密钥。',
-      'accounts.plainCount': '当前已识别 {n} 个账号。',
+      'accounts.plainCount': '当前有 {n} 个账号（DSH 已配置的路由 + 路由链自动派生）。',
+      'accounts.countLoading': '正在读取账号池…',
+      'accounts.countEmpty': '尚未在 DSH 中配置任何 API Key，请先在 DSH 设置里添加。',
       'chains.hint': '每个键是一个外层模型，值是按顺序尝试的 {provider, model} 数组。保存后热更新生效。',
       'chains.defaultHint': '当前显示内置默认链（你还没配置 chains）。编辑后点保存即写入你的配置并生效。',
       'chains.empty': '尚无链路配置（使用内置默认链）。',
@@ -1538,7 +1916,7 @@ window.__ModuleLoader__.load({
       'ranking.priorityHelp': '注意：priority 数字越小越优先，与等级（tier 越高越优先）方向相反。',
       'ranking.probeEnabled': '新模型自动探测（默认开启）', 'ranking.probeEnabledHelp': '默认开启：新模型自动发一次极小请求判断是否免费（免费0成本，付费≤1 token，结果缓存7天不重复花钱）。不需要可关掉。',
       'routing.title': '智能路由（两层）', 'routing.intro': '这里保存你对智能路由的设置。保存后立即生效，无需重启。',
-      'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '内置默认启用均衡策略；你也可以按自己的偏好切换或关闭。',
+      'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '内置默认启用，各策略中立等权、不偏向省钱或速度；你也可以显式关闭。',
       'routing.strategy': '选哪种路由风格',
       'routing.position': '模型定位', 'routing.positionHelp': '这是只读说明，不是可编辑的表格。',
       'routing.positionExplain': '每台模型的定位由自身能力自动推导（如是否支持推理、图片、长上下文）；个别模型可另外手填。当前页面不读取逐台模型的定位结果。',
@@ -1565,8 +1943,28 @@ window.__ModuleLoader__.load({
       'cost.noComparable': '无可比价',
       'health.title': '账号健康 / 冷却', 'health.id': '账号', 'health.provider': '路由',
       'health.health': '健康', 'health.coolReason': '冷却原因', 'health.usage': '尝试次数',
-      'health.ok': '健康', 'health.cooling': '冷却中', 'health.empty': '无账号数据。',
-      'health.simpleExplain': '账号健康与冷却属于运行时信息，当前设置页不读取，也不会假装它正常。',
+      'health.ok': '健康', 'health.cooling': '冷却中', 'health.empty': '暂无数据。',
+      'health.plainExplain': '数据来自后台实时注册表：只用真实发生过的情况说话。没有样本的一律显示「暂无数据」，不会显示成「不可用」，也不会假装它是健康的。',
+      'health.loading': '正在读取账号健康…',
+      'health.noChannel': '当前设置页还没拿到账号健康数据通道，暂时无法显示真实状态（后台可能已有记录）。下面的诊断信息可帮助定位。',
+      'health.disabledExplain': '健康层当前是关闭的：配置里 health:false、health.enabled:false 或 ranking.health.enabled:false 任意一处关掉都会停用。关闭期间不做健康判断，这里如实说明，不会假装一切正常。',
+      'health.state': '状态', 'health.stateUnknown': '暂无数据', 'health.stateActive': '健康',
+      'health.stateCooling': '冷却中', 'health.stateHalfOpen': '半开待验证',
+      'health.coolRemain': '剩余冷却', 'health.streak': '连续失败', 'health.samples': '成功 / 失败',
+      'health.implicit': '（自动派生）', 'health.model': '模型', 'health.tier': '计费档',
+      'health.confidence': '可信度', 'health.routesTitle': '各模型路由健康',
+      'health.accountsTitle': '账号池状态',
+      'health.snapshotAt': '快照时间 {time}', 'health.refresh': '重新读取',
+      'health.refreshing': '读取中…', 'health.noSamples': '暂无样本',
+      'health.confHigh': '高', 'health.confMedium': '中', 'health.confLow': '低', 'health.confUnknown': '未知',
+      'health.diag': '诊断：',
+      'health.lastSeen': '最近成功 {ok} · 最近失败 {fail}', 'health.never': '无',
+      'health.soon': '即将到期',
+      'health.durationHour': '{h} 小时 {m} 分', 'health.durationMinute': '{m} 分 {s} 秒',
+      'health.durationSecond': '{s} 秒',
+      'health.tierFree': '免费', 'health.tierMetered': '计费', 'health.tierUnknown': '未知',
+      'health.healthHealthy': '健康', 'health.healthDegraded': '降级',
+      'health.healthDeprecated': '已弃用', 'health.healthUnknown': '暂无数据',
       'error.jsonObject': '请输入合法的 JSON 对象。', 'error.jsonArray': '请输入合法的 JSON 数组。',
       'error.saveFailed': '保存失败，请重试。',
     }
@@ -1621,7 +2019,9 @@ window.__ModuleLoader__.load({
       'chains.step': '{name}',
       'accounts.plainTitle': 'Accounts (usually nothing to do)',
       'accounts.plainExplain': 'It automatically uses the API keys you already configured in DSH (e.g. OpenCode Go, Xiaomi). You don\'t need to enter any key here.',
-      'accounts.plainCount': '{n} account(s) detected.',
+      'accounts.plainCount': '{n} account(s) in the live pool (DSH-configured routes + chain-derived accounts).',
+      'accounts.countLoading': 'Reading the account pool…',
+      'accounts.countEmpty': 'No API keys configured in DSH yet — add one in DSH settings first.',
       'chains.hint': 'Each key is an outer model; value is an ordered {provider, model} array. Changes apply live.',
       'chains.defaultHint': 'Built-in default chain shown (no chains configured). Edit and save to write your own.',
       'chains.empty': 'No chain config (using built-in defaults).',
@@ -1637,7 +2037,7 @@ window.__ModuleLoader__.load({
       'ranking.priorityHelp': 'Note: lower priority number wins — opposite to tier (higher wins).',
       'ranking.probeEnabled': 'Auto-probe new models (on by default)', 'ranking.probeEnabledHelp': 'On by default: new models get one tiny request to detect if free (free=0 cost, paid ≤1 token, cached 7 days). Turn off to opt out.',
       'routing.title': 'Two-layer smart routing', 'routing.intro': 'These are your saved routing settings. Saving applies them live — no restart.',
-      'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'On by default with the balanced strategy; you can switch or turn it off.',
+      'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'On by default with neutral, equal-weight strategies — no bias toward cost or speed. You can turn it off explicitly.',
       'routing.strategy': 'Routing style',
       'routing.position': 'Model position', 'routing.positionHelp': 'Read-only explanation, not an editable table.',
       'routing.positionExplain': 'Each model position is derived from its own capabilities (reasoning, vision, long context); some can be declared manually. This page does not read per-model derived results.',
@@ -1664,8 +2064,28 @@ window.__ModuleLoader__.load({
       'cost.noComparable': 'No comparable price',
       'health.title': 'Account health / cooldown', 'health.id': 'Account', 'health.provider': 'Route',
       'health.health': 'Health', 'health.coolReason': 'Cool reason', 'health.usage': 'Attempts',
-      'health.ok': 'Healthy', 'health.cooling': 'Cooling', 'health.empty': 'No account data.',
-      'health.simpleExplain': 'Account health and cooldown are runtime details; this settings page does not read them and will not pretend they are healthy.',
+      'health.ok': 'Healthy', 'health.cooling': 'Cooling', 'health.empty': 'No data yet.',
+      'health.plainExplain': 'Data comes from the Host live registry and speaks only from real observations. Anything with zero samples reads "No data yet" — never "unavailable", and never a fake green.',
+      'health.loading': 'Reading account health…',
+      'health.noChannel': 'The settings page has no account-health channel yet, so real state cannot be shown (the Host may already have records). Diagnostics below help locate it.',
+      'health.disabledExplain': 'The health layer is switched off: any one of health:false, health.enabled:false or ranking.health.enabled:false disables it. While off, no health judgement is made — stated plainly here instead of pretending everything is fine.',
+      'health.state': 'State', 'health.stateUnknown': 'No data yet', 'health.stateActive': 'Healthy',
+      'health.stateCooling': 'Cooling down', 'health.stateHalfOpen': 'Half-open, awaiting check',
+      'health.coolRemain': 'Cooldown left', 'health.streak': 'Fail streak', 'health.samples': 'Success / failure',
+      'health.implicit': '(auto-derived)', 'health.model': 'Model', 'health.tier': 'Billing tier',
+      'health.confidence': 'Confidence', 'health.routesTitle': 'Per-model route health',
+      'health.accountsTitle': 'Account pool state',
+      'health.snapshotAt': 'Snapshot {time}', 'health.refresh': 'Read again',
+      'health.refreshing': 'Reading…', 'health.noSamples': 'No samples yet',
+      'health.confHigh': 'High', 'health.confMedium': 'Medium', 'health.confLow': 'Low', 'health.confUnknown': 'Unknown',
+      'health.diag': 'Diagnostics:',
+      'health.lastSeen': 'Last success {ok} · last failure {fail}', 'health.never': 'none',
+      'health.soon': 'expiring soon',
+      'health.durationHour': '{h} h {m} min', 'health.durationMinute': '{m} min {s} s',
+      'health.durationSecond': '{s} s',
+      'health.tierFree': 'Free', 'health.tierMetered': 'Metered', 'health.tierUnknown': 'Unknown',
+      'health.healthHealthy': 'Healthy', 'health.healthDegraded': 'Degraded',
+      'health.healthDeprecated': 'Deprecated', 'health.healthUnknown': 'No data yet',
       'error.jsonObject': 'Enter a valid JSON object.', 'error.jsonArray': 'Enter a valid JSON array.',
       'error.saveFailed': 'Save failed, please retry.',
     }
@@ -1746,20 +2166,13 @@ window.__ModuleLoader__.load({
 // >>> custom-routes:candidates >>>
 const CUSTOM_PROVIDERS = ["x-opencode-free"];
 const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-202611","web-search-free","cat-jam-free","longcat-2.5-preview-free","step-5-preview-free"];
-// BEGIN free-model availability (口径 2026-11-24 修正: 任一 provider 成功即 available)
-// status = "该模型在 DSH 里是否有任一 provider 成功用过", 非 "opencode 上下文下可不可用"。
-// 判据双源: cost.jsonl 的 actual_model + failure_code=null; host 日志 request.complete/completed
-// (workbuddy 路由不写账本). task-77 的 "chat 400" 仅为 opencode 单上下文结论, 不推广.
-// hy4-flash-free: available — 账本 x-opencode-free 成功 8532 次; upstream /models 200 + chat 200
-// hy4flash-free: available — workbuddy provider 下 request.complete/completed 140+ 次且仍在涨;
-//   账本不记录 workbuddy 路由; opencode 上下文 400 是另一 provider 的结论, 不代表该模型全局不可用
-// hy4-flash-free-trial-202611: unavailable — promotion badge id (not a model); 仅 opencode chat 400;
-//   账本与日志双源均无成功记录
-// web-search-free: unavailable — top-level dsh-free-search plugin, not an LLM; 仅 opencode chat 400;
-//   双源均无成功记录
-// cat-jam-free: unavailable — 2026-11-24 仅 opencode chat probe 400; 双源均无成功记录
-// longcat-2.5-preview-free: unavailable — 2026-11-24 仅 opencode chat probe 400 (historical deprecated);
-//   双源均无成功记录
-// step-5-preview-free: unavailable — 2026-11-24 仅 opencode chat probe 400; 双源均无成功记录
+// BEGIN free-model availability (generated — task-77)
+// hy4-flash-free: available — upstream /models 200 + chat 200 content=2; E2E 3473 cost=0
+// hy4flash-free: available — workbuddy/hy4flash-free: host log request.complete/completed x140 and rising (2026-11-24); ledger does not record workbuddy route; opencode chat 400 was single-context only
+// hy4-flash-free-trial-202611: unavailable — promotion badge id (not a model); opencode chat 400 only; no success in ledger or host logs (no other provider found)
+// web-search-free: unavailable — top-level dsh-free-search plugin, not an LLM; opencode chat 400 only; no success in ledger or host logs
+// cat-jam-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
+// longcat-2.5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only (historical deprecated); no success in ledger or host logs (other providers not observed)
+// step-5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
 // END free-model availability
 // <<< custom-routes:candidates <<<

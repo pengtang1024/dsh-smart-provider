@@ -49,9 +49,20 @@ for (const r of doc.routes) {
 // Existing route ids from the live pi-ai providers block (cordis.patch.yml).
 let existingProviderIds = []
 let existingModelsByRoute = new Map()
+let markerAbsent = false
 try {
-  const patch = readFileSync(join(homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml'), 'utf8')
+  const profile = process.env.DSH_PROFILE || 'desktop'
+  const patch = readFileSync(join(homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml'), 'utf8')
   const marker = patch.indexOf('providers:')
+  // Honest degrade (C3 follow-up): a live cordis managed by the DSH app may
+  // have no llm-pi-ai providers block at all. Searching from -1 would slice
+  // the whole file and silently pass zero checks, so surface it instead.
+  if (marker === -1) {
+    notes.push('  --  no "providers:" anchor in cordis.patch.yml (app-managed shape, no llm-pi-ai block): existing-provider overlap check SKIPPED, not passed')
+    existingProviderIds = []
+    existingModelsByRoute = new Map()
+    markerAbsent = true
+  }
   const tail = patch.slice(marker)
   const routeLineRe = /^ {6}([a-zA-Z0-9_.-]+):\s*$/gm
   for (const m of tail.matchAll(routeLineRe)) existingProviderIds.push(m[1])
@@ -63,7 +74,7 @@ try {
     const ids = [...body.matchAll(/^ {10}- id:\s*([^\s#]+)/gm)].map(x => x[1])
     existingModelsByRoute.set(id, new Set(ids))
   }
-  ok(`read ${existingProviderIds.length} existing provider ids from cordis.patch.yml`)
+  if (!markerAbsent) ok(`read ${existingProviderIds.length} existing provider ids from cordis.patch.yml`)
 } catch (e) {
   notes.push('  --  could not read existing providers, overlap check degraded: ' + e.message)
 }
@@ -180,6 +191,69 @@ if (ourDup.length) {
   ok(`auto chain has ${auto.length} hops, no NEW duplicate; first=${auto[0]?.provider}/${auto[0]?.model}`)
 }
 
+// --- 8. declared routes must have a live adapter registration ------------
+// A route may be declared in the registry AND wired into smart chains while
+// having NO provider registration in the live patch. That is exactly the
+// P0 failure 'no adapter registered for provider x-opencode-free'. Never
+// treat a missing anchor as a silent SKIP: FAIL with the exact fix command.
+const FB_B_VALIDATE = '# >>> custom-routes:providers-insert >>>'
+const FB_E_VALIDATE = '# <<< custom-routes:providers-insert <<<'
+let patchText = ''
+try {
+  const profile = process.env.DSH_PROFILE || 'desktop'
+  patchText = readFileSync(join(homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml'), 'utf8')
+} catch (e) {
+  fail('cannot read live cordis.patch.yml for adapter registration check: ' + e.message)
+}
+function providerIdsInMainBlock(text) {
+  const ids = new Set()
+  const m = /^    providers:\s*$/m.exec(text)
+  if (!m) return ids
+  const tail = text.slice(m.index)
+  for (const m of tail.matchAll(/^ {6}([a-zA-Z0-9_.-]+):\s*$/gm)) ids.add(m[1])
+  return ids
+}
+function providerIdsInFallbackBlock(text) {
+  const ids = new Set()
+  const a = text.indexOf(FB_B_VALIDATE)
+  const b = text.indexOf(FB_E_VALIDATE, a)
+  if (a === -1 || b <= a) return ids
+  const block = text.slice(a, b)
+  // Current shape: single llm-pi-ai entry with config.providers at 6 spaces.
+  for (const m of block.matchAll(/^ {6}([a-zA-Z0-9_.-]+):\s*$/gm)) ids.add(m[1])
+  // Legacy second-instance shape (task-12, failed): providers at 10 spaces.
+  // Recognized so a stale patch is flagged as a duplicate, not trusted.
+  for (const m of block.matchAll(/^ {10}([a-zA-Z0-9_.-]+):\s*$/gm)) ids.add(m[1])
+  return ids
+}
+function hasLegacySecondInstance(text) {
+  return /^\s*- id:\s*llm-pi-ai-custom-routes\s*$/m.test(text)
+}
+const registeredMain = providerIdsInMainBlock(patchText)
+const rawFallback = providerIdsInFallbackBlock(patchText)
+// The single-instance fallback writes an llm-pi-ai entry with its own
+// config.providers; that IS the main block for an app-managed profile. Count
+// those ids as main, not as a second registration, or every valid fallback
+// looks like a duplicate. Only a legacy second instance is a real duplicate.
+const registeredFallback = hasLegacySecondInstance(patchText) ? rawFallback : new Set()
+if (!hasLegacySecondInstance(patchText)) for (const id of rawFallback) registeredMain.add(id)
+const registeredAll = new Set([...registeredMain, ...registeredFallback])
+if (hasLegacySecondInstance(patchText)) {
+  fail('cordis.patch.yml still contains the failed second llm-pi-ai instance (id llm-pi-ai-custom-routes): it collides with the built-in provider catalog and auth flows. Run node scripts/gen-custom-routes.mjs --write to replace it with a single-instance config patch.')
+}
+for (const r of doc.routes) {
+  if (r.tier === 'disabled') continue
+  if (!registeredAll.has(r.id)) {
+    fail(`route "${r.id}" is declared in the registry but has NO adapter registration in cordis.patch.yml (declared-but-not-registered => runtime NO_ADAPTER). Fix: node scripts/gen-custom-routes.mjs --write && restart the Host.`)
+  } else {
+    ok(`route "${r.id}" has an adapter registration (${registeredMain.has(r.id) ? 'llm-pi-ai.providers' : 'single llm-pi-ai entry config'})`)
+  }
+  if (registeredMain.has(r.id) && registeredFallback.has(r.id)) {
+    fail(`route "${r.id}" is registered BOTH in llm-pi-ai.providers and in the custom-routes insert instance — would trigger DUPLICATE_ADAPTER; run node scripts/gen-custom-routes.mjs --write to remove the stale block`)
+  }
+}
+if (registeredFallback.size > 0) ok(`${registeredFallback.size} custom route(s) registered via the single llm-pi-ai entry config (no second instance)`);
+
 // --- report ----------------------------------------------------------------
 console.log('validate-custom-routes:')
 for (const n of notes) console.log(n)
@@ -188,5 +262,5 @@ if (errors.length) {
   for (const e of errors) console.error('  ERR  ' + e)
   process.exit(1)
 }
-console.log(`\nPASS: all ${[...Array(7)].length} check groups OK`)
+console.log(`\nPASS: all ${[...Array(8)].length} check groups OK`)
 process.exit(0)
