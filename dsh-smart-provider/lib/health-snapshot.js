@@ -105,13 +105,16 @@ function accountList(value) {
   return []
 }
 
-function accountRow(account, records, source, now) {
-  const id = account.id
-  const record = records ? records.get(id) : undefined
-  const legacy = lookup(source.cooldowns, id)
+/**
+ * Derive the wire state READ-ONLY. COOLING with an elapsed/non-finite until is
+ * reported as HALF_OPEN, but the record itself is never written back — stateOf()
+ * in account-health mutates the registry, which a read path must never do.
+ * A live legacy cooldown still forces COOLING (dispatch is really blocked).
+ */
+export function deriveState(record, now, legacy) {
+  const recordUntil = isObject(record) ? record.until : undefined
   const legacyUntil = isObject(legacy) ? legacy.until : undefined
   const legacyCooling = Number.isFinite(legacyUntil) && legacyUntil > now
-  const recordUntil = isObject(record) ? record.until : undefined
 
   let state = str(isObject(record) ? record.state : undefined, UNKNOWN)
   if (state === COOLING && (!Number.isFinite(recordUntil) || recordUntil <= now)) {
@@ -119,11 +122,34 @@ function accountRow(account, records, source, now) {
   }
   if (!ACCOUNT_STATES.has(state)) state = UNKNOWN
   if (legacyCooling) state = COOLING
+  return state
+}
+
+/**
+ * Effective cooldown = MAX(record.until while COOLING, live legacy.until): both
+ * layers block a dispatch, so the later one wins. Kept as a separate export for
+ * the phase-2 authority convergence to retire — DO NOT delete it yet.
+ */
+export function mergeCooldown(record, legacy, now) {
+  const state = deriveState(record, now, legacy)
+  const recordUntil = isObject(record) ? record.until : undefined
+  const legacyUntil = isObject(legacy) ? legacy.until : undefined
+  const legacyCooling = Number.isFinite(legacyUntil) && legacyUntil > now
 
   const candidates = []
   if (state === COOLING && Number.isFinite(recordUntil)) candidates.push(recordUntil)
   if (legacyCooling) candidates.push(legacyUntil)
-  const until = candidates.length > 0 ? Math.max(...candidates) : null
+  return candidates.length > 0 ? Math.max(...candidates) : null
+}
+
+/** Single-account wire projection; every derivation above is read-only. */
+export function projectAccount(input) {
+  const { account, records, source, now } = input
+  const id = account.id
+  const record = records ? records.get(id) : undefined
+  const legacy = lookup(source.cooldowns, id)
+  const state = deriveState(record, now, legacy)
+  const until = mergeCooldown(record, legacy, now)
 
   const recordReason = state === COOLING && isObject(record) ? str(record.reason, null) : null
   const legacyReason = isObject(legacy) ? str(legacy.reason, null) : null
@@ -154,7 +180,7 @@ function buildAccounts(source, records, now) {
     if (!isObject(account)) continue
     const id = str(account.id, '')
     if (!id) continue
-    rows.push(accountRow(account, records, source, now))
+    rows.push(projectAccount({ account, records, source, now }))
   }
   return rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
@@ -179,9 +205,10 @@ function routeRow(record) {
   }
 }
 
-function buildRoutes(registry) {
-  if (!registry || typeof registry !== 'object') return []
-  const records = registry instanceof Map ? [...registry.values()] : Object.values(registry)
+/** Project the whole availability registry into sorted route rows. */
+export function projectRoutes(input) {
+  if (!input || typeof input !== 'object') return []
+  const records = input instanceof Map ? [...input.values()] : Object.values(input)
   const rows = []
   for (const record of records) {
     const row = routeRow(record)
@@ -216,16 +243,14 @@ function buildRoutes(registry) {
 export function buildHealthSnapshot(input) {
   const source = isObject(input) ? input : {}
   const now = num(source.now, Date.now())
-  const enabled = source.enabled === true
   try {
     return {
-      enabled,
+      enabled: source.enabled === true,
       generatedAt: now,
       accounts: buildAccounts(source, recordsOf(source.accountHealth), now),
-      routes: buildRoutes(source.availabilityRegistry),
+      routes: projectRoutes(source.availabilityRegistry),
     }
   } catch {
-    // The wire contract has no error channel: degrade to "nothing known".
     return { enabled: false, generatedAt: now, accounts: [], routes: [] }
   }
 }

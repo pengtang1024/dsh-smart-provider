@@ -13,7 +13,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildHealthSnapshot } from '../lib/health-snapshot.js'
+import {
+  buildHealthSnapshot, deriveState, mergeCooldown, projectAccount,
+} from '../lib/health-snapshot.js'
 import {
   ACCOUNT_STATES, createAccountHealthRegistry, noteFailure,
 } from '../lib/account-health.js'
@@ -328,4 +330,36 @@ test('13. a bare Map works as the account-health registry (documented tolerance)
   assert.equal(snapshot.accounts[0].state, 'ACTIVE')
   assert.equal(snapshot.accounts[0].implicit, true)
   assert.deepEqual(snapshot.accounts[0].samples, { success: 4, failure: 0 })
+})
+
+test('14. deriveState derives HALF_OPEN read-only; live legacy still forces COOLING', () => {
+  const record = { state: 'COOLING', until: NOW - MINUTE, reason: 'QUOTA' }
+  const before = JSON.stringify(record)
+  assert.equal(deriveState(record, NOW), 'HALF_OPEN')
+  assert.equal(JSON.stringify(record), before, 'read path never writes the record')
+  assert.equal(record.state, 'COOLING')
+  assert.equal(deriveState(record, NOW, { until: NOW + MINUTE }), 'COOLING',
+    'a live legacy cooldown overrides the derived HALF_OPEN')
+})
+
+test('15. mergeCooldown keeps the later of both layers (legacy MAX preserved)', () => {
+  const record = { state: 'COOLING', until: NOW + 2 * MINUTE }
+  assert.equal(mergeCooldown(record, undefined, NOW), NOW + 2 * MINUTE)
+  assert.equal(mergeCooldown(record, { until: NOW + 9 * MINUTE }, NOW), NOW + 9 * MINUTE,
+    'both layers block dispatch, so the later until wins')
+  assert.equal(mergeCooldown({ state: 'COOLING', until: NOW - MINUTE }, undefined, NOW), null,
+    'an expired record cooldown has no effective until')
+})
+
+test('16. projectAccount reports UNKNOWN with zero samples when there is no record', () => {
+  const row = projectAccount({
+    account: { id: 'acct-1', provider: 'route-a' },
+    records: new Map(),
+    source: {},
+    now: NOW,
+  })
+  assert.equal(row.state, 'UNKNOWN', 'no evidence is UNKNOWN, never HEALTHY')
+  assert.deepEqual(row.samples, { success: 0, failure: 0 })
+  assert.equal(row.until, null)
+  assert.equal(row.remainingMs, 0)
 })
