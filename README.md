@@ -2,6 +2,14 @@
 
 `smart` 是一个 DSH 元提供商：它本身不调用任何大模型 API，而是在你**已配置的供应商路由**之间按序故障转移，并提供离线成本统计。它是**通用智能路由**，不是某一个账号的「省钱脚本」——四个目标是省钱 / 高性能 / 高能力 / 复合（智能），由每个用户按自己的需要选；**代码默认是中立的**（均衡权重 .25，不偏向任何单一目标），「省钱优先」是用户自己的 config 值（`cost-first` 策略），不是出厂默认。
 
+简体中文 → [docs/DETAIL.md](docs/DETAIL.md)
+English → [docs/DETAIL.en.md](docs/DETAIL.en.md)
+Español → [docs/DETAIL.es.md](docs/DETAIL.es.md)
+Français → [docs/DETAIL.fr.md](docs/DETAIL.fr.md)
+Deutsch → [docs/DETAIL.de.md](docs/DETAIL.de.md)
+Русский → [docs/DETAIL.ru.md](docs/DETAIL.ru.md)
+Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
+
 实现依据父工作区的三份设计文档：
 
 - `meta-provider-设计方案.md` —— 核心骨架、错误分类、仅在响应建立前回退
@@ -291,3 +299,9 @@ ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/account-pool.test.mjs 
 ## English summary (secondary)
 
 `smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a settings page with real pi-ai resources and `@Remote` real-ledger cost tab, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), and P2 opt-in two-layer routing (`ranking.routing.enabled=true`, 8 presets, byte-for-byte legacy when off). See `docs/DETAIL.md` for the plugin detail page and the three design docs in the parent workspace for the full design rationale.
+
+---
+
+## 支持本项目
+
+如果这个插件帮你省了心、省了钱，或者单纯觉得它做得还行，欢迎给仓库点个 star ⭐ —— 你的一个星是对我们最大的鼓励，也让更多人能发现它。感谢！
