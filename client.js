@@ -742,6 +742,8 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       },
       heroTitle: { fontSize: 17, fontWeight: 600, color: 'var(--dsw-alias-label-primary)', lineHeight: '25px' },
       heroText: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', lineHeight: '22px' },
+      // 静态 star 引导链接：只用既有主题 token，不引入新颜色 / 硬编码颜色。
+      starLink: { color: 'var(--dsw-alias-label-tertiary)', textDecoration: 'underline', borderRadius: 'var(--dsw-radius-sm)', marginLeft: 6 },
       choiceBtn: active => ({
         cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, lineHeight: '20px',
         padding: '11px 14px', borderRadius: 'var(--dsw-radius-md)', textAlign: 'left',
