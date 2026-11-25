@@ -1,0 +1,15 @@
+# dsh-smart-provider — one Host plugin row.
+#
+# NOTE: there is intentionally NO `smart:` block under llm-pi-ai.providers.
+# The smart route is registered at runtime via ctx.llm.registerAdapter(['smart'],
+# adapter). Declaring it in both places triggers DUPLICATE_ADAPTER
+# (方案盲点审查 §11.2).
+#
+# To install: plugin_manager install_bundle with the absolute package dir, or
+# Plugins > Add plugin in the GUI. Enabling/installing is a SEPARATE step from
+# building this package; this patch only places the plugin row.
+# hmr-trigger: 2026-11-23 config-channel-fix — client drops all smart-* command calls; settings reads configForms+STATIC_* only; honest configured-state hero, no spinner; cost empty-state (no restart)
+- insert:
+    - id: smart-provider
+      name: '@local/dsh-smart-provider'
+      config: {}

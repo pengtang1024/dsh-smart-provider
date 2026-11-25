@@ -1,0 +1,1218 @@
+{
+  "_example": true,
+  "_note": "P1: example/reference export of ONE user's account. Not product data. Users import their own table via registry/pricing.user.json (or DSH_SMART_PRICING_FILE); this file is kept as a documented example and backward-compatible fallback so existing ledgers stay comparable. New users should not rely on it.",
+  "_source": "Bifrost config.db governance_model_pricing (read-only export, 2026-11-23)",
+  "_unit": "USD per token; cacheRead=cache-read input, cacheWrite=cache-creation input",
+  "_disclaimer": "Offline published-price estimate, NOT a billing record. Subscription/gateway discounts are not reflected.",
+  "_rows": 151,
+  "entries": [
+    {
+      "provider": "minimax",
+      "model": "MiniMax-H3-Context-IR",
+      "input": 9e-7,
+      "output": 0.0000036,
+      "cacheRead": null,
+      "cacheWrite": null
+    },
+    {
+      "provider": "minimax",
+      "model": "MiniMax-M2",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 3e-8,
+      "cacheWrite": 3.75e-7
+    },
+    {
+      "provider": "minimax",
+      "model": "MiniMax-M2.1",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 3e-8,
+      "cacheWrite": 3.75e-7
+    },
+    {
+      "provider": "minimax",
+      "model": "MiniMax-M2.1-lightning",
+      "input": 3e-7,
+      "output": 0.0000024,
+      "cacheRead": 3e-8,
+      "cacheWrite": 3.75e-7
+    },
+    {
+      "provider": "minimax",
+      "model": "MiniMax-M2.5",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 3e-8,
+      "cacheWrite": 3.75e-7
+    },
+    {
+      "provider": "minimax",
+      "model": "MiniMax-M2.5-lightning",
+      "input": 3e-7,
+      "output": 0.0000024,
+      "cacheRead": 3e-8,
+      "cacheWrite": 3.75e-7
+    },
+    {
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 6e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "minimax",
+      "model": "MiniMax-M3.1-Flash",
+      "input": 1.5e-7,
+      "output": 6e-7,
+      "cacheRead": 1.5e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "beam-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "claude-haiku-5-5",
+      "input": 1e-7,
+      "output": 5e-7,
+      "cacheRead": 1e-8,
+      "cacheWrite": 1.25e-7
+    },
+    {
+      "provider": "opencode-go",
+      "model": "deepseek-v4-pro",
+      "input": 6.6e-7,
+      "output": 0.00000198,
+      "cacheRead": 4.4e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "deepseek-v4.1-flash",
+      "input": 1.5e-7,
+      "output": 6e-7,
+      "cacheRead": 6e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "gemini-4-argon",
+      "input": 0.000002,
+      "output": 0.000009999999999999999,
+      "cacheRead": 1e-7,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "glm-5.1",
+      "input": 0.0000014,
+      "output": 0.0000044,
+      "cacheRead": 2.6e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-go",
+      "model": "glm-5.2",
+      "input": 0.0000014,
+      "output": 0.0000044,
+      "cacheRead": 2.6e-7,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "glm-5.3",
+      "input": 0.0000014,
+      "output": 0.0000044,
+      "cacheRead": 2.6e-7,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "glm-5.3-flash",
+      "input": 1.5e-7,
+      "output": 5e-7,
+      "cacheRead": 3e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "gpt-5.6-luna",
+      "input": 2e-7,
+      "output": 0.0000012,
+      "cacheRead": 2e-8,
+      "cacheWrite": 2.5e-7
+    },
+    {
+      "provider": "opencode-go",
+      "model": "gpt-6-luna",
+      "input": 1e-7,
+      "output": 5e-7,
+      "cacheRead": 1e-8,
+      "cacheWrite": 1.25e-7
+    },
+    {
+      "provider": "opencode-go",
+      "model": "grok-4.7",
+      "input": 0.000002,
+      "output": 0.000006,
+      "cacheRead": 5e-7,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "hy3",
+      "input": 1.4e-7,
+      "output": 5.8e-7,
+      "cacheRead": 3.5e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "hy4-preview",
+      "input": 8.34e-7,
+      "output": 0.000002501,
+      "cacheRead": 4.2000000000000006e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "kimi-k2.6",
+      "input": 9.5e-7,
+      "output": 0.000004,
+      "cacheRead": 1.6e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-go",
+      "model": "kimi-k2.7-code",
+      "input": 9.499999999999999e-7,
+      "output": 0.000004,
+      "cacheRead": 1.9e-7,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "kimi-k3",
+      "input": 0.000003,
+      "output": 0.000014999999999999999,
+      "cacheRead": 3e-7,
+      "cacheWrite": 0.000003
+    },
+    {
+      "provider": "opencode-go",
+      "model": "kimi-k3.1-pro",
+      "input": 0.000002,
+      "output": 0.000009999999999999999,
+      "cacheRead": 2.0000000000000002e-7,
+      "cacheWrite": 0.000002
+    },
+    {
+      "provider": "opencode-go",
+      "model": "longcat-2.0",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 6e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "longcat-2.5-preview-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "mimo-v2.5",
+      "input": 1.4e-7,
+      "output": 2.8e-7,
+      "cacheRead": 2.8e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "mimo-v2.5-pro",
+      "input": 4.3499999999999996e-7,
+      "output": 8.699999999999999e-7,
+      "cacheRead": 3.625e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-flash",
+      "input": 1.4e-7,
+      "output": 2.8e-7,
+      "cacheRead": 2.8e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "input": 4.3499999999999996e-7,
+      "output": 8.699999999999999e-7,
+      "cacheRead": 3.625e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "minimax-m2.5",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 6e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-go",
+      "model": "minimax-m2.7",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 6e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-go",
+      "model": "minimax-m3",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 6e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "minimax-m3.1-flash",
+      "input": 1.5e-7,
+      "output": 6e-7,
+      "cacheRead": 1.5e-8,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "muse-spark-1.2-contributor",
+      "input": 1e-7,
+      "output": 2e-7,
+      "cacheRead": 2e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "muse-spark-1.3-contributor",
+      "input": 1e-7,
+      "output": 2e-7,
+      "cacheRead": 2e-9,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-go",
+      "model": "qwen3.6-plus",
+      "input": 5e-7,
+      "output": 0.000003,
+      "cacheRead": 5e-8,
+      "cacheWrite": 6.25e-7
+    },
+    {
+      "provider": "opencode-go",
+      "model": "qwen3.7-plus",
+      "input": 4e-7,
+      "output": 0.0000016,
+      "cacheRead": 4e-8,
+      "cacheWrite": 5e-7
+    },
+    {
+      "provider": "opencode-go",
+      "model": "qwen3.8-flash",
+      "input": 1.5e-7,
+      "output": 4.6999999999999995e-7,
+      "cacheRead": 1.6e-8,
+      "cacheWrite": 2.0000000000000002e-7
+    },
+    {
+      "provider": "opencode-go",
+      "model": "qwen3.8-max",
+      "input": 0.000002,
+      "output": 0.000006,
+      "cacheRead": 2.5e-7,
+      "cacheWrite": 0.0000025
+    },
+    {
+      "provider": "opencode-go",
+      "model": "step-5-preview",
+      "input": 0.000001,
+      "output": 0.0000027,
+      "cacheRead": 1.0000000000000001e-7,
+      "cacheWrite": null
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "beam-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "big-pickle",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-fable-5",
+      "input": 0.00001,
+      "output": 0.00005,
+      "cacheRead": 0.000001,
+      "cacheWrite": 0.0000125
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-fable-5-1",
+      "input": 0.00001,
+      "output": 0.00005,
+      "cacheRead": 2.5e-7,
+      "cacheWrite": 0.0000125
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-fable-5-2",
+      "input": 0.000008,
+      "output": 0.00004,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0.00001
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-haiku-4-5",
+      "input": 0.000001,
+      "output": 0.000005,
+      "cacheRead": 1e-7,
+      "cacheWrite": 0.00000125
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-haiku-5-5",
+      "input": 1e-7,
+      "output": 5e-7,
+      "cacheRead": 1e-8,
+      "cacheWrite": 1.25e-7
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-opus-4-5",
+      "input": 0.000005,
+      "output": 0.000025,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0.00000625
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-opus-4-6",
+      "input": 0.000005,
+      "output": 0.000025,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0.00000625
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-opus-4-7",
+      "input": 0.000005,
+      "output": 0.000025,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0.00000625
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-opus-4-8",
+      "input": 0.000005,
+      "output": 0.000025,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0.00000625
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-opus-5",
+      "input": 0.000005,
+      "output": 0.000025,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0.00000625
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-opus-5-5",
+      "input": 0.000004,
+      "output": 0.00002,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0.000005
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-sonnet-4-5",
+      "input": 0.000003,
+      "output": 0.000015,
+      "cacheRead": 3e-7,
+      "cacheWrite": 0.00000375
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-sonnet-4-6",
+      "input": 0.000003,
+      "output": 0.000015,
+      "cacheRead": 3e-7,
+      "cacheWrite": 0.00000375
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-sonnet-5",
+      "input": 0.000002,
+      "output": 0.00001,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0.0000025
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "claude-sonnet-5-5",
+      "input": 0.000002,
+      "output": 0.00001,
+      "cacheRead": 1e-7,
+      "cacheWrite": 0.0000025
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "deepseek-v4.1-flash",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 6e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "deepseek-v4.1-flash-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "flint-40b-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-3-flash",
+      "input": 5e-7,
+      "output": 0.000003,
+      "cacheRead": 5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-3.1-pro",
+      "input": 0.000002,
+      "output": 0.000012,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-3.5-flash",
+      "input": 0.0000015,
+      "output": 0.000009,
+      "cacheRead": 1.5e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-3.5-flash-lite",
+      "input": 3e-7,
+      "output": 0.0000025,
+      "cacheRead": 3e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-3.6-flash",
+      "input": 7.5e-7,
+      "output": 0.00000375,
+      "cacheRead": 7.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-3.7-flash",
+      "input": 7.5e-7,
+      "output": 0.00000375,
+      "cacheRead": 7.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-3.8-flash",
+      "input": 7.5e-7,
+      "output": 0.00000375,
+      "cacheRead": 7.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-4-argon",
+      "input": 0.000002,
+      "output": 0.00001,
+      "cacheRead": 1e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-4-carbon",
+      "input": 0.000002,
+      "output": 0.00001,
+      "cacheRead": 1e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-4-hydrogen",
+      "input": 0.0000015,
+      "output": 0.0000075,
+      "cacheRead": 7.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gemini-decision-1",
+      "input": 1e-7,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "glm-5",
+      "input": 0.000001,
+      "output": 0.0000032,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "glm-5.3",
+      "input": 0.0000014,
+      "output": 0.0000044,
+      "cacheRead": 2.6e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "glm-5.3-flash",
+      "input": 1.5e-7,
+      "output": 5e-7,
+      "cacheRead": 3e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "glm-5.3-flash-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5",
+      "input": 0.00000107,
+      "output": 0.0000085,
+      "cacheRead": 1.07e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5-codex",
+      "input": 0.00000107,
+      "output": 0.0000085,
+      "cacheRead": 1.07e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5-nano",
+      "input": 5e-8,
+      "output": 4e-7,
+      "cacheRead": 5e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.1",
+      "input": 0.00000107,
+      "output": 0.0000085,
+      "cacheRead": 1.07e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.1-codex",
+      "input": 0.00000107,
+      "output": 0.0000085,
+      "cacheRead": 1.07e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.1-codex-max",
+      "input": 0.00000125,
+      "output": 0.00001,
+      "cacheRead": 1.25e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.1-codex-mini",
+      "input": 2.5e-7,
+      "output": 0.000002,
+      "cacheRead": 2.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.2",
+      "input": 0.00000175,
+      "output": 0.000014,
+      "cacheRead": 1.75e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.2-codex",
+      "input": 0.00000175,
+      "output": 0.000014,
+      "cacheRead": 1.75e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.3-codex",
+      "input": 0.00000175,
+      "output": 0.000014,
+      "cacheRead": 1.75e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.3-codex-spark",
+      "input": 0.00000175,
+      "output": 0.000014,
+      "cacheRead": 1.75e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.4",
+      "input": 0.0000025,
+      "output": 0.000015,
+      "cacheRead": 2.5e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.4-mini",
+      "input": 7.5e-7,
+      "output": 0.0000045,
+      "cacheRead": 7.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.4-nano",
+      "input": 2e-7,
+      "output": 0.00000125,
+      "cacheRead": 2e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.4-pro",
+      "input": 0.00003,
+      "output": 0.00018,
+      "cacheRead": 0.00003,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.5",
+      "input": 0.000005,
+      "output": 0.00003,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.5-pro",
+      "input": 0.00003,
+      "output": 0.00018,
+      "cacheRead": 0.00003,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.6-luna",
+      "input": 2e-7,
+      "output": 0.0000012,
+      "cacheRead": 2e-8,
+      "cacheWrite": 2.5e-7
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.6-sol",
+      "input": 0.000004,
+      "output": 0.00002,
+      "cacheRead": 4e-7,
+      "cacheWrite": 0.000005
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-5.6-terra",
+      "input": 0.000002,
+      "output": 0.000012,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0.0000025
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-6-astra",
+      "input": 0.00001,
+      "output": 0.00005,
+      "cacheRead": 0.000001,
+      "cacheWrite": 0.0000125
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-6-luna",
+      "input": 1e-7,
+      "output": 5e-7,
+      "cacheRead": 1e-8,
+      "cacheWrite": 1.25e-7
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-6-luna-decision",
+      "input": 1e-7,
+      "output": 0,
+      "cacheRead": 1e-8,
+      "cacheWrite": 1.25e-7
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-6-sol",
+      "input": 0.000002,
+      "output": 0.00001,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0.0000025
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "gpt-6.1-sol",
+      "input": 0.000002,
+      "output": 0.00001,
+      "cacheRead": 1e-7,
+      "cacheWrite": 0.0000025
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "grok-4.5",
+      "input": 0.000002,
+      "output": 0.000006,
+      "cacheRead": 3e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "grok-4.6",
+      "input": 0.000002,
+      "output": 0.000006,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "grok-4.7",
+      "input": 0.000002,
+      "output": 0.000006,
+      "cacheRead": 5e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "grok-build-0.1",
+      "input": 0.000001,
+      "output": 0.000002,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "hy3",
+      "input": 1.4e-7,
+      "output": 5.8e-7,
+      "cacheRead": 3.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "hy4",
+      "input": 8.34e-7,
+      "output": 0.000002501,
+      "cacheRead": 4.2e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "hy4-flash-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "hy4-preview",
+      "input": 8.34e-7,
+      "output": 0.000002501,
+      "cacheRead": 4.2e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "iceman-contributor-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "iceman-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "inkling-2-small-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "jev-1.13",
+      "input": 4.2e-8,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "jev-1.13-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "kimi-k2.5",
+      "input": 6e-7,
+      "output": 0.000003,
+      "cacheRead": 1e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "kimi-k3",
+      "input": 0.000003,
+      "output": 0.000015,
+      "cacheRead": 3e-7,
+      "cacheWrite": 0.000003
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "kimi-k3.1-pro",
+      "input": 0.000002,
+      "output": 0.00001,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0.000002
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "longcat-2.0",
+      "input": 3e-7,
+      "output": 0.0000012,
+      "cacheRead": 6e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "longcat-2.5-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "mimo-v2.6-flash",
+      "input": 1.4e-7,
+      "output": 2.8e-7,
+      "cacheRead": 2.8e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "mimo-v2.6-flash-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "mimo-v2.6-pro",
+      "input": 4.35e-7,
+      "output": 8.7e-7,
+      "cacheRead": 3.625e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "minimax-m3.1-flash",
+      "input": 1.5e-7,
+      "output": 6e-7,
+      "cacheRead": 1.5e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "minimax-m3.1-flash-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "mistral-large-4",
+      "input": 6.8e-7,
+      "output": 0.00000209,
+      "cacheRead": 7e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "muse-ember-1.0",
+      "input": 1e-7,
+      "output": 5e-7,
+      "cacheRead": 4e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "muse-spark-1.2",
+      "input": 0.00000125,
+      "output": 0.00000425,
+      "cacheRead": 1.5e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "muse-spark-1.2-contributor",
+      "input": 1e-7,
+      "output": 2e-7,
+      "cacheRead": 2e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "muse-spark-1.3",
+      "input": 0.00000125,
+      "output": 0.00000425,
+      "cacheRead": 1.5e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "muse-spark-1.3-contributor",
+      "input": 1e-7,
+      "output": 2e-7,
+      "cacheRead": 2e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "muse-wonder-1.0",
+      "input": 0.000004,
+      "output": 0.00002,
+      "cacheRead": 2e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "nemotron-3-ultra-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "nemotron-3.5-lightning-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "nemotron-3.5-super-vl-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "qwen3.5-plus",
+      "input": 2e-7,
+      "output": 0.0000012,
+      "cacheRead": 2e-8,
+      "cacheWrite": 2.5e-7
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "qwen3.8-flash",
+      "input": 1.5e-7,
+      "output": 4.7e-7,
+      "cacheRead": 1.6e-8,
+      "cacheWrite": 2e-7
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "qwen3.8-max",
+      "input": 0.000002,
+      "output": 0.000006,
+      "cacheRead": 2.5e-7,
+      "cacheWrite": 0.0000025
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "qwen4-max",
+      "input": 0.0000015,
+      "output": 0.0000045,
+      "cacheRead": 7.5e-8,
+      "cacheWrite": 0.000001875
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "step-5-preview",
+      "input": 0.000001,
+      "output": 0.0000027,
+      "cacheRead": 1e-7,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "xiaomi",
+      "model": "mimo-v2.5-tts",
+      "input": 0,
+      "output": 0,
+      "cacheRead": null,
+      "cacheWrite": null
+    },
+    {
+      "provider": "xiaomi",
+      "model": "mimo-v2.5-tts-voiceclone",
+      "input": 0,
+      "output": 0,
+      "cacheRead": null,
+      "cacheWrite": null
+    },
+    {
+      "provider": "xiaomi",
+      "model": "mimo-v2.5-tts-voicedesign",
+      "input": 0,
+      "output": 0,
+      "cacheRead": null,
+      "cacheWrite": null
+    },
+    {
+      "provider": "xiaomi",
+      "model": "mimo-v2.6-flash",
+      "input": 1.4e-7,
+      "output": 2.8e-7,
+      "cacheRead": 2.8e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "xiaomi",
+      "model": "mimo-v2.6-pro",
+      "input": 4.35e-7,
+      "output": 8.7e-7,
+      "cacheRead": 3.6e-9,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "xiaomi",
+      "model": "mimo-v2.6-pro-ultraspeed",
+      "input": 0.00000435,
+      "output": 0.0000087,
+      "cacheRead": 3.6e-8,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "x-opencode-free",
+      "model": "hy4-flash-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "x-opencode-free",
+      "model": "hy4flash-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "x-opencode-free",
+      "model": "hy4-flash-free-trial-202611",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    {
+      "provider": "x-opencode-free",
+      "model": "web-search-free",
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    }
+  ]
+}

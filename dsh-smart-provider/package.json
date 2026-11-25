@@ -1,0 +1,53 @@
+{
+  "name": "@local/dsh-smart-provider",
+  "displayName": "DSH 智能模型路由（Smart Provider）",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "一个 DSH 元提供商，智能调度已配置的模型路由，支持额度自动切换、多账号池与离线成本统计。",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "smart-provider",
+    "model-router",
+    "meta-provider",
+    "failover",
+    "模型路由",
+    "智能调度",
+    "成本统计"
+  ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "schema.js",
+    "lib",
+    "registry",
+    "cordis.patch.yml",
+    "README.md",
+    "locale/*.json",
+    "docs",
+    "scripts",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
+  }
+}

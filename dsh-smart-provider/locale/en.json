@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "title": "Smart provider",
+    "description": "Meta-provider that fails over across cheap provider routes with establishment-only fallback, hop-level cooldown, per-hop session records, offline cost meter and account ranking. A dedicated settings section offers overview / chains / accounts+ranking / cost+health.",
+    "detail": "docs/DETAIL.md"
+  },
+  "nav": "Smart provider",
+  "setting": {
+    "title": "Smart provider",
+    "description": "Configure chains, account pool, ranking strategy and cost health; all edits apply live without a restart."
+  }
+}

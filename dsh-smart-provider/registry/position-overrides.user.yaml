@@ -1,0 +1,14 @@
+# 用户专属的模型定位覆盖（capability stage 2 · thrifty/swift 补档）
+# 这是【当前用户的个人资源配置】，不是产品默认——换一个用户没有这些模型，
+# 所以绝不写入 DEFAULT_RANKING_CONFIG / 包内模板。产品默认 positionOverrides 为空。
+# 加载方：index.js 读取本文件并合并进 ranking.routing.positionOverrides。
+# 用户显式配置（cordis 里的 ranking.routing）优先级更高，会覆盖本文件。
+version: 1
+# key 格式：provider/model 或裸 model id
+overrides:
+  x-opencode-free/hy4-flash-free:
+    tags: [thrifty]      # 该模型 price=0、tier=free，省钱语义一致；个人免费资源
+  # swift 档：具体"哪个快速模型"是个人配比，不写产品默认。
+  # 当前用户如要激活，按下面格式填自己已配置的快速模型：
+  # opencode-go/deepseek-v4.1-flash:
+  #   tags: [swift]

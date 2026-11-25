@@ -1,0 +1,1765 @@
+/**
+ * dsh-smart-provider — Web Client settings section.
+ *
+ * Registers a `settings.section` ("Smart 智能路由") with four tabs:
+ * overview / chains / accounts+ranking / cost+health.
+ *
+ * Hard UI rules (dsh-doc practices.md §UI):
+ *   - no iframe, no require('@deepseek-ai/dsh-client-ui-primitives')
+ *   - only --dsw-alias-* theme tokens for colors
+ *   - defensive against missing/empty data (a throwing component blanks the slot)
+ *   - never append to document.body
+ *
+ * Data channels (2026-11-23 direction fix): this client deliberately uses NO
+ * command channel. ctx.commands.register() registers SLASH commands (agent-
+ * facing, needs an agent), not a remote data API — calling them from the
+ * settings page with no agent never worked in a real browser. All data now
+ * comes from: (1) STATIC_* constants embedded below, (2) configForms snapshot,
+ * (3) runtime status is not queried — the UI states only configured facts.
+ */
+
+window.__ModuleLoader__.load({
+  id: '@local/dsh-smart-provider',
+  factory: require => {
+    const React = require('react')
+    const h = React.createElement
+    const { useState, useEffect, useCallback, useRef } = React
+
+    const NS = 'settings.smart-provider'
+    const ENTRY = 'smart-provider'
+    // 与 package.json 的 version 保持同步（浏览器模块无法 require package.json，
+    // 故按本项目 STATIC_* 惯例内联）。改版本时两处都要更新。
+    const PLUGIN_VERSION = '1.0.0'
+
+    // ---- typed @Remote contribution for real cost data ---------------------
+    // The Host registers a `smartProvider/cost` @Remote service (see lib/remote.js).
+    // Here we build the matching mountable contribution inlined (the browser
+    // module table does not expose dsh-typert-protocol/remote-info to third-party
+    // clients). This mirrors createTypertRemoteInfo's descriptor shape 1:1 for a
+    // zero-argument direct method with a strict zod result codec. No secrets,
+    // no client-side ledger parsing — the Host owns the real numbers.
+    const COST_RESULT_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      return z.object({
+        records: z.number(),
+        estimatedCostUsd: z.number(),
+        freeCount: z.number(),
+        paidCount: z.number(),
+        failedCount: z.number().optional(),
+        byProvider: z.record(z.string(), z.number()),
+        source: z.string().optional(),
+      })
+    })()
+    // Detailed ledger view (costDetail) — separate descriptor so cost() keeps
+    // its original light structure for older clients. zod strict here must list
+    // EVERY field the Host returns or it gets stripped on the wire.
+    const COST_DETAIL_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      const rowSchema = z.object({
+        timestamp: z.string(), provider: z.string(), model: z.string(),
+        inputTokens: z.number(), outputTokens: z.number(), costUsd: z.number(),
+        failed: z.boolean(), requestId: z.string(),
+      })
+      const timelineSchema = z.object({ day: z.string(), calls: z.number(), costUsd: z.number(), failures: z.number() })
+      const byModelSchema = z.object({
+        provider: z.string(), model: z.string(), calls: z.number(), costUsd: z.number(),
+        freeCalls: z.number(), paidCalls: z.number(), failedCalls: z.number(),
+      })
+      const savingSchema = z.object({
+        model: z.string(), provider: z.string(), freeCalls: z.number(),
+        inputTokens: z.number(), outputTokens: z.number(),
+        estimated: z.boolean(), known: z.boolean(),
+        source: z.string(), referenceModel: z.string(),
+        estimatedUsd: z.number().nullable(),
+      })
+      return z.object({
+        total: z.number(), offset: z.number(), limit: z.number(),
+        rows: z.array(rowSchema),
+        timeline: z.array(timelineSchema),
+        byModel: z.array(byModelSchema),
+        savings: z.object({
+          estimated: z.boolean(), priceSource: z.string(), note: z.string(),
+          models: z.array(savingSchema),
+        }),
+      })
+    })()
+    // L5b: Host live registry projection (L1 projectStatus) — ledger + session
+    // signals, covers workbuddy routes that never write cost.jsonl. Record<
+    // modelId,{health,tier,confidence}>; absent model = zero sample = UNKNOWN.
+    const AVAIL_STATUS_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      return z.record(z.string(), z.object({
+        health: z.string(), tier: z.string(), confidence: z.number(),
+      }))
+    })()
+    // task-107: minimal probe result/candidates schema. strict codec 三件套
+    // (wire/typeSymbol/zod create) mandatory — task-102 proved a non-strict
+    // codec kills the WHOLE smartProvider namespace (all methods).
+    const PROBE_RESULT_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      const result = z.object({
+        provider: z.string(), model: z.string(),
+        verdict: z.string(), evidence: z.string(),
+        ok: z.boolean(), probedAt: z.number().optional(),
+      })
+      return z.object({ results: z.array(result), probedAt: z.number() })
+    })()
+    const PROBE_CANDIDATES_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      return z.object({
+        candidates: z.array(z.object({ provider: z.string(), model: z.string() })),
+        force: z.boolean().optional(),
+      })
+    })()
+    // $mount 的真实失败原因会写进这里，随成本页诊断文案一起显示，避免 err=? 静默。
+    let mountDiag = 'unmounted'
+    const makeCostContribution = () => ({
+      package: '@local/dsh-smart-provider',
+      descriptors: [{
+        id: '@local/dsh-smart-provider#smartProvider/cost',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'cost',
+        description: 'Read the real cost ledger',
+        invocation: { kind: 'direct' },
+        parameters: [],
+        result: {
+          // typert validateCodec() 对非 src-json 的 codec 强制要求非空 typeSymbol；
+          // 缺这个字段时 validateNonempty() 抛 TypeError（读 undefined.length），
+          // $mount 直接 reject，namespace 永远装不上 → 软探测四次全空。
+          // 官方 createTypertRemoteInfo 生成的 descriptor 必带 typeSymbol，1:1 对齐。
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#CostSummary',
+          create: () => COST_RESULT_SCHEMA ?? { parse: v => v },
+          description: 'cost ledger summary',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          return receiver.cost(signal)
+        },
+      }, {
+        id: '@local/dsh-smart-provider#smartProvider/costDetail',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'costDetail',
+        description: 'Read paged cost ledger detail with bounded aggregations',
+        invocation: { kind: 'direct' },
+        parameters: [{
+          name: 'opts', wire: 'opts', description: 'pagination {offset,limit}', source: 'json',
+          // P0 task-102: src-json codec fails requireStrictCodec() at mount time
+          // ("field undefined has no strict codec") — the whole namespace fails
+          // to mount, killing cost()/costDetail()/availabilityStatus() together.
+          // Mirror official generated strict codec: mode + typeSymbol + create.
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@local/dsh-smart-provider/types#CostDetailOptions',
+            create: () => (() => {
+              let zod; try { zod = require('zod') } catch { return { parse: v => v } }
+              const z = zod.z ?? zod
+              return z.object({ offset: z.number().optional(), limit: z.number().optional() })
+            })(),
+          },
+        }],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#CostDetail',
+          create: () => COST_DETAIL_SCHEMA ?? { parse: v => v },
+          description: 'cost detail page',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          const opts = input && (input.opts ?? input) // named input wrapper or raw
+          return receiver.costDetail(opts, signal)
+        },
+      }, {
+        id: '@local/dsh-smart-provider#smartProvider/availabilityStatus',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'availabilityStatus',
+        description: 'Read live availability projection (ledger + session signals)',
+        invocation: { kind: 'direct' },
+        parameters: [],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#AvailabilityProjection',
+          create: () => AVAIL_STATUS_SCHEMA ?? { parse: v => v },
+          description: 'model availability projection',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          return receiver.availabilityStatus(signal)
+        },
+      }, {
+        id: '@local/dsh-smart-provider#smartProvider/probeModels',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'probeModels',
+        description: 'Minimal real probe of candidate models (Host only)',
+        invocation: { kind: 'direct' },
+        parameters: [{
+          name: 'opts', wire: 'opts', description: 'candidates to probe', source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@local/dsh-smart-provider/types#ProbeCandidates',
+            create: () => PROBE_CANDIDATES_SCHEMA ?? { parse: v => v },
+          },
+        }],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#ProbeResult',
+          create: () => PROBE_RESULT_SCHEMA ?? { parse: v => v },
+          description: 'probe verdicts',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          const opts = input && (input.opts ?? input)
+          return receiver.probeModels(opts, signal)
+        },
+      }],
+    })
+
+    // ---- static fallback data ---------------------------------------------
+    // Mirrored from lib/ranking.js + lib/chains.js. The client factory(require)
+    // can only resolve browser module-table entries, NOT local ESM files, so
+    // these constants are inlined on purpose: presets and default chains must
+    // render even when Host commands are unreachable. Host command results
+    // (below) override these when available.
+    const STATIC_STRATEGIES = [
+      { id: 'legacy', label: '兼容模式', description: '完全保持旧行为：route 优先 + 最少使用', weights: null },
+      { id: 'balanced', label: '均衡（推荐）', description: '日常自动模式', weights: { cost: 0.4, speed: 0.2, tier: 0.15, load: 0.25 } },
+      { id: 'cost-first', label: '成本优先', description: '长任务、批量、后台跑', weights: { cost: 0.7, speed: 0.05, tier: 0.1, load: 0.15 } },
+      { id: 'speed-first', label: '速度优先', description: '交互、低延迟需求', weights: { cost: 0.1, speed: 0.65, tier: 0.1, load: 0.15 } },
+      { id: 'tier-first', label: '等级优先', description: '先用高等级；配 low 方向先耗备份', weights: { cost: 0.1, speed: 0.1, tier: 0.65, load: 0.15 } },
+      { id: 'custom', label: '自定义', description: '自定义权重', weights: null },
+    ]
+    const DEFAULT_WEIGHTS = { cost: 0.4, speed: 0.2, tier: 0.15, load: 0.25 }
+    // P2 两层路由的 8 个预设：大白话中文名 + 一句说明，不暴露 tierPolicy 原始字段。
+    // id 与 lib/routing.js resolveRoutingPolicy 的预设一一对应。
+    const ROUTING_PRESETS = [
+      { id: 'balanced', label: '均衡（推荐）', desc: '按任务自动挑合适的模型档位' },
+      { id: 'cost-first', label: '更省钱', desc: '优先便宜模型，适合长任务/批量' },
+      { id: 'speed-first', label: '更快', desc: '优先响应快的模型，适合日常对话' },
+      { id: 'reasoning-first', label: '深度思考优先', desc: '推理类任务优先用擅长思考的模型' },
+      { id: 'longctx-first', label: '长文本优先', desc: '超长内容优先用大窗口模型' },
+      { id: 'vision-first', label: '看图优先', desc: '带图片的任务优先用多模态模型' },
+      { id: 'legacy', label: '兼容旧行为', desc: '完全按旧方式：route 优先 + 最少使用' },
+      { id: 'custom', label: '自定义', desc: '自己设定档位规则（高级）' },
+    ]
+    // 任务识别规则（只读说明，来自 P2 classifyTask 的语义，不含原始字段名）
+    const TASK_RULES = [
+      ['带图片', '多模态档'],
+      ['要用工具', '工具型档'],
+      ['要推理', '深度思考档'],
+      ['内容超长', '长文本档'],
+    ]
+    const STATIC_DEFAULT_CHAINS = {
+      auto: [
+        { provider: 'opencode-go', model: 'deepseek-v4.1-flash' },
+        { provider: 'opencode-go', model: 'glm-5.3-flash' },
+        { provider: 'opencode-go', model: 'mimo-v2.6-flash' },
+        { provider: 'xiaomi-token-plan-cn', model: 'mimo-v2.6-flash' },
+      ],
+      'deepseek-v4.1-flash': [{ provider: 'opencode-go', model: 'deepseek-v4.1-flash' }],
+      'glm-5.3-flash': [{ provider: 'opencode-go', model: 'glm-5.3-flash' }],
+      'mimo-v2.6-flash': [{ provider: 'opencode-go', model: 'mimo-v2.6-flash' }],
+    }
+
+    // Locale interpolation helper. Uses literal replacement so it works even
+    // if a locale binding returns the raw key or ignores the vars argument.
+    const fmt = (t, key, vars) => {
+      const raw = t(key)
+      let out = typeof raw === 'string' ? raw : key
+      if (vars) for (const [k, v] of Object.entries(vars)) {
+        out = out.split('{' + k + '}').join(String(v))
+      }
+      return out
+    }
+
+    // Human-friendly model names for the beginner view. Unknown models fall
+    // back to their raw id, so nothing breaks when new models are added.
+    const MODEL_LABELS = {
+      'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash（快、便宜）',
+      'deepseek-v4-flash': 'DeepSeek V4 Flash（快）',
+      'deepseek-v4-pro': 'DeepSeek V4 Pro（更强）',
+      'glm-5.3-flash': 'GLM 5.3 Flash（便宜）',
+      'glm-5.3': 'GLM 5.3',
+      'mimo-v2.6-flash': '小米 MiMo V2.6 Flash（便宜）',
+    }
+    const modelLabel = id => MODEL_LABELS[str(id)] || str(id)
+
+    // ---- tiny helpers -----------------------------------------------------
+    const arr = v => (Array.isArray(v) ? v : [])
+    const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
+    const str = v => (typeof v === 'string' ? v : '')
+    const jsonParse = (text, fallback) => {
+      try { return JSON.parse(text) } catch { return fallback }
+    }
+    const clone = v => {
+      try { return JSON.parse(JSON.stringify(v ?? null)) } catch { return v }
+    }
+
+    // ---- styles: only --dsw-alias-* tokens --------------------------------
+    const S = {
+      wrap: { display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 0 24px', color: 'var(--dsw-alias-label-primary)', fontSize: 13 },
+      tabs: { display: 'flex', gap: 6, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8, flexWrap: 'wrap' },
+      tab: extra => ({
+        cursor: 'pointer', border: 'none', borderRadius: 'var(--dsw-radius-sm)',
+        padding: '6px 12px', fontFamily: 'inherit', fontSize: 13, lineHeight: '20px',
+        color: 'var(--dsw-alias-label-primary)',
+        background: extra ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+      }),
+      card: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)', padding: 12 },
+      row: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', flexWrap: 'wrap' },
+      grow: { flex: 1, minWidth: 120 },
+      label: { color: 'var(--dsw-alias-label-secondary)', minWidth: 96 },
+      input: {
+        background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)',
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)',
+        padding: '4px 8px', fontFamily: 'inherit', fontSize: 13, minWidth: 80,
+      },
+      select: { fontFamily: 'inherit', fontSize: 13 },
+      btn: {
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+        color: 'var(--dsw-alias-label-primary)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)',
+        padding: '4px 10px',
+      },
+      primary: {
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+        color: 'var(--dsw-alias-bg-layer-1)',
+        background: 'var(--dsw-alias-brand-primary-new-colorprimary-new-color)',
+        border: 'none', borderRadius: 'var(--dsw-radius-sm)', padding: '5px 14px',
+      },
+      muted: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, lineHeight: '18px' },
+      code: { fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 12, overflowWrap: 'anywhere' },
+      err: { color: 'var(--dsw-alias-state-error-primary)', fontSize: 12 },
+      ok: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 12 },
+      table: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
+      th: { textAlign: 'left', borderBottom: '1px solid var(--dsw-alias-border-l2)', padding: '6px 8px', color: 'var(--dsw-alias-label-secondary)' },
+      td: { borderBottom: '1px solid var(--dsw-alias-border-l2)', padding: '6px 8px', verticalAlign: 'top' },
+      pill: extra => ({
+        display: 'inline-block', borderRadius: 'var(--dsw-radius-sm)', padding: '1px 6px', fontSize: 11,
+        color: extra ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+      }),
+      hero: {
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)',
+        padding: '16px', background: 'var(--dsw-alias-bg-layer-1)',
+        display: 'flex', flexDirection: 'column', gap: 8,
+      },
+      heroTitle: { fontSize: 16, fontWeight: 600, color: 'var(--dsw-alias-label-primary)', lineHeight: '24px' },
+      heroText: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', lineHeight: '22px' },
+      choiceBtn: active => ({
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, lineHeight: '20px',
+        padding: '10px 14px', borderRadius: 'var(--dsw-radius-md)', textAlign: 'left',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        color: 'var(--dsw-alias-label-primary)',
+        background: active ? 'var(--dsw-alias-interactive-bg-hover)' : 'var(--dsw-alias-bg-layer-2)',
+        display: 'flex', flexDirection: 'column', gap: 2, minWidth: 130,
+      }),
+      choiceTitle: { fontWeight: 600 },
+      choiceSub: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' },
+      step: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', fontSize: 13, lineHeight: '20px' },
+      stepNum: {
+        flex: 'none', width: 22, height: 22, borderRadius: '50%',
+        background: 'var(--dsw-alias-interactive-bg-hover)', color: 'var(--dsw-alias-label-primary)',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11,
+      },
+      arrow: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, paddingLeft: 4 },
+    }
+
+    function Field({ label, children, help }) {
+      return h('div', null,
+        h('div', { style: S.row },
+          h('span', { style: S.label }, label),
+          h('span', { style: S.grow }, children),
+        ),
+        help ? h('div', { style: { ...S.muted, marginLeft: 96 } }, help) : null,
+      )
+    }
+
+    function KV({ k, v }) {
+      return h('div', { style: S.row },
+        h('span', { style: S.label }, k),
+        h('span', { style: S.code }, v === undefined || v === null ? '—' : String(v)),
+      )
+    }
+
+    // Advanced options live in a native <details> that is CLOSED by default:
+    // beginners never see JSON/weights/switches unless they deliberately opt in.
+    // No state needed — the browser owns the open/closed state.
+    function Advanced({ t, children }) {
+      return h('details', { style: { borderTop: '1px solid var(--dsw-alias-border-l2)', paddingTop: 10 } },
+        h('summary', {
+          style: { cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)', fontSize: 12, lineHeight: '20px' },
+        }, t('advanced.title')),
+        h('div', { style: { marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 } }, children),
+      )
+    }
+
+    // ---- overview ---------------------------------------------------------
+    // Honest, runtime-free status: this page reads ONLY the configForms
+    // snapshot (always reachable) plus static defaults. It never claims a
+    // runtime "on/off" state it cannot prove, and it never shows a permanent
+    // "checking…" spinner. It states what is CONFIGURED in plain language.
+    function Overview({ t, localConfig, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe, applyPreset, working }) {
+      const cfg = obj(localConfig)
+      const configuredChains = obj(cfg.chains)
+      const chains = Object.keys(configuredChains).length ? configuredChains : STATIC_DEFAULT_CHAINS
+      const accounts = arr(cfg.accounts).length
+      // 真值只认用户实际写入的 ranking 配置；缺省即"内置均衡默认"，
+      // 绝不把代码默认值 balanced 冒充成用户的选择（那是上一版的假状态）。
+      const rankingCfg = obj(cfg.ranking)
+      const hasRanking = Object.keys(rankingCfg).length > 0
+      const rankingOn = hasRanking && rankingCfg.enabled === true
+      const strategy = hasRanking ? (str(rankingCfg.strategy) || 'balanced') : ''
+      const strategyName = ({ balanced: '均衡', 'cost-first': '省钱优先', 'speed-first': '速度优先', 'tier-first': '高等级优先', legacy: '兼容', custom: '自定义' })[strategy] || strategy
+      // pi-ai 真实资源（只读，防空）。
+      const providerCount = arr(pi?.providers).length
+      const modelCount = arr(pi?.models).length
+      const piLoaded = pi?.loaded === true
+      // 历史登记 seed（task-105 起已不参与准入过滤、也不参与状态判定）。
+      // 真值 100% 来自运行时 pi.models + 双源投影 availProjection；零样本条目
+      // 一律 UNKNOWN/资费未确认 —— 静态表绝不冒充"不可用"或"可用"。
+      // 保留本表仅为历史记录/兼容（未来删表不影响展示）。
+      const FREE_MODEL_STATUS = {
+        'hy4-flash-free': 'available',      // seed: 历史账本 x-opencode-free 成功
+        'hy4flash-free': 'available',       // seed: 历史日志 workbuddy 成功
+        'hy4-flash-free-trial-202611': 'unavailable', // seed: 未复核
+        'web-search-free': 'unavailable',   // seed: 未复核
+        'cat-jam-free': 'unavailable',      // seed: 未复核
+        'longcat-2.5-preview-free': 'unavailable', // seed: 未复核
+        'step-5-preview-free': 'unavailable',      // seed: 未复核
+      }
+      // 真值判定：有足够真实成功样本 -> HEALTHY(显示可用)；否则 UNKNOWN。
+      // 静态 unavailable 永不作为最终结论 —— "双源零成功"已被证伪。
+      const statusOf = id => {
+        const observed = obj(availProjection)[id]
+        const samples = Number(observed?.samples ?? 0)
+        if (samples >= AVAIL_HIGH_SAMPLES) return { key: 'healthy', ok: true, reviewed: true, samples }
+        if (samples > 0) return { key: 'unknown', ok: false, reviewed: false, samples }
+        return { key: 'unknown', ok: false, reviewed: false, samples: 0 }
+      }
+      // task-106 "可能免费"宽松判据 —— 宁可多列不可漏，任一弱信号命中即入选。
+      // 证据：真实免费模型（账本/registry）名字/id 全含 free（hy4-flash-free /
+      // hy4flash-free / web-search-free / cat-jam-free / longcat-2.5-preview-free /
+      // step-5-preview-free），付费模型（deepseek-v4.1-flash / glm-5.3-flash）不含。
+      // 因此 id/name/group 含 free 为主判据，配合 seed + tier=free 投影。
+      // 不会塞满 176：付费模型三项都不含 free、不在 seed、tier 非 free → 不命中。
+      const isPossiblyFree = m => {
+        const id = str(m?.id ?? m), name = str(m?.name), group = str(m?.group)
+        const provider = str(m?.group)
+        // task-107: 探测证据优先（自定义名字的免费模型也能被识别）。
+        const pv = str(obj(probeVerdicts)[`${provider}/${id}`])
+        if (pv === 'free') return true       // 真实探测：免费
+        if (pv === 'metered') return false   // 真实探测：明确付费（不进免费区）
+        // 弱信号兜底（unknown/失败/未做探测仍收录，不能挡）。
+        if (`${id} ${name} ${group}`.toLowerCase().includes('free')) return true
+        if (FREE_MODEL_STATUS[id] !== undefined) return true
+        if (str(obj(availProjection)[id]?.tier) === 'free') return true
+        return false
+      }
+      // Exclude virtual smart副本: the same free model id appears twice in
+      // modelCatalog — a real group entry (keep) and a group==='smart' mirror
+      // (drop). Reuse VIRTUAL_PROVIDERS (defined below at module scope; this is
+      // a function body so it runs after all module consts are initialized).
+      // Smart Gateway itself stays visible above via pi.smartTag — visible ≠ listed.
+      // task-105: 去掉静态白名单过滤门槛。旧实现用 FREE_MODEL_STATUS（硬编码
+      // 7 条 seed）当准入，用户在 DSH 新加的 provider/model 不在表里就被永久
+      // 滤掉——与"能发现"产品定调冲突。改为运行时数据驱动：pi.models 里所有
+      // 非虚拟模型都列出（虚拟 smart 副本仍过滤），可用性由双源投影如实标注。
+      // 无样本的新模型显示"资费未确认（未复核）"，不声称它免费/不可用。
+      const nonVirtualModels = arr(pi?.models)
+        .filter(m => !VIRTUAL_PROVIDERS.has(str(m?.group)))
+      // task-106 二次分区：宽松判据把"可能免费"的挑出来单独区，其余折叠。
+      const maybeFreeModels = nonVirtualModels.filter(isPossiblyFree)
+      const otherModels = nonVirtualModels.filter(m => !isPossiblyFree(m))
+      const choices = [
+        { id: 'balanced', title: t('preset.balanced'), sub: t('preset.balancedSub') },
+        { id: 'cost-first', title: t('preset.cost'), sub: t('preset.costSub') },
+        { id: 'speed-first', title: t('preset.speed'), sub: t('preset.speedSub') },
+      ]
+      // Hero 只陈述 configForms 里真实写入的配置：
+      //   ranking 配了且开启 -> 显示真实策略；没配 -> 明说内置默认，不冒充均衡。
+      //   首屏只陈述配置事实，不声称无法证明的运行状态（用户已多次指出）。
+      const heroTitle = rankingOn ? t('hero.configured') : t('hero.defaultTitle')
+      const heroExplain = rankingOn
+        ? fmt(t, 'hero.configuredExplain', { strategy: strategyName })
+        : t('hero.defaultExplain')
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+        h('div', { style: S.hero },
+          h('div', { style: S.heroTitle }, heroTitle),
+          h('div', { style: S.heroText }, heroExplain),
+          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, t('hero.configuredHint')),
+          h('div', { style: { ...S.muted, color: 'var(--dsw-alias-label-tertiary)', marginTop: 2 } }, `v${PLUGIN_VERSION}`),
+        ),
+        // 你已经在 DSH 里配好的真实模型/provider（来自 pi-ai，只读）。
+        h('div', { style: S.card },
+          h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('pi.available')),
+          !piLoaded
+            ? h('div', { style: S.muted }, t('pi.loading'))
+            : (providerCount === 0 && modelCount === 0)
+              ? h('div', null,
+                h('div', { style: S.muted }, t('pi.empty')),
+                pi?.detail
+                  ? h('div', { style: { ...S.muted, marginTop: 4, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `诊断：${pi.detail}`)
+                  : null,
+              )
+              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                h(KV, { k: t('pi.providers'), v: providerCount }),
+                h(KV, { k: t('pi.models'), v: modelCount }),
+                providerCount > 0
+                  ? h('div', { style: { ...S.muted, marginTop: 4 } },
+                    fmt(t, 'pi.providerNames', {
+                      // 不截断：旧版 .slice(0,6) 把排在目录后面的 Smart Gateway
+                      // 切掉，导致"插件自己提供的没放进去"。全部列出，并对
+                      // 元 provider（智能路由，非独立模型提供商）显式标注类型。
+                      names: arr(pi.providers).map(p => {
+                        const id = str(p?.id)
+                        const name = str(p?.name) || id
+                        return id === 'smart' ? t('pi.smartTag') : name
+                      }).join('、'),
+                    }))
+                  : null,
+                // task-106 二次分区：① "可能免费"区（宽松判据，零样本也进，
+                // 标资费未确认）；② 其余已登记模型折叠区。不挡任何模型。
+                h('div', { style: { ...S.muted, marginTop: 6 } },
+                  h('div', { style: { marginBottom: 4 } }, t('pi.maybeFree')),
+                  maybeFreeModels.length > 0
+                    ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                      maybeFreeModels.map(m => {
+                        const id = str(m?.id ?? m)
+                        const st = statusOf(id)
+                        const label = st.key === 'healthy' ? t('pi.availableTag') : t('pi.unknownTag')
+                        return h('span', { key: id, style: S.pill(st.key === 'healthy') },
+                          `${str(m?.name) || id} · ${label}${st.reviewed ? '' : `（${t('pi.unreviewed')}）`}`)
+                      })
+                    )
+                    : h('div', { style: S.muted }, t('pi.noMaybeFree')),
+                  // task-107: 手动重探入口（自动探测默认已开，此为强制重探 force）。
+                  probeEnabled && maybeFreeModels.length > 0
+                    ? h('button', {
+                      type: 'button', style: { ...S.btn, marginTop: 6 },
+                      onClick: () => onProbe?.(maybeFreeModels, true),
+                    }, t('pi.probeBtn'))
+                    : null,
+                  // task-111: 点击反馈自曝（成功结果数 / 失败具体原因），不再"点了没反应"。
+                  probeDiag
+                    ? h('div', { style: { ...S.muted, marginTop: 4, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `探测：${probeDiag}`)
+                    : null,
+                  h('div', { style: { ...S.muted, marginTop: 4, fontSize: 11 } }, t('pi.freeModelsHint')),
+                  // 其余已登记模型：折叠，不丢（"能发现"仍成立）。
+                  otherModels.length > 0
+                    ? h('details', { style: { marginTop: 6 } },
+                      h('summary', { style: { cursor: 'pointer', fontSize: 11 } },
+                        fmt(t, 'pi.otherModels', { n: otherModels.length })),
+                      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 } },
+                        otherModels.map(m => {
+                          const id = str(m?.id ?? m)
+                          return h('span', { key: id, style: S.pill(false) }, str(m?.name) || id)
+                        })),
+                    )
+                    : null,
+                  h('div', { style: { ...S.muted, marginTop: 2, fontSize: 11 } }, t('pi.otherProvidersHint')),
+                ),
+              ),
+        ),
+        // One-click plain-language choices — no dropdown, no numbers.
+        h('div', null,
+          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
+          h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
+            choices.map(c => h('button', {
+              key: c.id, type: 'button', disabled: !!working,
+              style: S.choiceBtn(rankingOn && strategy === c.id),
+              onClick: () => applyPreset?.(c.id),
+            },
+              h('span', { style: S.choiceTitle }, c.title),
+              h('span', { style: S.choiceSub }, c.sub),
+            )),
+          ),
+          working ? h('div', { style: S.muted }, t('preset.applying')) : null,
+        ),
+        // Compact facts — chains/accounts 仍保留；策略开关与 hero 同源。
+        h('div', { style: S.card },
+          h(KV, { k: t('status.chains'), v: Object.keys(chains).length }),
+          h(KV, { k: t('status.accounts'), v: accounts }),
+          h(KV, { k: t('status.strategyEnabled'), v: rankingOn ? t('status.yes') : t('status.no') }),
+        ),
+      )
+    }
+
+    // ---- chains -----------------------------------------------------------
+    // Fallback lists are used ONLY when the pi snapshot is empty/not loaded —
+    // never the source of truth. The real lists come from the runtime pi snapshot
+    // so a user can pick EVERY provider/model DSH actually has (product rule:
+    // "may not auto-discover, but must be discoverable because it is selectable").
+    const FALLBACK_PROVIDERS = ['opencode-go', 'xiaomi-token-plan-cn', 'xiaomi', 'trae', 'workbuddy', 'opencode-zen', 'qoder']
+    const FALLBACK_MODELS = ['deepseek-v4.1-flash', 'deepseek-v4-flash', 'glm-5.3-flash', 'glm-5.3', 'mimo-v2.6-flash']
+    // pi.providers = [{id,name}], pi.models = [{id,name,group}]
+    // Virtual routing must never be selectable as a hop — that would make the
+    // scheduler route to itself (Host already excludes provider==='smart' in
+    // chains.js:44 / index.js:161). deepseek-account is excluded at the pi
+    // producer (:997). Here we exclude the smart meta-provider specifically;
+    // the overview still SHOWS Smart Gateway (pi.smartTag) — visible ≠ selectable.
+    const VIRTUAL_PROVIDERS = new Set(['smart'])
+    const providerOptions = pi => {
+      const list = arr(pi?.providers)
+        .map(p => ({ id: str(p?.id), name: str(p?.name) || str(p?.id) }))
+        .filter(p => p.id && !VIRTUAL_PROVIDERS.has(p.id))
+        .map(p => ({ v: p.id, l: p.name }))
+      return list.length ? list : FALLBACK_PROVIDERS.map(v => ({ v, l: v }))
+    }
+    const modelOptions = pi => {
+      // Exclude models whose catalog group is a virtual provider (smart-only
+      // models). Real providers' models remain fully selectable (task-81).
+      const list = arr(pi?.models)
+        .filter(m => !VIRTUAL_PROVIDERS.has(str(m?.group)))
+        .map(m => ({ v: str(m?.id ?? m), l: str(m?.name) || modelLabel(str(m?.id ?? m)) }))
+        .filter(o => o.v)
+      return list.length ? list : FALLBACK_MODELS.map(m => ({ v: m, l: modelLabel(m) }))
+    }
+    // ≥N real success samples = high enough confidence to show an explicit
+    // status (design §7 FREE_LEDGER_SAMPLES). Below that = UNKNOWN/unreviewed.
+    const AVAIL_HIGH_SAMPLES = 20
+    // Derive a display projection from the Host's real ledger aggregation
+    // (costDetail().byModel) — no new @Remote method, no inject, no requests.
+    // Shape mirrors design §9 projectStatus: {modelId:{samples,failed}}; the
+    // client decides confidence/health honestly from real success samples.
+    const projectFromByModel = byModel => {
+      const out = {}
+      for (const g of arr(byModel)) {
+        const id = str(g?.model)
+        if (!id || VIRTUAL_PROVIDERS.has(str(g?.provider))) continue
+        const success = (Number(g?.freeCalls) || 0) + (Number(g?.paidCalls) || 0)
+        const failed = Number(g?.failedCalls) || 0
+        const prev = out[id] ?? { samples: 0, failed: 0 }
+        prev.samples += success
+        prev.failed += failed
+        out[id] = prev
+      }
+      return out
+    }
+    const select = (opts, value, onChange, ariaLabel) => h('select', {
+      value, onChange: e => onChange(e.target.value), style: { ...S.input, ...S.select }, 'aria-label': ariaLabel,
+    }, opts.map(o => h('option', { key: str(o.v ?? o), value: str(o.v ?? o) }, str(o.l ?? o))))
+
+    // Structured chain editor: every hop is a pair of dropdowns, never JSON.
+    function ChainsTab({ t, form, revision, mutate, config, pi }) {
+      const provOpts = providerOptions(pi)
+      const modelOpts = modelOptions(pi)
+      const configured = obj(config?.chains)
+      const usingDefault = Object.keys(configured).length === 0
+      const initial = usingDefault ? STATIC_DEFAULT_CHAINS : configured
+      const [groups, setGroups] = useState(() => Object.entries(initial).map(([model, hops]) => ({
+        model, hops: arr(hops).map(x => ({ provider: str(x?.provider), model: str(x?.model) })),
+      })))
+      useEffect(() => {
+        const src = Object.keys(obj(config?.chains)).length ? config.chains : STATIC_DEFAULT_CHAINS
+        setGroups(Object.entries(src).map(([model, hops]) => ({
+          model, hops: arr(hops).map(x => ({ provider: str(x?.provider), model: str(x?.model) })),
+        })))
+      }, [config?.chains])
+      const [msg, setMsg] = useState('')
+      const update = (gi, fn) => setGroups(prev => prev.map((g, i) => i === gi ? fn(g) : g))
+      const moveHop = (gi, hi, dir) => update(gi, g => {
+        const hops = [...g.hops], j = hi + dir
+        if (j < 0 || j >= hops.length) return g
+        ;[hops[hi], hops[j]] = [hops[j], hops[hi]]
+        return { ...g, hops }
+      })
+      const save = async () => {
+        const out = {}
+        for (const g of groups) {
+          const hops = g.hops.filter(h => h.provider && h.model)
+          if (g.model && hops.length) out[g.model] = hops
+        }
+        const r = await mutate([{ op: 'set', path: ['chains'], value: out }], revision)
+        const ok = r?.ok === true
+        setMsg(ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}`)
+      }
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        h('div', { style: S.hero },
+          h('div', { style: S.heroTitle }, t('chains.plainTitle')),
+          h('div', { style: S.heroText }, t('chains.plainExplain')),
+        ),
+        ...groups.map((g, gi) => h('div', { key: gi, style: S.card },
+          h('div', { style: S.row },
+            h('span', { style: S.label }, t('chains.modelLabel')),
+            select(modelOpts, g.model,
+              v => update(gi, x => ({ ...x, model: v })), t('chains.modelLabel')),
+            h('button', { type: 'button', style: S.btn, onClick: () => setGroups(p => p.filter((_, i) => i !== gi)) }, t('action.delete')),
+          ),
+          ...g.hops.map((hop, hi) => h('div', { key: hi, style: { ...S.step, borderBottom: '1px solid var(--dsw-alias-border-l2)' } },
+            h('span', { style: S.stepNum }, String(hi + 1)),
+            select(provOpts, hop.provider, v => update(gi, x => ({ ...x, hops: x.hops.map((h, i) => i === hi ? { ...h, provider: v } : h) })), t('field.provider')),
+            select(modelOpts, hop.model, v => update(gi, x => ({ ...x, hops: x.hops.map((h, i) => i === hi ? { ...h, model: v } : h) })), t('field.model')),
+            h('button', { type: 'button', style: S.btn, onClick: () => moveHop(gi, hi, -1) }, '↑'),
+            h('button', { type: 'button', style: S.btn, onClick: () => moveHop(gi, hi, 1) }, '↓'),
+            h('button', { type: 'button', style: S.btn, onClick: () => update(gi, x => ({ ...x, hops: x.hops.filter((_, i) => i !== hi) })) }, '×'),
+          )),
+          h('button', {
+            type: 'button', style: S.btn,
+            onClick: () => update(gi, x => ({ ...x, hops: [...x.hops, { provider: provOpts[0]?.v, model: modelOpts[0]?.v }] })),
+          }, t('action.addHop')),
+        )),
+        h('div', { style: S.row },
+          h('button', {
+            type: 'button', style: S.btn,
+            onClick: () => setGroups(p => [...p, { model: modelOpts[0]?.v, hops: [{ provider: provOpts[0]?.v, model: modelOpts[1]?.v ?? modelOpts[0]?.v }] }]),
+          }, t('action.addChain')),
+          h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
+          msg ? h('span', { style: /error|失败/i.test(msg) ? S.err : S.ok }, msg) : null,
+        ),
+      )
+    }
+
+    // ---- accounts + ranking -----------------------------------------------
+    function RankingForm({ t, cfg, onChange }) {
+      const c = obj(cfg)
+      // Strategies are static metadata embedded in this client — no command
+      // channel, always available, identical across installs.
+      const strategies = STATIC_STRATEGIES
+      const strategyId = str(c.strategy) || 'balanced'
+      const selected = strategies.find(s => str(s?.id) === strategyId)
+      // When weights are not configured, mirror the selected preset's weights so
+      // the form is never blank on a fresh install.
+      const configuredWeights = obj(c.weights)
+      const weights = Object.keys(configuredWeights).length > 0
+        ? configuredWeights
+        : (selected?.weights ? { ...selected.weights } : DEFAULT_WEIGHTS)
+      const set = (key, value) => onChange({ ...c, [key]: value })
+      const number = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback)
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+        h(Field, { label: t('ranking.enabled'), help: t('ranking.enabledHelp') },
+          h('input', {
+            type: 'checkbox', checked: c.enabled === true,
+            onChange: e => set('enabled', e.target.checked),
+          }),
+        ),
+        h(Field, { label: t('ranking.strategy') },
+          h('select', {
+            value: strategyId,
+            onChange: e => {
+              const next = strategies.find(s => str(s?.id) === e.target.value)
+              // Selecting a preset fills its weights immediately — visible proof
+              // the presets are live, not a decorative empty dropdown.
+              onChange({
+                ...c,
+                strategy: e.target.value,
+                weights: next?.weights ? { ...next.weights } : { ...DEFAULT_WEIGHTS },
+              })
+            },
+            style: { ...S.input, ...S.select },
+          }, strategies.map(s => h('option', { key: str(s.id), value: str(s.id) }, `${str(s.id)} · ${str(s.label) || ''}`))),
+        ),
+        h('div', { style: { ...S.muted, marginLeft: 96, minHeight: 18 } },
+          selected ? str(selected.description || '') : '',
+        ),
+        ['cost', 'speed', 'tier', 'load'].map(key =>
+          h(Field, { key, label: t(`ranking.w.${key}`) },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+              h('input', {
+                type: 'range', min: 0, max: 1, step: 0.05, value: weights[key] ?? 0,
+                onChange: e => set('weights', { ...weights, [key]: number(e.target.value, 0) }),
+                style: { flex: 1 }, 'aria-label': t(`ranking.w.${key}`),
+              }),
+              h('span', { style: { ...S.code, minWidth: 32, textAlign: 'right' } }, String(weights[key] ?? 0)),
+            ),
+          ),
+        ),
+        h(Field, { label: t('ranking.tierDirection'), help: t('ranking.tierDirectionHelp') },
+          h('select', {
+            value: str(c.tierDirection) || 'high',
+            onChange: e => set('tierDirection', e.target.value),
+            style: { ...S.input, ...S.select },
+          },
+            h('option', { value: 'high' }, t('ranking.tierHigh')),
+            h('option', { value: 'low' }, t('ranking.tierLow')),
+          ),
+        ),
+        h(Field, { label: t('ranking.respectHopRoute') },
+          h('input', {
+            type: 'checkbox', checked: c.respectHopRoute !== false,
+            onChange: e => set('respectHopRoute', e.target.checked),
+          }),
+        ),
+        h(Field, { label: t('ranking.priorityMode') },
+          h('select', {
+            value: str(c.priorityMode) || 'hard',
+            onChange: e => set('priorityMode', e.target.value),
+            style: { ...S.input, ...S.select },
+          },
+            h('option', { value: 'hard' }, t('ranking.priorityHard')),
+            h('option', { value: 'soft' }, t('ranking.prioritySoft')),
+          ),
+        ),
+        // task-107: 探测开关，默认关闭。开启后首屏出现"检测未确认模型"按钮。
+        h(Field, { label: t('ranking.probeEnabled'), help: t('ranking.probeEnabledHelp') },
+          h('input', {
+            type: 'checkbox', checked: c.probeEnabled === true,
+            onChange: e => set('probeEnabled', e.target.checked),
+          }),
+        ),
+      )
+    }
+
+    // P2 两层路由设置。只陈述 configForms 里真实保存的配置，不声称运行状态。
+    // 开关默认启用均衡；策略用大白话预设；定位/识别规则为只读说明，不造假数据。
+    function RoutingForm({ t, cfg, onChange }) {
+      const c = obj(cfg)
+      const enabled = c.enabled === true
+      const strategy = str(c.strategy) || 'balanced'
+      const selected = ROUTING_PRESETS.find(p => p.id === strategy)
+      const set = (key, value) => onChange({ ...c, [key]: value })
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+        h(Field, { label: t('routing.enabled'), help: t('routing.enabledHelp') },
+          h('input', {
+            type: 'checkbox', checked: enabled,
+            onChange: e => set('enabled', e.target.checked),
+          }),
+        ),
+        h(Field, { label: t('routing.strategy') },
+          h('select', {
+            value: strategy,
+            onChange: e => set('strategy', e.target.value),
+            style: { ...S.input, ...S.select },
+          }, ROUTING_PRESETS.map(p => h('option', { key: p.id, value: p.id }, p.label))),
+        ),
+        h('div', { style: { ...S.muted, marginLeft: 96, minHeight: 18 } },
+          selected ? str(selected.desc) : ''),
+        // 模型定位预览：当前无可读到每台模型定位的通道，诚实说明来源，不造假表。
+        h(Field, { label: t('routing.position'), help: t('routing.positionHelp') },
+          h('div', { style: { ...S.muted, lineHeight: '18px' } }, t('routing.positionExplain')),
+        ),
+        // 任务识别规则：只读说明，一眼能懂，不是可编辑 JSON。
+        h('div', { style: { marginLeft: 96, marginTop: 4 } },
+          h('div', { style: { fontWeight: 500, marginBottom: 4 } }, t('routing.rulesTitle')),
+          ...TASK_RULES.map(([cond, kind]) => h('div', { key: cond, style: { ...S.muted, padding: '2px 0' } },
+            `${cond} → ${kind}`)),
+        ),
+      )
+    }
+
+    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi }) {
+      const provOpts = providerOptions(pi)
+      const modelOpts = modelOptions(pi)
+      const configuredAccounts = arr(config?.accounts)
+      const blankAccount = () => ({ id: '', provider: provOpts[0]?.v, credentialRef: '', models: [modelOpts[0]?.v], tier: 'standard' })
+      const [rows, setRows] = useState(() => configuredAccounts.map(a => ({
+        id: str(a?.id), provider: str(a?.provider) || provOpts[0]?.v,
+        credentialRef: str(a?.credentialRef), models: arr(a?.models).length ? arr(a?.models) : [modelOpts[0]?.v],
+        tier: str(a?.tier) || 'standard',
+      })))
+      useEffect(() => {
+        setRows(arr(config?.accounts).map(a => ({
+          id: str(a?.id), provider: str(a?.provider) || provOpts[0]?.v,
+          credentialRef: str(a?.credentialRef), models: arr(a?.models).length ? arr(a?.models) : [modelOpts[0]?.v],
+          tier: str(a?.tier) || 'standard',
+        })))
+      }, [config?.accounts])
+      // Credential choices come ONLY from the configForms snapshot: the
+      // reference names already stored on accounts (never secret values), plus
+      // the human "use signed-in account" default. No command channel needed.
+      const credentialChoices = (() => {
+        const seen = new Set(configuredAccounts.map(a => str(a?.credentialRef)).filter(Boolean))
+        return ['', ...[...seen].sort()]
+      })()
+      const configuredRanking = obj(config?.ranking)
+      const rankingCfg = Object.keys(configuredRanking).length === 0
+        ? { enabled: false, strategy: 'balanced', weights: { ...DEFAULT_WEIGHTS }, tierDirection: 'high', respectHopRoute: true, priorityMode: 'hard' }
+        : configuredRanking
+      const [rankingDraft, setRankingDraft] = useState(() => clone(rankingCfg) || {})
+      const [msg, setMsg] = useState('')
+      useEffect(() => { setRankingDraft(clone(Object.keys(obj(config?.ranking)).length ? config.ranking : rankingCfg) || {}) }, [config?.ranking])
+      const update = (i, fn) => setRows(prev => prev.map((r, j) => j === i ? fn(r) : r))
+      const toggleModel = (i, m) => update(i, r => ({
+        ...r, models: r.models.includes(m) ? r.models.filter(x => x !== m) : [...r.models, m],
+      }))
+      const save = async () => {
+        const out = rows.filter(r => r.id && r.provider).map(r => ({
+          id: r.id, provider: r.provider,
+          credentialRef: r.credentialRef || undefined,
+          models: r.models,
+          tier: r.tier,
+        }))
+        const r = await mutate([
+          { op: 'set', path: ['accounts'], value: out },
+          { op: 'set', path: ['ranking'], value: rankingDraft },
+        ], revision)
+        const ok = r?.ok === true
+        setMsg(ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}`)
+      }
+
+      // 只有用户真的写入过 ranking 才高亮某个预设；缺省不高亮，
+      // 避免"没配却显示均衡已选中"的假象。复用上面的 configuredRanking。
+      const strategy = Object.keys(configuredRanking).length > 0 ? (str(configuredRanking.strategy) || '') : ''
+      const choices = [
+        { id: 'balanced', title: t('preset.balanced'), sub: t('preset.balancedSub') },
+        { id: 'cost-first', title: t('preset.cost'), sub: t('preset.costSub') },
+        { id: 'speed-first', title: t('preset.speed'), sub: t('preset.speedSub') },
+      ]
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        h('div', { style: S.hero },
+          h('div', { style: S.heroTitle }, t('accounts.plainTitle')),
+          h('div', { style: S.heroText }, t('accounts.plainExplain')),
+          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, fmt(t, 'accounts.plainCount', { n: configuredAccounts.length })),
+        ),
+        h('div', null,
+          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
+          h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
+            choices.map(c => h('button', {
+              key: c.id, type: 'button', disabled: !!working,
+              style: S.choiceBtn(strategy === c.id), onClick: () => applyPreset?.(c.id),
+            },
+              h('span', { style: S.choiceTitle }, c.title),
+              h('span', { style: S.choiceSub }, c.sub),
+            )),
+          ),
+        ),
+        h(Advanced, { t },
+          ...rows.map((r, i) => h('div', { key: i, style: S.card },
+            h('div', { style: S.row },
+              h('span', { style: S.label }, t('field.accountName')),
+              h('input', {
+                type: 'text', value: r.id, placeholder: t('field.accountNamePh'),
+                onChange: e => update(i, x => ({ ...x, id: e.target.value })), style: S.input,
+              }),
+              h('button', { type: 'button', style: S.btn, onClick: () => setRows(p => p.filter((_, j) => j !== i)) }, t('action.delete')),
+            ),
+            h('div', { style: S.row },
+              h('span', { style: S.label }, t('field.provider')),
+              select(provOpts, r.provider, v => update(i, x => ({ ...x, provider: v })), t('field.provider')),
+            ),
+            h('div', { style: S.row },
+              h('span', { style: S.label }, t('field.credential')),
+              select(
+                [{ v: '', l: t('field.credentialDefault') }, ...credentialChoices.filter(Boolean).map(c => ({ v: c, l: c }))],
+                r.credentialRef, v => update(i, x => ({ ...x, credentialRef: v })), t('field.credential'),
+              ),
+            ),
+            h('div', { style: S.row },
+              h('span', { style: S.label }, t('field.models')),
+              h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
+                modelOpts.map(o => h('label', { key: str(o.v), style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+                  h('input', {
+                    type: 'checkbox', checked: r.models.includes(str(o.v)),
+                    onChange: () => toggleModel(i, str(o.v)),
+                  }),
+                  str(o.l),
+                )),
+              ),
+            ),
+            h('div', { style: S.row },
+              h('span', { style: S.label }, t('field.tier')),
+              select(
+                [{ v: 'premium', l: t('tier.premium') }, { v: 'standard', l: t('tier.standard') }, { v: 'backup', l: t('tier.backup') }],
+                r.tier, v => update(i, x => ({ ...x, tier: v })), t('field.tier'),
+              ),
+            ),
+          )),
+          h('button', { type: 'button', style: S.btn, onClick: () => setRows(p => [...p, blankAccount()]) }, t('action.addAccount')),
+          h('div', { style: S.card },
+            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('ranking.title')),
+            h('div', { style: { ...S.muted, marginBottom: 8 } }, t('ranking.priorityHelp')),
+            h(RankingForm, { t, cfg: rankingDraft, onChange: setRankingDraft }),
+          ),
+          h('div', { style: S.card },
+            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('routing.title')),
+            h('div', { style: { ...S.muted, marginBottom: 8 } }, t('routing.intro')),
+            h(RoutingForm, { t, cfg: obj(rankingDraft?.routing), onChange: v => setRankingDraft(d => ({ ...d, routing: v })) }),
+          ),
+          h('div', { style: S.row },
+            h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
+            msg ? h('span', { style: /error|失败/i.test(msg) ? S.err : S.ok }, msg) : null,
+          ),
+        ),
+      )
+    }
+
+    // ---- cost + health ----------------------------------------------------
+    // Real ledger data comes from the Host's typed @Remote service
+    // `remote.smartProvider.cost()` (lib/remote.js + the inlined contribution
+    // above). The Host reads cost.jsonl directly — one口径 with CostMeter;
+    // no client-side parsing, no invented numbers, no fake empty state.
+    // Four-dimension detail rendering — all values come from the Host's
+    // costDetail() aggregation; never invented. Only --dsw-alias-* tokens.
+    function CostDetailBlocks({ t, detail, page, setPage }) {
+      if (!detail) return h('div', { style: S.muted }, t('cost.detailLoading'))
+      const rows = arr(detail.rows)
+      const timeline = arr(detail.timeline)
+      const byModel = arr(detail.byModel)
+      const savings = obj(detail.savings)
+      const savingModels = arr(savings.models)
+      const maxCalls = Math.max(1, ...timeline.map(x => Number(x.calls) || 0))
+      const pages = Math.max(1, Math.ceil(Number(detail.total || 0) / Math.max(1, Number(detail.limit) || 50)))
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        // ① 逐笔明细
+        h('div', { style: S.card },
+          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, fmt(t, 'cost.detailTitle', { n: Number(detail.total || 0) })),
+          rows.length === 0
+            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
+            : h('table', { style: S.table },
+              h('thead', null, h('tr', null, ['time', 'model', 'tokens', 'cost', 'status'].map(k =>
+                h('th', { key: k, style: S.th }, t(`cost.col.${k}`))))),
+              h('tbody', null, rows.map((r, i) => h('tr', { key: `${str(r?.requestId)}-${i}` },
+                [str(r?.timestamp).replace('T', ' ').slice(0, 19),
+                 `${str(r?.provider)}/${str(r?.model)}`,
+                 `${Number(r?.inputTokens || 0)}+${Number(r?.outputTokens || 0)}`,
+                 `$${Number(r?.costUsd || 0).toFixed(6)}`,
+                 r?.failed ? t('cost.failed') : t('cost.ok'),
+                ].map((v, j) => h('td', { key: j, style: S.td }, v)))),
+              ),
+            ),
+          h('div', { style: { ...S.row, marginTop: 8 } },
+            h('button', { type: 'button', style: S.btn, disabled: page <= 0, onClick: () => setPage(p => Math.max(0, p - 1)) }, t('cost.prevPage')),
+            h('span', { style: S.muted }, ` ${page + 1} / ${pages} `),
+            h('button', { type: 'button', style: S.btn, disabled: page + 1 >= pages, onClick: () => setPage(p => p + 1) }, t('cost.nextPage')),
+          ),
+        ),
+        // ② 时间趋势（纯 CSS 柱状图）
+        h('div', { style: S.card },
+          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.timelineTitle')),
+          timeline.length === 0
+            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
+            : h('div', { style: { display: 'flex', alignItems: 'flex-end', gap: 10, minHeight: 90 } },
+              timeline.map(b => h('div', { key: str(b?.day), style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 } },
+                h('div', { style: { ...S.muted, fontSize: 11 } }, String(Number(b?.calls) || 0)),
+                h('div', { style: { width: '100%', height: `${Math.max(4, Math.round((Number(b?.calls) || 0) / maxCalls * 60))}px`, background: 'var(--dsw-alias-brand-primary-new-colorprimary-new-color)', borderRadius: 'var(--dsw-radius-sm)' } }),
+                h('div', { style: { ...S.muted, fontSize: 11 } }, str(b?.day).slice(5)),
+              )),
+            ),
+        ),
+        // ③ 按模型/提供商分组
+        h('div', { style: S.card },
+          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.byModelTitle')),
+          byModel.length === 0
+            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
+            : byModel.map(g => h('div', { key: `${str(g?.provider)}/${str(g?.model)}`, style: { padding: '4px 0', borderBottom: '1px solid var(--dsw-alias-border-l2)' } },
+              h(KV, { k: `${str(g?.provider)}/${str(g?.model)}`, v: fmt(t, 'cost.byModelValue', { calls: Number(g?.calls) || 0, cost: Number(g?.costUsd || 0).toFixed(6) }) })),
+            ),
+        ),
+        // ④ 节省账本（诚实标注，绝不编数字）
+        h('div', { style: S.card },
+          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.savingsTitle')),
+          h('div', { style: { ...S.muted, marginBottom: 8, color: 'var(--dsw-alias-state-warn-label)' } }, t('cost.savingsNotice')),
+          savingModels.length === 0
+            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
+            : savingModels.map(m => h('div', { key: str(m?.model), style: { padding: '4px 0' } },
+              h(KV, { k: fmt(t, 'cost.savingsModel', { model: str(m?.model) }), v: m?.known && Number.isFinite(Number(m?.estimatedUsd))
+                ? fmt(t, 'cost.savingsValue', { usd: `$${Number(m.estimatedUsd).toFixed(6)}` })
+                : t('cost.noComparable') })),
+            ),
+        ),
+      )
+    }
+
+    function CostHealthTab({ t, localConfig, remote, costService, costDiag }) {
+      const cfg = obj(localConfig)
+      const [live, setLive] = useState(null)
+      const [detail, setDetail] = useState(null)
+      const [page, setPage] = useState(0)
+      const [diag, setDiag] = useState('')
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          let d = `costService=${!!costService}${costDiag ? ' ' + costDiag : ''}`
+          try {
+            const res = await costService?.cost?.()
+            d += ` cost.ok=${res?.ok === true}`
+            if (res && res.ok && res.value && alive) setLive(res.value)
+            else d += ` cost.err=${String(res?.error?.code ?? res?.error?.message ?? '?')}`
+          } catch (error) {
+            d += ` cost.throw=${String(error?.message ?? error)}`
+          }
+          try {
+            const dr = await costService?.costDetail?.({ offset: page * 50, limit: 50 })
+            d += ` detail.ok=${dr?.ok === true}`
+            if (dr && dr.ok && dr.value && alive) setDetail(dr.value)
+            else d += ` detail.err=${String(dr?.error?.code ?? dr?.error?.message ?? '?')}`
+          } catch (error) {
+            d += ` detail.throw=${String(error?.message ?? error)}`
+          }
+          if (alive) setDiag(d)
+        }
+        void load()
+        return () => { alive = false }
+      }, [costService, page])
+      // Fallback: a snapshot-provided cost (if any) only when the remote failed.
+      const snapCost = obj(cfg.cost)
+      const cost = live ?? (Object.keys(snapCost).length ? snapCost : null)
+      const records = Number(cost?.records ?? 0)
+      const freeCount = Number(cost?.freeCount ?? 0)
+      const paidCount = Number(cost?.paidCount ?? 0)
+      const hasRecords = records > 0
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        h('div', { style: S.hero },
+          h('div', { style: S.heroTitle }, t('cost.title')),
+          h('div', { style: S.heroText }, t('cost.plainExplain')),
+        ),
+        hasRecords
+          ? h('div', { style: S.card },
+            h(KV, { k: t('cost.estimated'), v: `$${Number(cost.estimatedCostUsd ?? 0).toFixed(6)}` }),
+            h(KV, { k: t('cost.records'), v: records }),
+            h(KV, { k: t('cost.freePaid'), v: fmt(t, 'cost.freePaidValue', { free: freeCount, paid: paidCount }) }),
+          )
+          : h('div', { style: S.card },
+            h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('cost.noChannel')),
+            h('div', { style: { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `诊断：${diag}`),
+          ),
+        h(CostDetailBlocks, { t, detail, page, setPage }),
+        h('div', { style: S.card },
+          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('health.title')),
+          h('div', { style: S.muted }, t('health.simpleExplain')),
+        ),
+      )
+    }
+
+    // ---- section root -----------------------------------------------------
+    const TABS = [
+      { id: 'overview', labelKey: 'tab.overview' },
+      { id: 'chains', labelKey: 'tab.chains' },
+      { id: 'accounts', labelKey: 'tab.accounts' },
+      { id: 'cost', labelKey: 'tab.cost' },
+    ]
+
+    function SmartSettingsSection({ t, form, remote, llm: injectedLlm, session: injectedSession, settings: injectedSettings, smartProvider, costService: propCostService, mountDiag, close }) {
+      const [tab, setTab] = useState('overview')
+      const [working, setWorking] = useState(false)
+      const [presetNotice, setPresetNotice] = useState('')
+      // @Remote 成本服务：由 injected() 软探测（ctx.get，非 inject）透传。
+      // 绝不把它加进模块 inject —— 那是本模块 $mount 产出的，会死锁。
+      const costService = smartProvider ?? propCostService
+
+      // task-110 TDZ 修复：readSnapshot/snap/config/revision/probeEnabled 必须
+      // 提前到所有引用点（runProbe、自动探测 effect）之前定义。原来定义在
+      // 组件下方导致 `Cannot access 'probeEnabled' before initialization`
+      // → slot 崩溃 → 白屏。configForms 快照是同步可读的，提前无副作用。
+      const readSnapshot = useCallback(() => {
+        try { return obj(form?.getSnapshot?.()) } catch { return {} }
+      }, [form])
+      const snap = readSnapshot()
+      const config = obj(snap.value)
+      const revision = Number.isFinite(snap.revision) ? snap.revision : 0
+      const probeSetting = obj(config?.ranking).probeEnabled !== undefined
+        ? obj(config?.ranking).probeEnabled
+        : config?.probeEnabled
+      const probeEnabled = probeSetting !== false
+
+      // pi-ai 真实资源快照（只读）。configForms 快照只有"本插件自己的配置"，
+      // 用户在「模型」页配的 provider/model 在 pi-ai 那边，必须单独读。
+      // 官方 models 页 store.ts:233-234 同时读 listProviders() + listConfigurableProviders()
+      // 再 join —— 左侧那一排 provider 主要在"目录表"里，只读 listProviders 会漏。
+      // 全部返回 {ok, value}；任一路拿不到就降级为空数组，绝不用假数据冒充。
+      const [pi, setPi] = useState({ providers: [], models: [], loaded: false })
+      // L5b: 首屏可用性投影。主源 = Host live registry 的 availabilityStatus()
+      // （L1 projectStatus，含账本+#recordHop 会话双信号，覆盖 workbuddy 这种
+      // 不写账本的路由）；降级 = 账本 byModel 单源。两者都来自已 $mount 的
+      // costService，$mount 软探测（ctx.get），绝不进 inject（死锁教训）。
+      const [availProjection, setAvailProjection] = useState(null)
+      // task-107: 探测 verdict（Map "provider/model" -> verdict）。默认不自动
+      // 探测（lead 要求可配置、等用户拍板）——只有 probeEnabled 时才发最小探测。
+      const [probeVerdicts, setProbeVerdicts] = useState({})
+      // task-111: 探测诊断自曝（点击有反馈，失败显示具体原因）。
+      const [probeDiag, setProbeDiag] = useState('')
+      // 自动探测去重：已触发过的 tuple 不再自动探（Host TTL 缓存兜底不重复花钱）。
+      const autoProbedRef = useRef({})
+      const llm = injectedLlm ?? remote?.llm
+      const session = injectedSession ?? remote?.session
+
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          // 双源合并（设计 §3.2 账本 + 会话信号）—— 不能主源非空就 return：
+          // task-104 根因就是 availabilityStatus 非空但 confidence 偏低时提前
+          // 返回，导致账本 10030 样本判可用的路径永远跑不到，全显示未确认。
+          // 合并策略：每个 modelId 取两源样本数的 MAX，任一源有足够真实样本
+          // 即视为已复核（诚实：两个都是真实使用证据，不是编造）。
+          const merged = {}
+          const addSample = (id, samples, tier) => {
+            if (!id) return
+            const prev = merged[id] ?? { samples: 0 }
+            merged[id] = {
+              samples: Math.max(Number(prev.samples ?? 0), Number(samples) || 0),
+              // task-106: 保留 tier 供"可能免费"判据使用（不参与状态判定）。
+              tier: str(tier) || str(prev.tier) || undefined,
+            }
+          }
+          // 源 1：live registry 投影 {modelId:{health,tier,confidence}}（含会话信号）。
+          try {
+            const sr = await costService?.availabilityStatus?.()
+            if (sr && sr.ok && sr.value) {
+              // projectStatus() 已跳过 isVirtual 条目（availability.js §6.2）。
+              for (const [id, row] of Object.entries(sr.value)) {
+                // confidence>=0.7 = 高/中置信（设计 §7：20+ 样本）。低置信
+                // 不冒充已复核，但也不盖掉账本源——合并时取 max。
+                const verified = Number(row?.confidence) >= 0.7
+                  && str(row?.health) !== 'UNKNOWN'
+                  && str(row?.tier) !== 'unknown'
+                addSample(id, verified ? AVAIL_HIGH_SAMPLES : 0, row?.tier)
+              }
+            }
+          } catch { /* live source unavailable -> ledger still applies */ }
+          // 源 2：账本 byModel（freeCalls/paidCalls 是真实成功样本数）。
+          try {
+            const dr = await costService?.costDetail?.({ offset: 0, limit: 1 })
+            if (dr && dr.ok && dr.value) {
+              for (const [id, row] of Object.entries(projectFromByModel(dr.value.byModel))) {
+                addSample(id, row?.samples)
+              }
+            }
+          } catch { /* ledger unavailable -> live source still applies */ }
+          if (alive) setAvailProjection(merged)
+        }
+        void load()
+        return () => { alive = false }
+      }, [costService])
+
+      // task-107: 手动/可选触发的最小探测。默认不自动发（probeEnabled=false），
+      // 只有用户开启后才对"弱信号命中但零样本"的少数候选探测（Host 单次上限3）。
+      // 探测失败/unknown 不挡——isPossiblyFree 仍按弱信号收录。
+      const runProbe = useCallback(async (candidates, force) => {
+        if (!probeEnabled || !Array.isArray(candidates) || candidates.length === 0) {
+          setProbeDiag('无可探测候选')
+          return
+        }
+        const list = candidates.slice(0, 3).map(m => ({
+          provider: str(m?.group), model: str(m?.id ?? m),
+        })).filter(c => c.provider && c.model && c.provider !== 'smart')
+        if (list.length === 0) { setProbeDiag('候选无有效 provider/model'); return }
+        const callable = typeof costService?.probeModels === 'function'
+        setProbeDiag(`调用中… probeModels=${callable} force=${force === true} n=${list.length}`)
+        if (!callable) {
+          // task-111: 不再静默吞 —— 明确告诉用户服务未挂（通常是 Host 端
+          // remote.js 改动后未 reload，$mount 里没有该 descriptor）。
+          setProbeDiag('探测服务未挂载：需 reload 插件后重试')
+          return
+        }
+        try {
+          const res = await costService.probeModels({ candidates: list, force: force === true })
+          const ok = res?.ok === true
+          const n = Array.isArray(res?.value?.results) ? res.value.results.length : 0
+          setProbeDiag(`结果 ok=${ok} results=${n}${ok ? '' : ` err=${String(res?.error?.code ?? res?.error?.message ?? '?')}`}`)
+          if (ok && Array.isArray(res.value.results)) {
+            const next = {}
+            for (const r of res.value.results) {
+              next[`${str(r?.provider)}/${str(r?.model)}`] = str(r?.verdict)
+            }
+            setProbeVerdicts(prev => ({ ...prev, ...next }))
+          }
+        } catch (error) {
+          setProbeDiag(`调用异常：${String(error?.message ?? error)}`)
+        }
+      }, [probeEnabled, costService])
+
+      // 用户拍板：新模型发现时自动探一次（无需点按钮）。只探"零样本 + 未探过
+      // + 名字弱信号(含free)"的候选，单次≤3（Host cap），用 ref 去重防重复烧。
+      // 探测失败/unknown 不挡——isPossiblyFree 仍按弱信号收录。
+      useEffect(() => {
+        if (!probeEnabled || !pi?.loaded || !costService) return
+        const candidates = []
+        for (const m of arr(pi.models)) {
+          const id = str(m?.id ?? m), provider = str(m?.group)
+          if (!id || !provider || provider === 'smart') continue
+          const key = `${provider}/${id}`
+          if (autoProbedRef.current[key]) continue
+          // 只探零样本的（有样本已由双源判定，不必花钱探）
+          if (Number(obj(availProjection)[id]?.samples ?? 0) > 0) continue
+          // 只探"可能免费"弱信号命中的，避免对全部 176 个批量探测
+          if (!`${id} ${str(m?.name)} ${provider}`.toLowerCase().includes('free')) continue
+          candidates.push(m)
+          if (candidates.length >= 3) break
+        }
+        if (candidates.length === 0) return
+        for (const m of candidates) autoProbedRef.current[`${str(m?.group)}/${str(m?.id ?? m)}`] = true
+        void runProbe(candidates)
+      }, [probeEnabled, pi, availProjection, costService, runProbe])
+
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          const providers = [], models = [], diag = []
+          const seen = new Set()
+          // 自曝式诊断：把每个源的真实返回结构写进空态文案，真机截图一次定位，
+          // 不再靠猜（浏览器 console 不进 DSH 日志，我们无浏览器控制权限）。
+          diag.push(`llm=${!!llm} session=${!!session}`)
+          // 与官方 models 页一致：两个源都要读，去重后合并。
+          const sources = [
+            ['listProviders', () => llm?.listProviders?.()],
+            ['listConfigurableProviders', () => llm?.listConfigurableProviders?.()],
+          ]
+          for (const [label, read] of sources) {
+            try {
+              const res = await read()
+              const vtype = Array.isArray(res?.value) ? `array(${res.value.length})` : (res?.value === undefined ? 'undef' : typeof res?.value)
+              diag.push(`${label}:ok=${res?.ok === true} v=${vtype}${res?.ok === false ? ` err=${String(res?.error?.code ?? res?.error?.message ?? '?')}` : ''}`)
+              if (res && res.ok && Array.isArray(res.value)) {
+                for (const p of res.value) {
+                  const id = str(p?.id ?? p?.provider)
+                  if (id && !seen.has(id)) {
+                    seen.add(id)
+                    providers.push({ id, name: str(p?.name ?? p?.displayName) || id })
+                  }
+                }
+              }
+            } catch (error) {
+              diag.push(`${label}:throw=${String(error?.message ?? error)}`)
+            }
+          }
+          // 清掉官方 models 页会排除的虚拟账户路由（不是用户配的 provider）。
+          const real = providers.filter(p => p.id !== 'deepseek-account')
+          try {
+            const cat = await session?.modelCatalog?.()
+            const gtype = Array.isArray(cat?.value?.groups) ? `groups(${cat.value.groups.length})` : 'none'
+            diag.push(`modelCatalog:ok=${cat?.ok === true} ${gtype}`)
+            if (cat && cat.ok && Array.isArray(cat.value?.groups)) {
+              for (const g of cat.value.groups) {
+                for (const m of arr(g?.models)) {
+                  const id = str(m?.id ?? m)
+                  if (id) models.push({ id, name: str(m?.name) || id, group: str(g?.id) })
+                }
+              }
+            }
+          } catch (error) {
+            diag.push(`modelCatalog:throw=${String(error?.message ?? error)}`)
+          }
+          if (alive) setPi(prev => {
+            const detailText = diag.join(' | ')
+            // 事件重读后内容未变就不换引用 —— 避免无谓重渲染/闪烁。
+            const same = prev?.loaded && prev.providers.length === real.length
+              && prev.models.length === models.length
+              && real.every((p, i) => p.id === prev.providers[i]?.id)
+              && models.every((m, i) => m.id === prev.models[i]?.id)
+            return same ? prev : { providers: real, models, loaded: true, detail: detailText }
+          })
+        }
+        void load()
+        // 实时性（task-103）：用户在设置-模型页新增/删除 provider/model 时，
+        // Host 发 llm/adapters-updated / llm/models-updated（asar 实测两者在
+        // API_REMOTE_FORWARDED_EVENTS 里，client 可 $on 订阅）。收到即重读三源，
+        // 首屏读数/已识别列表、pi 驱动的下拉、免费模型列表全部自动更新。
+        // 不新增 namespace、不进 inject（死锁红线），零轮询。
+        const offs = []
+        try {
+          if (typeof remote?.$on === 'function') {
+            offs.push(remote.$on('llm/adapters-updated', () => { void load() }))
+            offs.push(remote.$on('llm/models-updated', () => { void load() }))
+          }
+        } catch { /* 订阅不可达 -> 退化为加载时一次读取，不崩 */ }
+        return () => {
+          alive = false
+          for (const off of offs) { try { off?.() } catch {} }
+        }
+      }, [llm, session, remote])
+
+      // $mount is async; the @Remote namespace may not exist on first render.
+      // Re-read ctx.remote.smartProvider on a short delay and on pi settle to
+      // trigger a re-render once the mount has installed it. Never fabricate.
+      const [costReady, setCostReady] = useState(!!costService)
+      useEffect(() => {
+        if (costReady) return
+        let alive = true
+        const check = () => {
+          const svc = smartProvider ?? remote?.smartProvider
+          if (svc && alive) { setCostReady(true); return true }
+          return false
+        }
+        if (check()) return () => { alive = false }
+        const timers = [50, 250, 800, 2000].map(ms => setTimeout(() => {
+          if (!alive) return
+          if (check()) timers.forEach(clearTimeout)
+        }, ms))
+        return () => { alive = false; timers.forEach(clearTimeout) }
+      }, [costReady, smartProvider])
+      const activeCostService = costService ?? (costReady ? (remote?.smartProvider ?? smartProvider) : undefined)
+
+      // No command channel. Data classes:
+      //  1. static metadata  -> STATIC_* constants embedded above
+      //  2. config values     -> form.getSnapshot() below
+      //  3. user's real models -> pi-ai via remote.llm/session (read-only)
+      // Never query runtime "on/off"; the UI states only provable facts.
+      const settings = injectedSettings ?? remote?.settings
+      // 返回 {ok, detail}：detail 把真机失败原因带进 UI，让用户截图一次就能
+      // 定位（浏览器 console 不进 DSH 日志，我们手里没有浏览器控制权限）。
+      const mutate = useCallback(async (ops, expectedRevision) => {
+        const fstat = (() => { try { return `${form?.getSnapshot?.()?.status ?? '?'}/w=${form?.getSnapshot?.()?.writable}` } catch { return '?' } })()
+        try {
+          if (typeof form?.mutate === 'function') {
+            const fence = Number.isFinite(expectedRevision) && expectedRevision > 0 ? expectedRevision : undefined
+            const landed = await form.mutate(ops, fence)
+            if (landed === true) return { ok: true }
+            if (landed && typeof landed === 'object' && landed.ok === true) return { ok: true }
+            return { ok: false, detail: `form=${String(landed)} fence=${fence} state=${fstat}` }
+          }
+        } catch (error) {
+          return { ok: false, detail: `throw=${String(error?.message ?? error)} state=${fstat}` }
+        }
+        // 兜底：form 没有 mutate 时走显式注入的 remote.settings。
+        try {
+          const res = await settings?.mutate?.(ENTRY, ops, expectedRevision)
+          if (res && res.ok) return { ok: true }
+          const e = res?.error
+          return { ok: false, detail: `settings=${String(e?.code ?? 'no-code')}:${String(e?.message ?? 'no-msg')} st=${fstat}` }
+        } catch (error) {
+          return { ok: false, detail: `settings-throw=${String(error?.message ?? error)} st=${fstat}` }
+        }
+      }, [form, settings])
+
+      // One-click preset: writes strategy + its weights and turns ranking on.
+      // A beginner clicks "省钱的"/"更快的" and it just works — no numbers.
+      const applyPreset = useCallback(async id => {
+        const preset = STATIC_STRATEGIES.find(s => str(s?.id) === id)
+        if (!preset) return
+        const current = obj(config?.ranking)
+        const next = {
+          ...current,
+          enabled: true,
+          strategy: id,
+          weights: preset.weights ? { ...preset.weights } : { ...DEFAULT_WEIGHTS },
+        }
+        setWorking(true); setPresetNotice('')
+        const r = await mutate([{ op: 'set', path: ['ranking'], value: next }], revision)
+        setWorking(false)
+        const ok = r?.ok === true
+        setPresetNotice(ok ? fmt(t, 'preset.applied', { name: str(preset.label) || id }) : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}`)
+      }, [config, revision, mutate, t])
+
+      return h('div', { style: S.wrap },
+        h('div', { style: S.tabs },
+          TABS.map(item => h('button', {
+            key: item.id, type: 'button', style: S.tab(tab === item.id),
+            onClick: () => setTab(item.id),
+          }, t(item.labelKey))),
+        ),
+        presetNotice ? h('div', { style: S.ok }, presetNotice) : null,
+        tab === 'overview' ? h(Overview, { t, localConfig: config, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe: runProbe, applyPreset, working }) : null,
+        tab === 'chains' ? h(ChainsTab, { t, form, revision, mutate, config, pi }) : null,
+        tab === 'accounts' ? h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi }) : null,
+        tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}` }) : null,
+      )
+    }
+
+    function SmartSectionIcon({ size, active }) {
+      const s = Number.isFinite(size) ? size : 16
+      return h('svg', {
+        viewBox: '0 0 16 16', width: s, height: s, 'aria-hidden': true,
+        style: { display: 'block', color: active ? 'var(--dsw-alias-brand-primary-new-colorprimary-new-color)' : 'var(--dsw-alias-label-secondary)' },
+      },
+        h('path', {
+          d: 'M2 5h9M2 5l2.2-2M2 5l2.2 2M14 11H5M14 11l-2.2-2M14 11l-2.2 2',
+          fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round',
+        }),
+      )
+    }
+
+    const zh = {
+      nav: 'Smart 智能路由',
+      'tab.overview': '总览', 'tab.chains': '切换链', 'tab.accounts': '账号池 + 择优', 'tab.cost': '成本 / 健康',
+      'action.save': '保存', 'action.saved': '已保存，立即生效（无需重启）', 'action.saveFailed': '保存失败（错误：失败）',
+      'action.refresh': '刷新',
+      'status.registered': '已注册', 'status.yes': '是', 'status.no': '否', 'status.chains': '链路数',
+      'status.accounts': '账号数', 'status.cooldowns': '冷却中', 'status.strategyEnabled': '择优配置（用户设置）',
+      'status.loading': '正在读取配置…',
+      'overview.hint': '设置 → 模型页中的 “Smart Gateway” 即本插件提供的虚拟提供商。',
+      'advanced.title': '⚙ 详细设置（想调得更细再点开，都是下拉和按钮，不用写代码）',
+      'action.delete': '删除', 'action.addHop': '＋ 添加备用项', 'action.addChain': '＋ 添加一组模型', 'action.addAccount': '＋ 添加一个账号',
+      'chains.modelLabel': '这个模型：',
+      'field.accountName': '名字：', 'field.accountNamePh': '给它起个名字，如 主账号',
+      'field.provider': '服务商：', 'field.credential': '使用哪个 Key：', 'field.credentialDefault': '使用 DSH 已登录的账号（推荐）',
+      'field.models': '可用模型：', 'field.tier': '重要程度：',
+      'tier.premium': '主要（优先用）', 'tier.standard': '普通', 'tier.backup': '备用（最后用）',
+      'ranking.tierHigh': '优先用高级账号', 'ranking.tierLow': '先消耗备用账号',
+      'ranking.priorityHard': '严格按顺序（先高级别）', 'ranking.prioritySoft': '只作为同分时参考',
+      'hero.configured': '智能路由正在按你的设置选模型',
+      'hero.configuredExplain': '已按「{strategy}」方式择优，不行就自动换下一个。',
+      'hero.defaultTitle': '智能路由正在使用内置均衡策略',
+      'hero.defaultExplain': '你还没选过策略，当前按内置的均衡方式运行：按任务挑候选模型、再在候选里均衡选择。想更省钱或更快，点下面的按钮切换即可。',
+      'hero.configuredHint': '这里只显示真实保存的设置；下面的按钮随时可以改。',
+      'pi.available': '你在 DSH 里已经配好的模型',
+      'pi.loading': '正在读取你已配置的模型…',
+      'pi.empty': '暂时没读到已配置的模型，可在「设置 → 模型」页添加。',
+      'pi.providers': '提供商数', 'pi.models': '可用模型数',
+      'pi.providerNames': '已识别：{names}',
+      'pi.smartTag': 'Smart Gateway（智能路由，非独立模型提供商）',
+      'pi.freeModels': '已登记模型（可用性如下，新加的会自动出现）：',
+      'pi.maybeFree': '可能免费的模型（宽松收录，宁可多列不漏）：',
+      'pi.probeBtn': '手动重探这些模型（已自动探过一次，强制刷新结果）',
+      'pi.noMaybeFree': '当前未发现可能免费的模型',
+      'pi.otherModels': '其他已登记模型 {n} 个（点开查看）',
+      'pi.unavailable': '不可用',
+      'pi.availableTag': '可用（已复核）', 'pi.unknownTag': '资费未确认',
+      'pi.unreviewed': '未复核',
+      'pi.freeModelsHint': '状态来自真实使用记录：有足够成功样本才显示"可用"，其余显示"资费未确认"（不是"不可用"）。无论状态如何都保留在列表里。',
+      'pi.otherProvidersHint': 'Trae / Qoder / WorkBuddy 等插件的免费模型与可用性由各自插件管理，这里不标注。',
+      'preset.pick': '你想让它怎么选？点一下就好（随时可改）',
+      'preset.balanced': '⚖ 平衡（推荐）', 'preset.balancedSub': '省心又省钱，大多数人选这个',
+      'preset.cost': '💰 更省钱', 'preset.costSub': '尽量用便宜的模型',
+      'preset.speed': '⚡ 更快', 'preset.speedSub': '优先用响应快的模型',
+      'preset.applying': '正在保存你的选择…',
+      'preset.applied': '已切换为「{name}」，立即生效',
+      'chains.plainTitle': '模型的备用顺序',
+      'chains.plainExplain': '智能路由会按下面的顺序尝试：从上到下，不行就自动换下一个。这些都是你已经在 DSH 里配置好的模型，不用另外设置。',
+      'chains.forModel': '当你选择「{model}」时：',
+      'chains.step': '{name}',
+      'accounts.plainTitle': '账号（一般不用管）',
+      'accounts.plainExplain': '会自动使用你已经在 DSH 里配置好的 API Key（比如 OpenCode Go、小米等），你不用在这里填任何密钥。',
+      'accounts.plainCount': '当前已识别 {n} 个账号。',
+      'chains.hint': '每个键是一个外层模型，值是按顺序尝试的 {provider, model} 数组。保存后热更新生效。',
+      'chains.defaultHint': '当前显示内置默认链（你还没配置 chains）。编辑后点保存即写入你的配置并生效。',
+      'chains.empty': '尚无链路配置（使用内置默认链）。',
+      'accounts.title': '账号池', 'accounts.hint': '密钥只存引用名（credentialRef），不在此显示明文。',
+      'accounts.templateHint': '你还没配置账号池，系统会自动使用你在 DSH 里登录的账号直连。想加账号？点下面的"添加一个账号"，从下拉里选就行。',
+      'accounts.empty': '尚无账号配置。', 'accounts.raw': '账号 JSON（高级）',
+      'ranking.title': '分级择优（详细）', 'ranking.enabled': '启用智能选择',
+      'ranking.enabledHelp': '关闭时完全保持旧行为：route 优先 + 最少使用。',
+      'ranking.strategy': '策略预设', 'ranking.w.cost': '成本', 'ranking.w.speed': '速度',
+      'ranking.w.tier': '等级', 'ranking.w.load': '负载',
+      'ranking.tierDirection': '等级方向', 'ranking.tierDirectionHelp': 'high=高等级先用；low=先消耗备份额度。',
+      'ranking.respectHopRoute': '优先走链上路由', 'ranking.priorityMode': '硬优先级模式',
+      'ranking.priorityHelp': '注意：priority 数字越小越优先，与等级（tier 越高越优先）方向相反。',
+      'ranking.probeEnabled': '新模型自动探测（默认开启）', 'ranking.probeEnabledHelp': '默认开启：新模型自动发一次极小请求判断是否免费（免费0成本，付费≤1 token，结果缓存7天不重复花钱）。不需要可关掉。',
+      'routing.title': '智能路由（两层）', 'routing.intro': '这里保存你对智能路由的设置。保存后立即生效，无需重启。',
+      'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '内置默认启用均衡策略；你也可以按自己的偏好切换或关闭。',
+      'routing.strategy': '选哪种路由风格',
+      'routing.position': '模型定位', 'routing.positionHelp': '这是只读说明，不是可编辑的表格。',
+      'routing.positionExplain': '每台模型的定位由自身能力自动推导（如是否支持推理、图片、长上下文）；个别模型可另外手填。当前页面不读取逐台模型的定位结果。',
+      'routing.rulesTitle': '任务怎么识别（只读）',
+      'cost.title': '花费与健康',
+      'cost.plainExplain': '这里显示智能路由的累计花费。花费数据由后台记账，设置页只显示它拿到的真实数字，不会编造。',
+      'cost.estimated': '累计估算成本 (USD)', 'cost.records': '成本记录数',
+      'cost.freePaid': '成功调用', 'cost.freePaidValue': '免费 {free} 次 · 付费 {paid} 次',
+      'cost.noChannel': '当前设置页还没有拿到成本数据通道，暂时无法显示真实花费（后台可能已有记录）。下面诊断信息可帮助定位。',
+      'cost.detailLoading': '正在读取明细…',
+      'cost.detailTitle': '逐笔调用明细（共 {n} 笔，最近的在前）',
+      'cost.detailEmpty': '暂无明细数据',
+      'cost.col.time': '时间', 'cost.col.model': '模型', 'cost.col.tokens': '输入+输出',
+      'cost.col.cost': '成本', 'cost.col.status': '结果',
+      'cost.ok': '成功', 'cost.failed': '失败',
+      'cost.prevPage': '上一页', 'cost.nextPage': '下一页',
+      'cost.timelineTitle': '时间趋势（按天，柱高=调用次数）',
+      'cost.byModelTitle': '按模型分组（调用次数 + 累计成本）',
+      'cost.byModelValue': '{calls} 次 · ${cost}',
+      'cost.savingsTitle': '节省账本（估算）',
+      'cost.savingsNotice': '估算 · 基于同类模型公开价或账单单价推算，非账单；无可比价时如实显示"无可比价"，绝不填 0。',
+      'cost.savingsModel': '{model} 免费调用若按付费价',
+      'cost.savingsValue': '约 {usd}（估算）',
+      'cost.noComparable': '无可比价',
+      'health.title': '账号健康 / 冷却', 'health.id': '账号', 'health.provider': '路由',
+      'health.health': '健康', 'health.coolReason': '冷却原因', 'health.usage': '尝试次数',
+      'health.ok': '健康', 'health.cooling': '冷却中', 'health.empty': '无账号数据。',
+      'health.simpleExplain': '账号健康与冷却属于运行时信息，当前设置页不读取，也不会假装它正常。',
+      'error.jsonObject': '请输入合法的 JSON 对象。', 'error.jsonArray': '请输入合法的 JSON 数组。',
+      'error.saveFailed': '保存失败，请重试。',
+    }
+    const en = {
+      nav: 'Smart provider',
+      'tab.overview': 'Overview', 'tab.chains': 'Chains', 'tab.accounts': 'Accounts + Ranking', 'tab.cost': 'Cost / Health',
+      'action.save': 'Save', 'action.saved': 'Saved — live without restart', 'action.saveFailed': 'Save failed',
+      'action.refresh': 'Refresh',
+      'status.registered': 'Registered', 'status.yes': 'Yes', 'status.no': 'No', 'status.chains': 'Chains',
+      'status.accounts': 'Accounts', 'status.cooldowns': 'Cooling down', 'status.strategyEnabled': 'Ranking config (user setting)',
+      'status.loading': 'Loading configuration…',
+      'overview.hint': 'The “Smart Gateway” row on Settings → Models is the virtual provider from this plugin.',
+      'advanced.title': '⚙ Details (fine-tune here — all dropdowns and buttons, no code)',
+      'action.delete': 'Remove', 'action.addHop': '+ Add fallback', 'action.addChain': '+ Add a model group', 'action.addAccount': '+ Add an account',
+      'chains.modelLabel': 'This model:',
+      'field.accountName': 'Name:', 'field.accountNamePh': 'Give it a name, e.g. Main',
+      'field.provider': 'Provider:', 'field.credential': 'Which key to use:', 'field.credentialDefault': 'Use DSH signed-in account (recommended)',
+      'field.models': 'Available models:', 'field.tier': 'Importance:',
+      'tier.premium': 'Primary (use first)', 'tier.standard': 'Standard', 'tier.backup': 'Backup (use last)',
+      'ranking.tierHigh': 'Prefer higher-tier accounts', 'ranking.tierLow': 'Burn backups first',
+      'ranking.priorityHard': 'Strict order (higher tier first)', 'ranking.prioritySoft': 'Only as a tie-breaker',
+      'hero.configured': 'Smart routing is using your saved setting',
+      'hero.configuredExplain': 'Picking with the "{strategy}" style — switching automatically if a model fails.',
+      'hero.defaultTitle': 'Smart routing uses the built-in balanced default',
+      'hero.defaultExplain': 'You have not chosen a strategy yet, so the built-in balanced default applies: pick candidate models by task, then balance within them. Tap a button to switch.',
+      'hero.configuredHint': 'Only your real saved settings are shown here; the buttons below can change them anytime.',
+      'pi.available': 'Models you already configured in DSH',
+      'pi.loading': 'Reading your configured models…',
+      'pi.empty': 'No configured models found yet — add one on Settings → Models.',
+      'pi.providers': 'Providers', 'pi.models': 'Available models',
+      'pi.providerNames': 'Found: {names}',
+      'pi.smartTag': 'Smart Gateway (smart routing, not a standalone model provider)',
+      'pi.freeModels': 'Registered models (availability below; newly added appear automatically):',
+      'pi.maybeFree': 'Possibly free models (broad match — better to over-list than miss):',
+      'pi.probeBtn': 'Re-probe these models (auto-checked once; force refresh)',
+      'pi.noMaybeFree': 'No possibly-free models found',
+      'pi.otherModels': 'Other registered models ({n}) — expand to view',
+      'pi.unavailable': 'unavailable',
+      'pi.availableTag': 'available (verified)', 'pi.unknownTag': 'billing unconfirmed',
+      'pi.unreviewed': 'unreviewed',
+      'pi.freeModelsHint': 'Status comes from real usage: "available" only with enough success samples; otherwise "billing unconfirmed" (not "unavailable"). All entries stay listed regardless.',
+      'pi.otherProvidersHint': 'Free models and availability from Trae / Qoder / WorkBuddy and other plugins are managed by those plugins, not marked here.',
+      'preset.pick': 'How should it choose? Tap one (change anytime)',
+      'preset.balanced': '⚖ Balanced (recommended)', 'preset.balancedSub': 'Reliable and thrifty — good for most people',
+      'preset.cost': '💰 Save money', 'preset.costSub': 'Prefer the cheapest models',
+      'preset.speed': '⚡ Be fast', 'preset.speedSub': 'Prefer the quickest models',
+      'preset.applying': 'Saving your choice…',
+      'preset.applied': 'Switched to "{name}" — live now',
+      'chains.plainTitle': 'Model fallback order',
+      'chains.plainExplain': 'Smart routing tries these in order: top to bottom, switching automatically if one fails. These are models you already configured in DSH — nothing extra to set.',
+      'chains.forModel': 'When you pick "{model}":',
+      'chains.step': '{name}',
+      'accounts.plainTitle': 'Accounts (usually nothing to do)',
+      'accounts.plainExplain': 'It automatically uses the API keys you already configured in DSH (e.g. OpenCode Go, Xiaomi). You don\'t need to enter any key here.',
+      'accounts.plainCount': '{n} account(s) detected.',
+      'chains.hint': 'Each key is an outer model; value is an ordered {provider, model} array. Changes apply live.',
+      'chains.defaultHint': 'Built-in default chain shown (no chains configured). Edit and save to write your own.',
+      'chains.empty': 'No chain config (using built-in defaults).',
+      'accounts.title': 'Account pool', 'accounts.hint': 'Secrets stay as references (credentialRef); no plaintext is shown.',
+      'accounts.templateHint': 'No account pool configured — the system uses your signed-in DSH accounts directly. To add one, tap "Add an account" and choose from the dropdown.',
+      'accounts.empty': 'No accounts configured.', 'accounts.raw': 'Accounts JSON (advanced)',
+      'ranking.title': 'Ranking', 'ranking.enabled': 'Enable ranking',
+      'ranking.enabledHelp': 'Off keeps legacy behavior: route-first then least-used.',
+      'ranking.strategy': 'Strategy', 'ranking.w.cost': 'Cost', 'ranking.w.speed': 'Speed',
+      'ranking.w.tier': 'Tier', 'ranking.w.load': 'Load',
+      'ranking.tierDirection': 'Tier direction', 'ranking.tierDirectionHelp': 'high = premium first; low = burn backups first.',
+      'ranking.respectHopRoute': 'Prefer hop route', 'ranking.priorityMode': 'Priority mode',
+      'ranking.priorityHelp': 'Note: lower priority number wins — opposite to tier (higher wins).',
+      'ranking.probeEnabled': 'Auto-probe new models (on by default)', 'ranking.probeEnabledHelp': 'On by default: new models get one tiny request to detect if free (free=0 cost, paid ≤1 token, cached 7 days). Turn off to opt out.',
+      'routing.title': 'Two-layer smart routing', 'routing.intro': 'These are your saved routing settings. Saving applies them live — no restart.',
+      'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'On by default with the balanced strategy; you can switch or turn it off.',
+      'routing.strategy': 'Routing style',
+      'routing.position': 'Model position', 'routing.positionHelp': 'Read-only explanation, not an editable table.',
+      'routing.positionExplain': 'Each model position is derived from its own capabilities (reasoning, vision, long context); some can be declared manually. This page does not read per-model derived results.',
+      'routing.rulesTitle': 'How tasks are recognized (read-only)',
+      'cost.title': 'Cost & health',
+      'cost.plainExplain': 'Accumulated smart-routing cost is shown here. The settings page shows only real numbers from the Host ledger — never invented ones.',
+      'cost.estimated': 'Estimated cost (USD)', 'cost.records': 'Cost records',
+      'cost.freePaid': 'Successful calls', 'cost.freePaidValue': 'Free {free} · Paid {paid}',
+      'cost.noChannel': 'The settings page has no cost-data channel yet, so real spending cannot be shown (the Host may already have records). Diagnostics below help locate it.',
+      'cost.detailLoading': 'Loading detail…',
+      'cost.detailTitle': 'Per-call detail ({n} records, newest first)',
+      'cost.detailEmpty': 'No detail data',
+      'cost.col.time': 'Time', 'cost.col.model': 'Model', 'cost.col.tokens': 'In+Out',
+      'cost.col.cost': 'Cost', 'cost.col.status': 'Result',
+      'cost.ok': 'OK', 'cost.failed': 'Failed',
+      'cost.prevPage': 'Prev', 'cost.nextPage': 'Next',
+      'cost.timelineTitle': 'Timeline (per day, bar height = calls)',
+      'cost.byModelTitle': 'By model (calls + cumulative cost)',
+      'cost.byModelValue': '{calls} calls · ${cost}',
+      'cost.savingsTitle': 'Savings ledger (estimate)',
+      'cost.savingsNotice': 'Estimate only — derived from comparable public prices or paid rows, not a bill. When no comparable price exists it says "no comparable price" instead of inventing 0.',
+      'cost.savingsModel': '{model} free calls at paid price',
+      'cost.savingsValue': '~{usd} (estimated)',
+      'cost.noComparable': 'No comparable price',
+      'health.title': 'Account health / cooldown', 'health.id': 'Account', 'health.provider': 'Route',
+      'health.health': 'Health', 'health.coolReason': 'Cool reason', 'health.usage': 'Attempts',
+      'health.ok': 'Healthy', 'health.cooling': 'Cooling', 'health.empty': 'No account data.',
+      'health.simpleExplain': 'Account health and cooldown are runtime details; this settings page does not read them and will not pretend they are healthy.',
+      'error.jsonObject': 'Enter a valid JSON object.', 'error.jsonArray': 'Enter a valid JSON array.',
+      'error.saveFailed': 'Save failed, please retry.',
+    }
+
+    return {
+      // 组件级 inject 列出 Host 提供的 remote.<子服务>（llm/session/settings 等）。
+      // 关键边界（task-69 死锁教训）：**本模块自己在 apply() 里 $mount() 产出的
+      // namespace 绝不能写进 inject**——框架在 apply() 前等 inject 全部就绪，
+      // 而该服务只能由被卡住的 apply() 创建 ⇒ 等待死锁 ⇒ 插件 pending、侧栏消失。
+      // remote.smartProvider 正是本模块 $mount 产出的，故只能软探测（ctx.get），
+      // 不能进 inject。官方 qoder 客户端亦有同样的中文警示。
+      inject: ['slots', 'locale', 'configForms', 'remote', 'remote.llm', 'remote.session', 'remote.settings'],
+      apply(ctx) {
+        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'smart-provider: client locale')
+
+        // Mount the typed @Remote contribution so `remote.smartProvider.cost()`
+        // becomes callable. Unmount on dispose (cotTranslation pattern).
+        ctx.effect(() => {
+          let unmount
+          let cancelled = false
+          if (typeof ctx.remote?.$mount !== 'function') {
+            mountDiag = 'no-$mount'
+          } else {
+            mountDiag = 'mounting'
+            Promise.resolve(ctx.remote.$mount(makeCostContribution())).then(off => {
+              if (cancelled) { Promise.resolve(off?.()).catch(() => {}) }
+              else { unmount = off; mountDiag = 'mounted' }
+            }).catch(error => {
+              // 把 $mount 的真实 reject 原因带进成本页诊断；不再静默吞掉。
+              mountDiag = `mount-fail:${String(error?.message ?? error)}`
+            })
+          }
+          return () => { cancelled = true; Promise.resolve(unmount?.()).catch(() => {}) }
+        }, 'smart-provider: remote cost')
+
+        const bound = ctx.locale.bind(NS)
+        const t = key => {
+          try { return bound(key) } catch { return key }
+        }
+
+        const injected = () => {
+          let form
+          try { form = ctx.configForms.get(ENTRY) } catch { form = undefined }
+          // 显式透传子服务：即便 slot 框架只把 inject() 返回值交给组件，
+          // llm/session 也一定在手（真机上一版只靠 ctx.remote 传递拿不到）。
+          return {
+            form,
+            remote: ctx.remote,
+            llm: ctx.remote?.llm,
+            session: ctx.remote?.session,
+            settings: ctx.remote?.settings,
+            // 软探测本模块 $mount 产出的 namespace：绝不能进 inject（死锁），
+            // 只在每次 inject() 调用时同步查找已挂载的服务，拿不到就是 undefined。
+            smartProvider: (() => {
+              try { return ctx.get?.('remote.smartProvider') ?? ctx.smartProvider ?? ctx.remote?.smartProvider } catch { return undefined }
+            })(),
+            costService: (() => {
+              try { return ctx.get?.('remote.smartProvider') ?? ctx.remote?.smartProvider } catch { return undefined }
+            })(),
+            mountDiag,
+            t,
+          }
+        }
+
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section', id: 'smart-provider', order: 20,
+          label: () => t('nav'), locale: NS, inject: injected,
+        }, SmartSettingsSection))
+
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon', id: 'smart-provider', locale: NS,
+        }, SmartSectionIcon))
+      },
+    }
+  },
+})
+
+// >>> custom-routes:candidates >>>
+const CUSTOM_PROVIDERS = ["x-opencode-free"];
+const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-202611","web-search-free","cat-jam-free","longcat-2.5-preview-free","step-5-preview-free"];
+// BEGIN free-model availability (口径 2026-11-24 修正: 任一 provider 成功即 available)
+// status = "该模型在 DSH 里是否有任一 provider 成功用过", 非 "opencode 上下文下可不可用"。
+// 判据双源: cost.jsonl 的 actual_model + failure_code=null; host 日志 request.complete/completed
+// (workbuddy 路由不写账本). task-77 的 "chat 400" 仅为 opencode 单上下文结论, 不推广.
+// hy4-flash-free: available — 账本 x-opencode-free 成功 8532 次; upstream /models 200 + chat 200
+// hy4flash-free: available — workbuddy provider 下 request.complete/completed 140+ 次且仍在涨;
+//   账本不记录 workbuddy 路由; opencode 上下文 400 是另一 provider 的结论, 不代表该模型全局不可用
+// hy4-flash-free-trial-202611: unavailable — promotion badge id (not a model); 仅 opencode chat 400;
+//   账本与日志双源均无成功记录
+// web-search-free: unavailable — top-level dsh-free-search plugin, not an LLM; 仅 opencode chat 400;
+//   双源均无成功记录
+// cat-jam-free: unavailable — 2026-11-24 仅 opencode chat probe 400; 双源均无成功记录
+// longcat-2.5-preview-free: unavailable — 2026-11-24 仅 opencode chat probe 400 (historical deprecated);
+//   双源均无成功记录
+// step-5-preview-free: unavailable — 2026-11-24 仅 opencode chat probe 400; 双源均无成功记录
+// END free-model availability
+// <<< custom-routes:candidates <<<

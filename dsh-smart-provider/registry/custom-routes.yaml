@@ -1,0 +1,36 @@
+# 自建路由声明模板（通用产品 · P1 用户资源自适应）
+# 这是【空模板】——不含任何特定用户的模型清单。你自己的特殊资源请写进
+# custom-routes.user.yaml（优先读取），本文件只作为新用户的起点/示例。
+# 方案见 ../../自建路由统一管理方案.md
+#
+# 规则：
+#   - id 必须 x- 前缀，且不得撞 catalog / smart / 已有 route
+#   - protocol ∈ openai-completions | openai-responses | anthropic-messages | google-generative-ai
+#   - baseURL：openai-* 写到 /v1；anthropic-messages 不带 /v1（SDK 自带），防 /v1/v1 405
+#   - compat：openai-completions 自定义 route（catalog 外）必须声明，否则 pi-ai 默认
+#     发 max_completion_tokens + role:developer，部分网关返回 400 INVALID_REQUEST。
+#     常见自由档取值：supportsStore:false / supportsDeveloperRole:false /
+#     supportsStrictMode:true / maxTokensField:max_tokens
+#   - headers：某些网关要求每个请求带会话 header；按厂家文档声明，值用合法 UUID。
+#   - credentialRef 是凭据“引用名”，绝不放明文 key
+#   - tier: free 自动排 auto 链首；standard 追加付费段；disabled 只登记不接线
+# 新增模型只改你自己的 user 文件，然后跑：
+#   node scripts/validate-custom-routes.mjs
+#   node scripts/gen-custom-routes.mjs --write
+version: 1
+routes: []
+#
+# 示例（取消注释并改成你自己的资源）：
+# routes:
+#   - id: x-myvendor
+#     displayName: My Vendor
+#     protocol: openai-completions
+#     baseURL: https://api.example.com/v1
+#     credentialRef: MY_VENDOR_API_KEY
+#     tier: standard
+#     models:
+#       - id: my-model
+#         name: My Model
+#         contextWindow: 128000
+#         maxTokens: 32000
+#         input: [text]

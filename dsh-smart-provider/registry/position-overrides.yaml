@@ -1,0 +1,12 @@
+# 模型定位覆盖模板（通用产品 · 不含任何用户配比）
+# 产品默认 positionOverrides 为空：catalog 能自动推导 reasoning/longctx/vision/tool，
+# thrifty/swift 无 catalog 字段，需要用户按自己资源手填。
+# 你自己的覆盖请写进 position-overrides.user.yaml（优先读取），本文件只是空模板示例。
+version: 1
+overrides: {}
+# 示例（改成你自己的模型）：
+# overrides:
+#   my-provider/my-fast-model:
+#     tags: [swift]
+#   my-provider/my-free-model:
+#     tags: [thrifty]

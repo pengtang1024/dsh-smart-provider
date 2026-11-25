@@ -1,0 +1,91 @@
+# 自建路由统一声明源（唯一人工编辑点）
+# 方案见 ../../自建路由统一管理方案.md
+# 规则：
+#   - id 必须 x- 前缀，且不得撞 catalog / smart / 已有 route
+#   - protocol ∈ openai-completions | openai-responses | anthropic-messages | google-generative-ai
+#   - baseURL：openai-* 写到 /v1；anthropic-messages 不带 /v1（SDK 自带），防 /v1/v1 405
+#   - compat：openai-completions 自定义 route（catalog 外）必须声明，否则 pi-ai 默认
+#     发 max_completion_tokens + role:developer，opencode.ai 等网关返回 400
+#     INVALID_REQUEST → smart fallback 付费。free 档用与 catalog 免费模型一致的值：
+#     supportsStore:false / supportsDeveloperRole:false / supportsStrictMode:true /
+#     maxTokensField:max_tokens
+#   - headers：OpenCode Go 网关要求每个请求带 x-opencode-session；pi-ai 只在该
+#     provider 名为 opencode/opencode-go 时自动注入，自定义 x- route 必须静态声明。
+#     值用合法 UUID 即可（网关只校验格式与路由稳定性，不校验归属）。
+#   - credentialRef 是凭据“引用名”，绝不放明文 key
+#   - tier: free 自动排 auto 链首；standard 追加付费段；disabled 只登记不接线
+#   - status：模型可用性标注（available / unavailable / unverified）。全量登记原则：
+#     不可用的模型仍然列入 models（可见、可被首屏展示），但 status=unavailable 的
+#     模型不会进入 auto 链（生成器降级处理：登记但不接线），避免 400 fallback。
+#     status_reason 记录探测证据。
+#     口径修正 2026-11-24：status 语义 = "该模型在 DSH 里是否有任一 provider 成功
+#     用过"，不是"在 opencode 上下文下可不可用"。判据双源：cost.jsonl 成功记录 +
+#     host 日志 request.complete/completed（workbuddy 路由不写账本）。任一源有成功
+#     记录即 available。task-77 的 "chat 400" 仅代表 opencode 单上下文，不得推广。
+# 新增模型只改本文件，然后跑：
+#   node scripts/validate-custom-routes.mjs
+#   node scripts/gen-custom-routes.mjs --write
+version: 1
+routes:
+  - id: x-opencode-free
+    displayName: OpenCode Free
+    protocol: openai-completions
+    baseURL: https://opencode.ai/inference/go/v1
+    credentialRef: OPENCODE_GO_API_KEY
+    tier: free
+    compat:
+      supportsStore: false
+      supportsDeveloperRole: false
+      supportsStrictMode: true
+      maxTokensField: max_tokens
+    headers:
+      x-opencode-session: 77777777-7777-7777-7777-777777777777
+    models:
+      - id: hy4-flash-free
+        name: HY4 Flash (Free)
+        contextWindow: 1048576
+        maxTokens: 65536
+        input: [text, image]
+        status: available
+        status_reason: "upstream /models 200 + chat 200 content=2; E2E 3473 cost=0"
+      - id: hy4flash-free
+        name: Hy4 Flash (WorkBuddy free)
+        contextWindow: 960000
+        maxTokens: 64000
+        input: [text, image]
+        status: available
+        status_reason: "workbuddy/hy4flash-free: host log request.complete/completed x140 and rising (2026-11-24); ledger does not record workbuddy route; opencode chat 400 was single-context only"
+      - id: hy4-flash-free-trial-202611
+        name: HY4 Flash Free Trial 2026-11
+        contextWindow: 960000
+        maxTokens: 64000
+        input: [text, image]
+        status: unavailable
+        status_reason: "promotion badge id (not a model); opencode chat 400 only; no success in ledger or host logs (no other provider found)"
+      - id: web-search-free
+        name: Web Search Free
+        contextWindow: 128000
+        maxTokens: 32000
+        input: [text]
+        status: unavailable
+        status_reason: "top-level dsh-free-search plugin, not an LLM; opencode chat 400 only; no success in ledger or host logs"
+
+# 已在 opencode-go catalog 内的 free 模型：已"接入"（catalog 条目自带 compat），
+# 不在 x-opencode-free 重复声明，避免 model id 跨 route 撞车。仅登记用于
+# 首屏可见性与状态标注；生成器把它们并入 CUSTOM_MODELS 展示清单。
+catalog_models:
+  - id: cat-jam-free
+    name: Cat Jam Free
+    status: unavailable
+    existing_route: opencode-go
+    status_reason: "2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)"
+  - id: longcat-2.5-preview-free
+    name: LongCat 2.5 Preview Free
+    status: unavailable
+    existing_route: opencode-go
+    status_reason: "2026-11-24 opencode chat probe 400 only (historical deprecated); no success in ledger or host logs (other providers not observed)"
+  - id: step-5-preview-free
+    name: Step 5 Preview Free
+    status: unavailable
+    existing_route: opencode-go
+    status_reason: "2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)"
