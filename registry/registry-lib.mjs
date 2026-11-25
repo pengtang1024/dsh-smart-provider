@@ -11,6 +11,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -29,19 +30,42 @@ export const REGISTRY_FILE = (process.env.DSH_SMART_ROUTES_FILE && existsSync(pr
   ? process.env.DSH_SMART_ROUTES_FILE
   : existsSync(USER_FILE) ? USER_FILE : join(HERE, 'custom-routes.yaml')
 
+/**
+ * Candidate profile anchors, highest priority first: an explicit DSH_HOME, then
+ * the current user's HOME, then os.homedir() — which is still the CURRENT user.
+ * Never a baked-in path into some other person's home: on any other machine that
+ * path is either absent or EACCES, i.e. a silent failure disguised as a config.
+ * Duplicates collapse, so a normal POSIX shell probes exactly one location.
+ */
+function profileAnchors() {
+  const profile = process.env.DSH_PROFILE ?? 'desktop'
+  const dshHomes = []
+  if (process.env.DSH_HOME) dshHomes.push(process.env.DSH_HOME)
+  if (process.env.HOME) dshHomes.push(join(process.env.HOME, '.dsh'))
+  let fallbackHome = ''
+  try { fallbackHome = homedir() } catch { /* no passwd entry: the env chain is all we have */ }
+  if (fallbackHome) dshHomes.push(join(fallbackHome, '.dsh'))
+  const unique = dshHomes.filter((h, i) => h && dshHomes.indexOf(h) === i)
+  if (unique.length === 0) {
+    throw new Error(
+      'registry-lib: cannot locate the DSH profile — neither DSH_HOME nor HOME is set '
+      + 'and the current user has no home directory. Set DSH_HOME to the DSH install root '
+      + '(the directory that contains profiles/) or export HOME.',
+    )
+  }
+  return unique.map(h => join(h, 'profiles', profile, 'package.json'))
+}
+
 /** Load `yaml` from the desktop profile (the only place it is installed). */
 function loadYaml() {
-  const anchors = [
-    join(process.env.DSH_HOME ?? join(process.env.HOME ?? '/home/pt', '.dsh'), 'profiles', process.env.DSH_PROFILE ?? 'desktop', 'package.json'),
-    '/home/pt/.dsh/profiles/desktop/package.json',
-  ]
+  const anchors = profileAnchors()
   for (const anchor of anchors) {
     try {
       const y = createRequire(anchor)('yaml')
       if (typeof y?.parse === 'function' && typeof y?.stringify === 'function') return y
     } catch { /* try next anchor */ }
   }
-  throw new Error('registry-lib: cannot load "yaml"; expected it under ~/.dsh/profiles/desktop/node_modules')
+  throw new Error(`registry-lib: cannot load "yaml"; tried ${anchors.join(', ')} — expected it under <home>/.dsh/profiles/desktop/node_modules`)
 }
 
 export const yaml = loadYaml()
