@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url'
 const PKG = dirname(dirname(fileURLToPath(import.meta.url)))
 const REMOTE_SRC = readFileSync(join(PKG, 'lib', 'remote.js'), 'utf8')
 const INDEX_SRC = readFileSync(join(PKG, 'index.js'), 'utf8')
+const CLIENT_SRC = readFileSync(join(PKG, 'client.js'), 'utf8')
 
 /** The frozen @Remote surface the client contribution declares. */
 const EXPECTED_METHODS = ['cost', 'costDetail', 'availabilityStatus', 'probeModels', 'accountHealth']
@@ -260,4 +261,114 @@ test('healthReader is genuinely lazy: its only exit is the live builder call', (
   // No snapshot may be captured outside the closure and handed back later.
   assert.doesNotMatch(INDEX_SRC, /const\s+\w*[Ss]napshot\w*\s*=\s*buildHealthSnapshot\(/,
     'buildHealthSnapshot() must not be called outside the lazy reader')
+})
+
+// ---------------------------------------------------------------------------
+// costDetail() degraded payload — the strict-codec trap.
+//
+// When reading the ledger throws, the Host used to return a hand-rolled object
+// ({estimated, known, models}) missing priceSource and note. The client's
+// COST_DETAIL_SCHEMA requires both as z.string(), so the whole payload failed
+// to parse and the cost section stayed on "正在读取" forever. The guard below
+// reads the real schema text and the real EMPTY_COST_DETAIL literal, so client
+// and Host cannot drift apart again without this test failing.
+// ---------------------------------------------------------------------------
+
+/** Field -> zod type name of the z.object({...}) literal that encloses an anchor. */
+function zodObjectFields(source, anchor) {
+  const at = source.indexOf(anchor)
+  assert.notEqual(at, -1, 'anchor not found: ' + anchor)
+  const objectAt = source.lastIndexOf('z.object({', at)
+  assert.notEqual(objectAt, -1, 'no enclosing z.object({ before: ' + anchor)
+  const open = objectAt + 'z.object('.length
+  const close = matchBracket(source, open)
+  assert.notEqual(close, -1, 'unbalanced z.object({ at: ' + anchor)
+  const body = source.slice(open + 1, close)
+  const fields = new Map()
+  let depth = 0
+  let i = 0
+  while (i < body.length) {
+    const comment = skipComment(body, i)
+    if (comment !== -1) { i = comment; continue }
+    const ch = body[i]
+    if (ch === '"' || ch === "'" || ch === String.fromCharCode(96)) { i = skipString(body, i); continue }
+    if (ch === '(' || ch === '[' || ch === '{') { depth += 1; i += 1; continue }
+    if (ch === ')' || ch === ']' || ch === '}') { depth -= 1; i += 1; continue }
+    if (depth === 0) {
+      const match = /^(\w+)\s*:\s*z\.(\w+)/.exec(body.slice(i, i + 120))
+      if (match && (i === 0 || /[\s,{]/.test(body[i - 1]))) {
+        fields.set(match[1], match[2])
+        i += match[0].length
+        continue
+      }
+    }
+    i += 1
+  }
+  return fields
+}
+
+/** Evaluate the frozen EMPTY_COST_DETAIL object literal straight from the source. */
+function emptyCostDetailValue() {
+  const at = REMOTE_SRC.indexOf('const EMPTY_COST_DETAIL = ')
+  assert.notEqual(at, -1, 'lib/remote.js must declare EMPTY_COST_DETAIL')
+  const open = REMOTE_SRC.indexOf('{', at)
+  const close = matchBracket(REMOTE_SRC, open)
+  assert.notEqual(close, -1, 'EMPTY_COST_DETAIL literal is unbalanced')
+  return new Function('return (' + REMOTE_SRC.slice(open, close + 1) + ')')()
+}
+
+/** Assert one payload satisfies a parsed zod-object field map: keys AND types. */
+function assertZodShape(value, fields, label) {
+  assert.deepEqual(
+    Object.keys(value).sort(), [...fields.keys()].sort(),
+    label + ' must carry exactly the client-declared fields (a missing one fails the strict codec)',
+  )
+  for (const [name, type] of fields) {
+    const actual = value[name]
+    if (type === 'number') assert.equal(typeof actual, 'number', label + '.' + name + ' must be a number')
+    else if (type === 'string') assert.equal(typeof actual, 'string', label + '.' + name + ' must be a string')
+    else if (type === 'boolean') assert.equal(typeof actual, 'boolean', label + '.' + name + ' must be a boolean')
+    else if (type === 'array') assert.ok(Array.isArray(actual), label + '.' + name + ' must be an array')
+    else if (type === 'object') assert.equal(typeof actual, 'object', label + '.' + name + ' must be an object')
+    else assert.fail('unhandled zod type z.' + type + ' for ' + label + '.' + name)
+  }
+}
+
+test('degraded costDetail payload matches the client strict schema field-for-field', () => {
+  // Anchors are the exact default-value lines of COST_DETAIL_SCHEMA in client.js.
+  const topFields = zodObjectFields(CLIENT_SRC, 'total: z.number(), offset: z.number(), limit: z.number(),')
+  const savingFields = zodObjectFields(CLIENT_SRC, 'estimated: z.boolean(), priceSource: z.string(), note: z.string(),')
+
+  // The two fields the old fallback omitted are exactly the ones that broke it.
+  assert.equal(savingFields.get('priceSource'), 'string', 'client schema requires a priceSource string')
+  assert.equal(savingFields.get('note'), 'string', 'client schema requires a note string')
+
+  const empty = emptyCostDetailValue()
+  assertZodShape(empty, topFields, 'EMPTY_COST_DETAIL')
+  assertZodShape(empty.savings, savingFields, 'EMPTY_COST_DETAIL.savings')
+
+  // Degraded values are explicit "nothing known", never a fabricated number.
+  assert.equal(empty.total, 0)
+  assert.deepEqual(empty.rows, [])
+  assert.deepEqual(empty.timeline, [])
+  assert.deepEqual(empty.byModel, [])
+  assert.equal(empty.savings.estimated, true)
+  assert.equal(empty.savings.priceSource, '')
+  assert.equal(empty.savings.note, '')
+  assert.deepEqual(empty.savings.models, [])
+
+  // One shared definition, exported so the wire path and this guard agree.
+  assert.match(REMOTE_SRC, /export \{[^}]*\bEMPTY_COST_DETAIL\b[^}]*\}/,
+    'EMPTY_COST_DETAIL must be exported from lib/remote.js')
+})
+
+test('costDetail() catch path returns EMPTY_COST_DETAIL, never a partial literal', () => {
+  const { body } = methodBody(REMOTE_SRC, 'costDetail')
+  assert.match(body, /catch\s*\{[^}]*emptyCostDetail\(/, 'the catch must build the payload from the frozen constant')
+  assert.match(body, /readCostDetail\(/, 'the happy path still delegates to readCostDetail')
+  // The exact shape that broke: an inline savings object with no priceSource/note.
+  assert.doesNotMatch(body, /savings:\s*\{\s*estimated/,
+    'no inline savings literal in costDetail() — it drifted from the client schema once already')
+  assert.doesNotMatch(body, /\bknown:\s*false/,
+    'savings has no "known" key; the required keys are estimated/priceSource/note/models')
 })

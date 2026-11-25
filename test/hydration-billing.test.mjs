@@ -13,11 +13,12 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 
 import { BILLING_TIER, billingTierOf, healthOf, HEALTH } from '../lib/availability.js'
 import { buildHealthDeps } from '../lib/health-setup.js'
-import { hydrateHealthEvidence } from '../lib/health-persistence.js'
-import { readCostDetail, readCostStats } from '../lib/cost-stats.js'
+import { hydrateAccountEvidence, hydrateHealthEvidence, liveWins } from '../lib/health-persistence.js'
+import { localDayOf, readCostDetail, readCostStats } from '../lib/cost-stats.js'
 
 const BASE = Date.parse('2026-11-25T00:00:00.000Z')
 
@@ -209,5 +210,85 @@ test('cost-stats savings: estimated zero rows keep known:false, no fake USD', as
     const stats = readCostStats(dir)
     assert.equal(stats.estimatedCostUsd, 0)
     assert.equal(stats.freeCount, 3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression (task W3): the account layer compared replayed evidence with a
+// strict ">" while the route/probe layers used ">=". A ledger row whose
+// timestamp equalled the live record's updatedAt therefore OVERWROTE live L2
+// state — a cooldown silently disappeared and streaks reset during the
+// fire-and-forget cold-start hydration. Ties belong to the live side.
+// ---------------------------------------------------------------------------
+
+test('same-millisecond replay never overwrites a live account record', () => {
+  const live = {
+    provider: 'deepseek-account', updatedAt: BASE, state: 'COOLING',
+    samples: { success: 0, failure: 2 }, streak: 2,
+  }
+  const registry = { records: new Map([['acct-a', live]]), config: {} }
+  const summary = hydrateAccountEvidence(registry, [JSON.parse(row({ at: BASE }))])
+
+  assert.equal(summary.newerKept, 1, 'a row at the SAME millisecond must be skipped, not merged')
+  assert.equal(summary.accounts, 0)
+  assert.equal(registry.records.get('acct-a'), live, 'the live record object is kept, not replaced')
+
+  // A strictly newer row still replays — the tie rule must not freeze hydration.
+  const older = { provider: 'deepseek-account', updatedAt: BASE - 1 }
+  const later = hydrateAccountEvidence(
+    { records: new Map([['acct-a', older]]), config: {} },
+    [JSON.parse(row({ at: BASE }))],
+  )
+  assert.equal(later.accounts, 1, 'a row newer than the live record still applies')
+  assert.equal(later.newerKept, 0)
+
+  // liveWins(): the single shared rule both layers now use.
+  assert.equal(liveWins({ updatedAt: BASE }, BASE), true, 'ties go to live')
+  assert.equal(liveWins({ updatedAt: BASE }, BASE + 1), false, 'a newer timestamp still wins over live')
+  assert.equal(liveWins({ updatedAt: BASE }, BASE - 1), true)
+  assert.equal(liveWins(undefined, BASE), false, 'no live record -> replay applies')
+  assert.equal(liveWins({}, BASE), false, 'missing updatedAt -> replay applies')
+  assert.equal(liveWins({ updatedAt: Number.NaN }, BASE), false, 'unknown live stamp cannot block the replay')
+})
+
+// ---------------------------------------------------------------------------
+// Regression (task W3): the timeline used ts.slice(0, 10), i.e. the UTC date.
+// A UTC+8 user's 00:30 call was filed under the previous day, so everything
+// before 08:00 local showed up as "yesterday" on the cost chart. Day buckets
+// are human-facing, so they must be LOCAL days (old rows are not migrated).
+// ---------------------------------------------------------------------------
+
+test('timeline day buckets use the local calendar day, not the UTC date', () => {
+  // 2026-11-24T16:30Z is 2026-11-25 00:30 in UTC+8.
+  assert.equal(localDayOf('2026-11-24T16:30:00.000Z', 480), '2026-11-25',
+    'a local 00:30 call lands on the local day, not the previous UTC day')
+  assert.equal(localDayOf('2026-11-24T16:30:00.000Z', 0), '2026-11-24',
+    'the same instant is still 11-24 in UTC — the local offset is what decides')
+  assert.equal(localDayOf('2026-11-25T00:30:00.000Z', -300), '2026-11-24',
+    'west of UTC the boundary shifts the other way')
+  assert.equal(localDayOf('2026-11-25'), '2026-11-25', 'a date-only row is already a day')
+  assert.equal(localDayOf(''), 'unknown', 'no timestamp stays the honest unknown bucket')
+  assert.equal(localDayOf('not-a-date'), 'unknown')
+})
+
+test('local 00:30 is bucketed on that same day by a real readCostDetail (TZ=Asia/Shanghai)', async () => {
+  await withTempDir(async dir => {
+    const at = Date.parse('2026-11-24T16:30:00.000Z') // 2026-11-25 00:30 in Shanghai
+    await writeFile(join(dir, 'cost.jsonl'), row({ at }) + '\n', 'utf8')
+    const moduleUrl = new URL('../lib/cost-stats.js', import.meta.url).href
+    // Run the real reader under a fixed timezone; the suite itself may run in
+    // any TZ, so the process is the only honest way to pin this behaviour.
+    const child = join(dir, 'read-timeline.mjs')
+    await writeFile(child, 'const { readCostDetail } = await import(' + JSON.stringify(moduleUrl) + ')\n'
+      + 'const detail = readCostDetail(' + JSON.stringify(dir) + ')\n'
+      + 'process.stdout.write(JSON.stringify(detail.timeline))\n', 'utf8')
+    const res = spawnSync(process.execPath, [child], {
+      encoding: 'utf8', env: { ...process.env, TZ: 'Asia/Shanghai' },
+    })
+    assert.equal(res.status, 0, 'timeline probe failed: ' + res.stderr)
+    const timeline = JSON.parse(res.stdout)
+    assert.deepEqual(timeline.map(bucket => bucket.day), ['2026-11-25'],
+      'a local 00:30 call must be counted on 2026-11-25, not the UTC date 2026-11-24')
+    assert.equal(timeline[0].calls, 1)
   })
 })
