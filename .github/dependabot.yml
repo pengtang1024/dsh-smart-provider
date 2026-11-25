@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # npm：本插件目前没有运行时或开发依赖，这条暂时是空操作；
+  # 一旦加入依赖，就会自动收到更新 PR。
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+
+  # 保持 CI / 构建使用的 Actions 为最新版本。
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
