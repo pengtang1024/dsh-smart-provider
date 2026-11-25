@@ -2,6 +2,16 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.1.0
+
+本轮为合并基线版本，由 `2.0.0` 升级到 `2.1.0`（含新增功能，按语义化版本 minor 递增）：合并远端 1.x 健康管理等提交（任务单记 12 个，`fetch` 后实测为 28 个，远端 `master` 由 `4e0f79d` 前进到 `bcad446`）+ 工程标准补齐完整基线。两侧内容逐文件合并保留，未丢弃任何一方：
+
+- **远端 1.x 工作（1.1.0 / 1.2.0 / 1.2.1 / 1.3.0 及后续健康 converge 提交）**：延迟度量六字段与实测速度因子、冷启动健康水合、tier 诊断可行动化、query-cost 报表两段、`positionOverrides` 双形态、健康单一分类法与 parity guard、冷却权限收敛、`@Remote` 账号健康面板、真实账号数显示等全部功能 / 文档 / 测试；新增 `lib/health-persistence.js`、`lib/health-snapshot.js`、`lib/health-taxonomy.js`、`lib/pricing.example.json`、`scripts/run-tests.mjs` 与 18 个测试套件。
+- **本地 v2.0.0 工程标准**：签名 tag、Wiki 文档、安全配置（SECURITY / dependabot / CODEOWNERS）、Git Flow 分支模型、7 语言本地化（`zh` / `en` / `es` / `fr` / `de` / `ru` / `pt`，无 `ja`）、star 提示、CHANGELOG 2.0.0 段、多语详情页与 README 七语切换行。
+- **冲突修复**：`test/health.test.mjs` 中远端测试对 `/home/pt` 用户目录的硬编码假设改为按 `homedir()` 动态校验（原始断言在用户为 `pt` 的机器上必然失败，已在 `origin/master` 原始 worktree 上独立复现）。
+
+**版本变更**：`2.0.0 → 2.1.0`。验证：全量 `node --check` 45/45、7 语 locale 解析与键一一对应、全量测试 233/233 通过（退出码 0）。
+
 ## 2.0.0
 
 本轮为工程标准补齐版本，由 `1.0.0` 升级到 `2.0.0`。一次性补齐以下六项工程标准：
