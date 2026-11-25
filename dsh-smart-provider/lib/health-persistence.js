@@ -149,6 +149,27 @@ function replayTimestamp(value) {
 }
 
 /**
+ * Zero cost in cost.jsonl has two different meanings:
+ *  - a REAL free route: priceFor() found a declared zero price (price_known:true,
+ *    estimated:false), or an upstream billing source confirmed free;
+ *  - a NO-PRICE-TABLE estimate: tierEstimate() returns 0 with known:false /
+ *    estimated:true purely as a placeholder. A model id that happens to contain
+ *    "flash" must never turn into "possibly free" because of that placeholder.
+ *
+ * Only real zero cost may become L1 free evidence. Legacy rows written before
+ * price_known existed carry no provenance, so they are treated as "no evidence"
+ * rather than silently claiming free (same口径 as probe.js: cost=0 without a
+ * billing-source confirmation is honest unknown). Positive spend is always kept
+ * as metered evidence even when the price flag is missing.
+ */
+function replayCost(row) {
+  const cost = Number(row?.estimated_cost_usd)
+  if (!Number.isFinite(cost)) return undefined
+  if (cost > 0) return cost
+  return row?.price_known === true && row?.estimated !== true ? cost : undefined
+}
+
+/**
  * Replay cost.jsonl rows into the L1 registry through updateHealth(), the same
  * entry point the live adapter and probe use, so classification stays single-
  * sourced. Keys stay at (provider, modelId) granularity (updateHealth's
@@ -183,13 +204,12 @@ export function hydrateRouteEvidence(registry, rows, options = {}) {
       continue
     }
     const code = row?.failure_code == null || row.failure_code === '' ? null : String(row.failure_code)
-    const cost = Number(row?.estimated_cost_usd)
     const record = updateHealth(reg, {
       provider,
       modelId,
       success: code === null,
       failure: code === null ? undefined : { code, message: str(row?.failure_message) },
-      cost: Number.isFinite(cost) ? cost : undefined,
+      cost: replayCost(row),
       timestamp,
       currentIdList,
     })

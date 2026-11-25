@@ -38,9 +38,9 @@ const HOUR = 60 * 60 * 1000
 /** A cost.jsonl-shaped row (the fields hydration reads). */
 function ledgerRow({
   provider = 'route-a', model = 'model-x', cost = 0, failure = null,
-  message = null, at = Date.now(), account = 'acct-1',
+  message = null, at = Date.now(), account = 'acct-1', priceKnown = false,
 } = {}) {
-  return JSON.stringify({
+  const row = {
     timestamp: new Date(at).toISOString(),
     outer_model: 'auto',
     actual_provider: provider,
@@ -52,7 +52,9 @@ function ledgerRow({
     hop_index: 0,
     failure_code: failure,
     failure_message: message,
-  })
+  }
+  if (priceKnown !== null) row.price_known = priceKnown
+  return JSON.stringify(row)
 }
 
 /** mkdtemp + guaranteed cleanup. */
@@ -82,7 +84,7 @@ test('hydrates L1 billing/health and L2 account state from cost.jsonl', async ()
     const lines = []
     // 20 zero-cost successes: enough ledger-only evidence for a medium-confidence
     // free tier (§7 FREE_LEDGER_SAMPLES = 20) and HEALTHY via updateHealth().
-    for (let i = 0; i < 20; i++) lines.push(ledgerRow({ at: now - (20 - i) * 1000 }))
+    for (let i = 0; i < 20; i++) lines.push(ledgerRow({ at: now - (20 - i) * 1000, priceKnown: true }))
     // One account-level quota failure: cools THAT account, must not lower model health.
     // Distinct timestamp: a row older than the newest success row would lose the
     // timestamp guard (that behaviour has its own test).

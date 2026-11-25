@@ -2,6 +2,13 @@
 
 本项目所有显著变更都记录在本文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.1] - 2026-11-25
+
+### Fixed
+
+- **P1 水合误判免费**：`lib/health-persistence.js` 回放 `cost.jsonl` 时，过去只读 `estimated_cost_usd`，把无价表粗估（`price_known:false` / `estimated:true`）的占位 0 当成实测免费证据，20 行即可让 `deepseek-account/deepseek-flash` 进入 UI「可能免费」区。现在只有 `price_known===true && estimated!==true` 的零成本行才作为免费证据回灌 L1；正成本无论价格标记如何仍计入 metered。`probe-cache.jsonl` 的 `free` / `metered` verdict 已带上游 billingSource 证据，保持不变；`unknown` + cost=0 继续按 probe.js 口径保持 UNKNOWN。历史旧行（无 `price_known`）统一按「无证据」处理，不回放为免费（正成本仍回放为 metered）。真实免费不受影响：`x-opencode-free` 零价声明、`billingSource=free` 的上游确认、真实 20 条 `cost=0 && price_known=true` 仍判 FREE。核对 `cost-stats` 的 savings：无价表零成本行仍标记 `known:false` / `estimatedUsd:null`，不会把估算 0 当成实际节省金额。
+- **回归测试**：新增 `test/hydration-billing.test.mjs`（9 条：估算零成本 21 行 UNKNOWN、真实零价 21 行 FREE、`estimated:false` 零价 FREE、probe 上游 free 高置信 FREE、probe unknown 零成本 UNKNOWN、旧行无价格标记不算免费、旧行正成本 METERED、savings 不伪造金额，以及无价表 deepseek 估算零触发证明），并注册进 `--unit` 白名单；`test/persistence.test.mjs` 中「20 条零成本→FREE」的夹具显式写 `price_known:true`，保持原有真实免费断言。npm test 168/168、test:unit 132/132，退出码 0；README 英文摘要同步实测数字。
+
 ## [1.2.0] - 2026-11-25
 
 ### Added
