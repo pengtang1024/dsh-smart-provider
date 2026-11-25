@@ -7,6 +7,7 @@
 ### Added
 
 - **设置页「账号健康 / 冷却」面板读取真实运行时数据**：此前该区块只有一段占位说明。现在 `lib/remote.js` 新增第 5 个 `@Remote` 方法 `smartProvider.accountHealth()`（`invocation: direct`、零参数；任何异常都降级成显式的「未启用 / 一无所知」快照而不是抛出 —— 线上契约没有错误通道，抛出去只会让设置页永久空白且不给原因），`client.js` 新增对应的 strict codec 描述符（`@local/dsh-smart-provider#smartProvider/accountHealth`，`mode:'strict'` + 非空 `typeSymbol` + `create()`，三者缺一整个命名空间挂不上）与 `AccountHealthPanel` 渲染。`index.js` 注入的是**惰性** `healthReader`：适配器在下方才构造，提前求值会捕获 `undefined` 并让面板整场会话冻结在空快照上。
+- **README 补充 ranking 字段说明**：补记 `costModel`（`metered` / `subscription` / `free`，默认 `metered`；订阅制以额度消耗代价代替价格）与 `quotaCost`（0–1，仅 `costModel=subscription` 时显示）两项账号级计费 / 额度字段，源自 `f386493`。
 - **`lib/health-snapshot.js` 纯函数快照构建器**：`buildHealthSnapshot(input)` 无 I/O、不 import DSH、不改入参、永不抛错，`now` 由调用方注入以便测试确定性。读路径**不写注册表**：`COOLING` 且 `until` 已过期时纯推导为 `HALF_OPEN`（这正是 `account-health` 的 `stateOf()` 规则，但 `stateOf()` 会把状态写回容器，读路径不能用它）；有效冷却取 `max(账号记录 until, adapter.cooldowns until)` 两层取大 —— 两层都能阻断派单，UI 必须与派单一致；虚拟副本（`isVirtual === true`）永不作为真实路由出现在列表里。畸形或缺失的输入降级为空数组 + `enabled:false`，不抛错。
 
 ### Changed

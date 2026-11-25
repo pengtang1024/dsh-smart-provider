@@ -22,7 +22,7 @@
 - **配置页真读写。** 设置页展示来自 pi-ai 的真实资源（当前约 49 provider / 58 model，数量随你的 DSH 实时注册表变化）、真实凭据名与账号健康，并可写回插件配置；成本/健康 Tab 走 `@Remote` 真账通道（`lib/cost-stats.js` 读真实 `cost.jsonl` + `lib/remote.js` 暴露 `smartProvider.cost()`），不再依赖硬编码或空壳状态。
 - **P1（资源自适应）。** `chains` 动态生成（`discoverAutoChain()` 从实时注册表按 provider/model 名排序建中立 `auto` 链，不内置任何具体用户的模型 id）；内置默认链刻意为空 `DEFAULT_CHAINS={auto:[]}`，没配时使用用户当前真实拥有的路由；老配置（`chains` / `accounts` / `custom-routes.user.yaml`）原样保留、不覆盖；定价表缺失字段有降级回退（reasoning / cacheOutput 回退到 output，cacheRead / cacheWrite 回退到 input）；策略默认中立 `.25`（`balanced`）。
 - **三层健康自动管理默认开启。** 模型层（L1 `availability.js`）、账号层（L2 `account-health.js`）、拓扑层（L2a `provider-topology.js`）分开记账，注册表与设置页首屏共享同一对象引用。关键纠偏：参数不兼容/缺 header 的 4xx **不再连累模型健康**；冷却到期只变 `HALF_OPEN`，要一次真实请求成功才回到 `ACTIVE`（没有证据就没有恢复）；自带账号池的路由不会被再套一层。默认开启、可显式 opt-out，关闭后逐字节回 legacy。详见 §六。
-- **P2（两层智能路由）。** `lib/routing.js` 四个纯函数：`classifyTask`（请求分类）、`derivePosition`（模型位置标签）、`selectTiers`（层一候选层选择）、`resolveRoutingPolicy`（预设解析）。**默认关闭：只有 `ranking.routing.enabled=true` 才激活**；未配置或关闭时，代码路径逐字节等于现状（legacy），不选路、不加评分。支持的策略预设共 8 种：`balanced` / `cost-first` / `speed-first` / `reasoning-first` / `longctx-first` / `vision-first` / `legacy` / `custom`。
+- **P2（两层智能路由）。** `lib/routing.js` 四个纯函数：`classifyTask`（请求分类）、`derivePosition`（模型位置标签）、`selectTiers`（层一候选层选择）、`resolveRoutingPolicy`（预设解析）。**默认启用、中立等权（`balanced`）；可显式关闭**：`ranking.routing.enabled=false` 时该代码路径逐字节等于现状（legacy），不选路、不加评分；默认开启时也不偏向省钱 / 速度，四因子等权 .25。支持的策略预设共 8 种：`balanced` / `cost-first` / `speed-first` / `reasoning-first` / `longctx-first` / `vision-first` / `legacy` / `custom`。
 
 ---
 
@@ -45,8 +45,8 @@ dsh-smart-provider/
 │   ├── health-setup.js       L7 接线：默认开启、opt-out 解析、注册表组装
 │   ├── health-persistence.js 冷启动水合：从 cost.jsonl / probe-cache.jsonl 只读重放健康证据（task-6）
 │   ├── probe.js              极小真实探测（1 token）+ TTL 缓存，替代按名字猜免费
-│   ├── ranking.js            账号择优评分（默认关闭，中立 .25 默认）
-│   ├── routing.js            P2 两层智能路由四个纯函数（默认关闭）
+│   ├── ranking.js            账号择优评分（默认启用，中立 .25 默认，可显式关闭）
+│   ├── routing.js            P2 两层智能路由四个纯函数（默认启用、中立等权，可显式关闭）
 │   ├── cost-meter.js         非阻塞批量 JSONL 写入（含 account_id 字段）
 │   ├── cost-stats.js         读取真实 cost.jsonl 并聚合（供成本 Tab / @Remote）
 │   ├── remote.js             @Remote 服务 smartProvider.cost()
@@ -63,16 +63,21 @@ dsh-smart-provider/
 │   ├── validate-custom-routes.mjs 自定义路由配置校验
 │   └── run-tests.mjs         统一验证入口：语法检查 + 自动发现的全部测试（含发现守卫，自动选 Electron Node）
 ├── test/                    放进来就会被执行（*.test.mjs，无需注册；见 §十）
-│   ├── account-pool.test.mjs 账号池回归测试（需 DSH runtime 读 app.asar）
-│   ├── compaction.test.mjs   虚拟模型 contextWindow / 压缩预检回归测试（task-5，需 DSH runtime）
-│   ├── health.test.mjs       健康层回归测试（55 条纯逻辑，任何 Node 可跑）
-│   ├── latency.test.mjs      延迟度量与速度因子回归测试（需 DSH runtime）
-│   ├── loading.test.mjs      加载路径回归测试（需 DSH runtime）
-│   ├── persistence.test.mjs  冷启动水合回归测试（task-6，19 条纯逻辑）
-│   ├── pricing.test.mjs      定价降级与解析顺序回归测试（纯逻辑）
-│   ├── query-cost.test.mjs   query-cost 报表段回归测试（task-8，11 条纯逻辑）
-│   ├── ranking.test.mjs      路由排序回归测试（纯逻辑）
-│   └── routing-tier.test.mjs tier 选择 / relax 诊断 / 手填标签回归测试（task-7，14 条纯逻辑）
+│   ├── account-pool.test.mjs 账号池回归测试（需 DSH runtime 读 app.asar；全量门禁）
+│   ├── compaction.test.mjs   虚拟模型 contextWindow / 压缩预检回归测试（task-5，需 DSH runtime；全量门禁）
+│   ├── custom-routes.test.mjs 自建路由生成 / 校验回归测试（需 DSH runtime；全量门禁）
+│   ├── health-snapshot.test.mjs 健康快照纯函数回归测试（13 条纯逻辑，--unit 白名单）
+│   ├── health.test.mjs       健康层回归测试（55 条纯逻辑，--unit 白名单）
+│   ├── hydration-billing.test.mjs 水合计费证据回归测试（9 条纯逻辑，--unit 白名单）
+│   ├── latency.test.mjs      延迟度量与速度因子回归测试（需 DSH runtime；全量门禁）
+│   ├── loading.test.mjs      加载路径回归测试（需 DSH runtime；全量门禁）
+│   ├── persistence.test.mjs  冷启动水合回归测试（task-6，19 条纯逻辑，--unit 白名单）
+│   ├── pricing.test.mjs      定价降级与解析顺序回归测试（纯逻辑，--unit 白名单）
+│   ├── query-cost.test.mjs   query-cost 报表段回归测试（task-8，11 条纯逻辑，--unit 白名单）
+│   ├── ranking.test.mjs      路由排序回归测试（纯逻辑，--unit 白名单）
+│   ├── remote-surface.test.mjs @Remote 路由面契约回归测试（7 条纯逻辑，--unit 白名单）
+│   └── routing-tier.test.mjs tier 选择 / relax 诊断 / 手填标签回归测试（task-7，14 条纯逻辑，--unit 白名单）
+│                             共 14 个 suite / 188 条断言（全量）；--unit 白名单 9 个 suite / 152 条（纯逻辑）
 ├── locale/{en,zh}.json       插件显示元数据
 ├── docs/DETAIL.md            插件管理器详情页
 ├── icon.svg                  原创图标
@@ -163,9 +168,9 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 ---
 
-## 五、账号择优 ranking（P1，默认关闭）
+## 五、账号择优 ranking（P1，默认启用 + 中立等权）
 
-`ranking.js` 提供多因子账号评分（成本 / 速度 / 等级 / 负载），**默认关闭**；关闭或 `strategy:'legacy'` 时排序完全保持旧行为（路线优先 + 最少使用）。启用后策略预设：`legacy` / `balanced`（中立 .25）/ `cost-first` / `speed-first` / `tier-first` / `custom`。权重可自定义并在保存时归一化到和 = 1；典型 token 配比仅影响排序、不影响计费；`historical` 账本反哺用最近 N 条真实成本记录校正配比，但**不能反推真实单价**。配置字段清单见 `lib/ranking.js` 的 `RANKING_CONFIG_SCHEMA`。账号级字段见同文件的 `ACCOUNT_RANKING_FIELDS`，其中计费 / 额度相关两项：
+`ranking.js` 提供多因子账号评分（成本 / 速度 / 等级 / 负载），**默认启用、中立均衡**（四因子等权 .25，不偏向省钱 / 速度）；显式 `enabled:false` 或 `strategy:'legacy'` 时排序完全保持旧行为（路线优先 + 最少使用）。策略预设：`legacy` / `balanced`（中立 .25）/ `cost-first` / `speed-first` / `tier-first` / `custom`。权重可自定义并在保存时归一化到和 = 1；典型 token 配比仅影响排序、不影响计费；`historical` 账本反哺用最近 N 条真实成本记录校正配比，但**不能反推真实单价**。配置字段清单见 `lib/ranking.js` 的 `RANKING_CONFIG_SCHEMA`。账号级字段见同文件的 `ACCOUNT_RANKING_FIELDS`，其中计费 / 额度相关两项：
 
 | 字段 | 标签 | 类型 | 取值 / 范围 | 默认 | 显示条件 | 说明 |
 |---|---|---|---|---|---|---|
@@ -296,11 +301,11 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 
 **诚实约定**：零样本一律显示「暂无数据」，绝不显示「不可用」，也绝不因为"没有坏消息"就涂成绿色；未知值一律退中性灰。健康层被关闭时（`health: false` / `health.enabled: false` / `ranking.health.enabled: false`）面板直接说「健康层当前是关闭的」，不假装正常、不拿空表冒充健康；通道本身不可用时显示诊断行，把失败原因摊开而不是静默留白。刷新方式是**快照时间 + 手动「重新读取」按钮**，刻意不用 `setInterval` 倒计时 —— 定时器在设置页反复挂载/卸载时会泄漏。
 
-## 七、两层智能路由 routing（P2，默认关闭）
+## 七、两层智能路由 routing（P2，默认启用 + 中立等权）
 
 ### 配置方式
 
-routing 配置嵌在 `ranking` 对象下（`schema.js` 的 `routing` 字段声明为 volatile，配置页可改、无需重启）。`adapter.js` 读取 `ranking.routing`；未配置、`null` 或 `enabled !== true` 时该代码路径完全不运行。字段格式：
+routing 配置嵌在 `ranking` 对象下（`schema.js` 的 `routing` 字段声明为 volatile，配置页可改、无需重启）。默认启用、中立等权：完全没有用户 `ranking` 配置时由 `index.js` 注入 `DEFAULT_RANKING_CONFIG.routing`（`enabled:true` / `balanced` / 四因子 .25）；用户显式写了 `ranking.routing` 时以其为准，`null` 或 `enabled !== true` 时该代码路径完全不运行、逐字节回 legacy。字段格式：
 
 ```json
 {
@@ -548,7 +553,7 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 - **relax 诊断每次都完整打印**：诊断本身很有用，但 relax 是每次请求都会走的热路径 —— 如果一段时间里每个请求都 relax，同一份诊断会被反复刷进日志。按配置/按标签集合做 warn-once 去重还没做（已立 backlog 卡 task-11）。
 - 成本估算是离线标价，未与 provider 真实账单对账；订阅与折扣未建模。
 - 健康层的判定逻辑有完整单元回归，但**尚未与真实多账号故障场景对账**：半开恢复、连击退避、拓扑自动升级的收益数字依赖用户自己的资源和流量，本文档不承诺具体收益。真实效果的观察口径是 `cost.jsonl` 里的 `failure_code` 分布与 `smart-health` 命令输出的账号状态。
-- P2 两层路由默认关闭；开启后 8 预设在真实多账号场景下的效果，依赖用户自己的配置与资源，本文档不承诺具体收益数字。
+- P2 两层路由默认启用、中立等权；8 预设在真实多账号场景下的效果，依赖用户自己的配置与资源，本文档不承诺具体收益数字；可显式 `enabled=false` 关闭。
 - 自动测速已落地：`cost.jsonl` 每行带 `started_at` / `first_token_at` / `ttft_ms` / `duration_ms` / `tokens_per_second`（缺数据不写字段），ranking 的速度因子按「实测优先 → `speedTier` → 中性回退」取值。仍缺的是真实多账号场景下实测证据对选路效果的量化收益——那依赖用户自己的流量，本文档不承诺数字。
 - HMR 的监听列表可能为空（日志 `watching []`）：此时**源码改动不会自动重载**，需要触发一次 profile 重组合（改配置 / 重装）或重启，宿主才会跑新代码。安装新组合包本身会立即触发重组合，不需要重启。
 - 最小 profile 里没有 `sessions` 服务，因此没有 `hop-selected` 会话记录；该记录依赖 `sessions`，属可选降级（账本中的 `account_id` 仍然完整）。
@@ -558,4 +563,4 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 ## English summary (secondary)
 
-`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a settings page with real pi-ai resources and `@Remote` real-ledger cost tab, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 opt-in two-layer routing (`ranking.routing.enabled=true`, 8 presets, byte-for-byte legacy when off; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (188 full-suite / 152 pure-logic assertions across 14 / 9 suites, measured 2026-11-25, exit 0), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the three design docs in the parent workspace for the full design rationale.
+`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a settings page with real pi-ai resources and `@Remote` real-ledger cost tab, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (188 full-suite / 152 pure-logic assertions across 14 / 9 suites, measured 2026-11-25, exit 0), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the three design docs in the parent workspace for the full design rationale.
