@@ -1,0 +1,13 @@
+# 依赖目录
+node_modules/
+
+# 历史未跟踪备份目录（既有数据，仅忽略、不删除）
+.bak-*/
+
+# 常见编辑器 / 系统缓存（不含任何源码或文档）
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
