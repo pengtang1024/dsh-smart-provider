@@ -21,6 +21,7 @@ import { CostMeter } from './lib/cost-meter.js'
 import { buildHealthDeps } from './lib/health-setup.js' // L7: three-layer health power-on (default-on, opt-out)
 import { hydrateHealthEvidence } from './lib/health-persistence.js' // task-6: cold-start replay of persisted health evidence
 import { createProbe } from './lib/probe.js' // task-107: minimal real probe replaces name guessing
+import { buildHealthSnapshot } from './lib/health-snapshot.js' // frozen accountHealth() wire shape (pure)
 import { SmartProviderRemote, readCostStats } from './lib/remote.js'
 import {
   normalizeRankingConfig, DEFAULT_RANKING_CONFIG, RANKING_STRATEGIES, RANKING_CONFIG_SCHEMA,
@@ -119,7 +120,37 @@ export function apply(ctx, config = Config({})) {
   // ledger + #recordHop session signals (workbuddy routes don't write cost.jsonl).
   const registryReader = () => adapter?.availabilityRegistry
   // task-107: lazy probe reader (adapter constructed below with adapter.probe).
-  new SmartProviderRemote(ctx, statsReader, dir, registryReader, () => adapter?.probe)
+  // Account health / cooldown snapshot reader. LAZY for the same reason as the
+  // two readers above: `adapter` is constructed further down, so evaluating any
+  // of this eagerly would capture undefined and freeze the settings section on
+  // an empty snapshot for the whole session. The closure reads the raw inputs at
+  // call time and hands them to the pure builder — no derivation happens here.
+  const healthReader = () => {
+    const pool = adapter?.accountPool
+    const accounts = []
+    if (pool?.byId instanceof Map) {
+      for (const a of pool.byId.values()) {
+        accounts.push({
+          id: a.id,
+          provider: a.provider,
+          models: a.models ?? [],
+          // Chain-hop derived accounts are named `hop:<provider>/<model>` by
+          // AccountPool.implicitAccountId(); the UI shows them as implicit.
+          implicit: typeof a.id === 'string' && a.id.startsWith('hop:'),
+        })
+      }
+    }
+    return buildHealthSnapshot({
+      enabled: adapter?.health !== undefined,
+      accountHealth: adapter?.accountHealth,
+      cooldowns: adapter?.cooldowns,
+      usage: pool?.usage,
+      accounts,
+      availabilityRegistry: adapter?.availabilityRegistry,
+      now: Date.now(),
+    })
+  }
+  new SmartProviderRemote(ctx, statsReader, dir, registryReader, () => adapter?.probe, healthReader)
 
   // ranking is volatile: normalize defensively (Config({}) in tests yields
   // schemastery markers for volatile paths, so never trust the raw type).

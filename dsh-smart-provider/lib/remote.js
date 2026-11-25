@@ -5,6 +5,14 @@
  * The service is a plain Cordis Service carrying the same prototype marker that
  * `@Remote` would emit after TS compilation, so the DSH Gateway's source-mode
  * discovery finds it and routes `smartProvider/cost` to cost().
+ *
+ * accountHealth() is the channel behind the settings page's "account health /
+ * cooldown" view: it hands the client REAL runtime state (L2b account records,
+ * the adapter's legacy cooldown map, the pool's usage counters, L1 route
+ * evidence) instead of a client-side guess. The shape is frozen in
+ * lib/health-snapshot.js — this class only forwards whatever the injected
+ * healthReader returns, so the honesty rules (zero samples => UNKNOWN, a read
+ * path never writes the registry) live in exactly one place.
  */
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
@@ -60,13 +68,14 @@ export { readCostStats, readCostDetail }
 
 /** Cordis service: `ctx.smartProvider.cost()` over the wire. */
 export class SmartProviderRemote extends TypertRemoteService {
-  /** @param {import('@deepseek-ai/cordis').Context} ctx @param {() => object} statsReader @param {string|undefined} costDir @param {() => object|undefined} registryReader @param {() => object|undefined} probeReader */
-  constructor(ctx, statsReader, costDir, registryReader, probeReader) {
+  /** @param {import('@deepseek-ai/cordis').Context} ctx @param {() => object} statsReader @param {string|undefined} costDir @param {() => object|undefined} registryReader @param {() => object|undefined} probeReader @param {() => object} healthReader */
+  constructor(ctx, statsReader, costDir, registryReader, probeReader, healthReader) {
     super(ctx, 'smartProvider')
     this.statsReader = statsReader
     this.costDir = costDir
     this.registryReader = registryReader
     this.probeReader = probeReader
+    this.healthReader = healthReader
   }
 
   /** @Remote cost() — the marker below is the runtime equivalent of the decorator. */
@@ -121,6 +130,25 @@ export class SmartProviderRemote extends TypertRemoteService {
       return probe?.probeModels?.(candidates) ?? { results: [], probedAt: Date.now() }
     } catch { return { results: [], probedAt: Date.now() } }
   }
+
+  /**
+   * @Remote accountHealth() — live account state + effective cooldowns + L1
+   * route evidence, for the settings page's "账号健康 / 冷却" section.
+   *
+   * Zero parameters (the client contribution declares no parameter codec and
+   * invokes it as a direct call). The derivation lives in lib/health-snapshot.js
+   * (pure, no I/O, never writes a registry); this method is a thin forwarder.
+   *
+   * Any failure degrades to an explicit "disabled, nothing known" snapshot:
+   * the wire contract has no error channel, and a thrown method would surface
+   * in the settings UI as a permanently empty section with no explanation.
+   */
+  accountHealth() {
+    try {
+      return this.healthReader?.()
+        ?? { enabled: false, generatedAt: Date.now(), accounts: [], routes: [] }
+    } catch { return { enabled: false, generatedAt: Date.now(), accounts: [], routes: [] } }
+  }
 }
 
 // Mark `cost` as a direct Remote method. Exactly what `@Remote` emits via its
@@ -136,6 +164,7 @@ Object.defineProperty(SmartProviderRemote.prototype, MARKER_KEY, {
       Object.freeze({ method: 'costDetail', invocation: Object.freeze({ kind: 'direct' }) }),
       Object.freeze({ method: 'availabilityStatus', invocation: Object.freeze({ kind: 'direct' }) }),
       Object.freeze({ method: 'probeModels', invocation: Object.freeze({ kind: 'direct' }) }),
+      Object.freeze({ method: 'accountHealth', invocation: Object.freeze({ kind: 'direct' }) }),
     ]),
   }),
 })
