@@ -126,6 +126,34 @@ window.__ModuleLoader__.load({
         force: z.boolean().optional(),
       })
     })()
+    // T3a: 账号健康 + 冷却快照（accountHealth）。strict codec 三件套同上，
+    // 字段与 Host 契约逐字对齐：Host 缺数据时发 null / 0 / []，从不省略字段，
+    // 所以可空字段一律 .nullable()，绝不用 .optional()（否则 null 会被 zod 拒掉）。
+    const ACCOUNT_HEALTH_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      const samples = z.object({ success: z.number(), failure: z.number() })
+      const account = z.object({
+        id: z.string(), provider: z.string(), implicit: z.boolean(),
+        models: z.array(z.string()), state: z.string(),
+        reason: z.string().nullable(), until: z.number().nullable(),
+        remainingMs: z.number(), streak: z.number(), samples,
+        usage: z.number(),
+        lastSuccessAt: z.number().nullable(), lastFailureAt: z.number().nullable(),
+      })
+      const route = z.object({
+        provider: z.string(), modelId: z.string(),
+        health: z.string(), tier: z.string(), confidence: z.number(),
+        samples,
+        lastSuccessAt: z.number().nullable(), lastFailureAt: z.number().nullable(),
+      })
+      return z.object({
+        enabled: z.boolean(), generatedAt: z.number(),
+        accounts: z.array(account), routes: z.array(route),
+      })
+    })()
     // $mount 的真实失败原因会写进这里，随成本页诊断文案一起显示，避免 err=? 静默。
     let mountDiag = 'unmounted'
     const makeCostContribution = () => ({
@@ -233,6 +261,27 @@ window.__ModuleLoader__.load({
           const receiver = remote.smartProvider
           const opts = input && (input.opts ?? input)
           return receiver.probeModels(opts, signal)
+        },
+      }, {
+        // T3a: 账号健康 + 冷却快照。零参数 direct 方法；result codec 必须带
+        // mode + 非空 typeSymbol + create，漏一项整个 smartProvider 命名空间挂不上。
+        id: '@local/dsh-smart-provider#smartProvider/accountHealth',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'accountHealth',
+        description: 'Read live account health + cooldown snapshot',
+        invocation: { kind: 'direct' },
+        parameters: [],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#AccountHealthSnapshot',
+          create: () => ACCOUNT_HEALTH_SCHEMA ?? { parse: v => v },
+          description: 'account health snapshot',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          return receiver.accountHealth(signal)
         },
       }],
     })
