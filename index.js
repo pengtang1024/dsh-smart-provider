@@ -12,7 +12,6 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { homedir } from 'node:os'
 import { Config } from './schema.js'
 import { yaml } from './registry/registry-lib.mjs'
 import { SmartAdapter } from './lib/adapter.js'
@@ -45,6 +44,47 @@ export const inject = ['llm']
 function strId(entry) {
   if (typeof entry === 'string') return entry
   return entry && typeof entry === 'object' ? (entry.id ?? entry.key ?? '') : ''
+}
+
+/**
+ * Sweep the live registry for routable models — one provider at a time.
+ *
+ * A provider whose adapter is not registered throws from listModels()
+ * ("no adapter registered for provider X"). The first version awaited that call
+ * inside ONE try/catch wrapped around the whole loop, so a single such provider
+ * aborted the sweep: adapter.routes was never assigned and reconfigure() never
+ * ran, leaving the auto chain empty for the whole session (observed live with
+ * trae-enterprise / qoder-global / workbuddy-global / trae-global). Failure is
+ * per-provider now: the healthy part of the registry still yields routes.
+ *
+ * Pure and exported so this resilience contract is verifiable without a Host —
+ * the only inputs are the two registry accessors.
+ *
+ * @param {() => Array<string|{id?:string}>} listProviders registry accessor
+ * @param {(provider: string) => Promise<Array<string|{id:string}>>} listModels
+ * @returns {Promise<{routes: Array<{provider: string, models: Array<string|object>}>, skipped: string[]}>}
+ */
+export async function collectProviderRoutes(listProviders, listModels) {
+  let providers = []
+  try { providers = listProviders?.() ?? [] } catch { providers = [] }
+  const routes = []
+  const skipped = []
+  for (const entry of Array.isArray(providers) ? providers : []) {
+    const provider = strId(entry)
+    if (!provider || provider === 'smart') continue // never route to itself
+    let listed
+    try {
+      listed = await listModels?.(provider)
+    } catch {
+      skipped.push(provider) // no adapter / provider error: skip, keep sweeping
+      continue
+    }
+    const models = Array.isArray(listed)
+      ? listed.map(m => (typeof m === 'string' ? m : m && typeof m === 'object' ? m : null)).filter(Boolean)
+      : []
+    if (models.length) routes.push({ provider, models })
+  }
+  return { routes, skipped }
 }
 
 /** Runtime-editable configuration schema (single source of truth in schema.js). */
@@ -85,13 +125,39 @@ export function apply(ctx, config = Config({})) {
   // (task-44 root cause). Unwrap first, then coerce defensively. Retained for
   // the `loader/volatile-update` handler below, which rebuilds in place.
   const unwrap = v => v && typeof v.get === 'function' ? v.get() : v
-  const costDir = unwrap(config.costDir)
-  const rawCostBatchSize = unwrap(config.costBatchSize)
-  const rawFlushInterval = unwrap(config.costFlushIntervalMs)
-  const dir = typeof costDir === 'string' && costDir ? costDir : undefined
-  const batchSize = Number.isFinite(rawCostBatchSize) ? rawCostBatchSize : 16
-  const flushIntervalMs = Number.isFinite(rawFlushInterval) ? rawFlushInterval : 2000
-  const costEnabled = unwrap(config.costEnabled) !== false
+  // Cost settings are volatile, so their coercion lives in ONE place that the
+  // loader/volatile-update handler re-runs - freezing the activation-time
+  // values here is exactly how a costDir/costEnabled edit silently did nothing.
+  const readCostConfig = () => {
+    const rawCostDir = unwrap(config.costDir)
+    const rawCostBatchSize = unwrap(config.costBatchSize)
+    const rawFlushInterval = unwrap(config.costFlushIntervalMs)
+    return {
+      dir: typeof rawCostDir === 'string' && rawCostDir ? rawCostDir : undefined,
+      batchSize: Number.isFinite(rawCostBatchSize) ? rawCostBatchSize : 16,
+      flushIntervalMs: Number.isFinite(rawFlushInterval) ? rawFlushInterval : 2000,
+      enabled: unwrap(config.costEnabled) !== false,
+    }
+  }
+  /** Build the ledger writer for one cost config (same shape as before). A
+   *  disabled meter still accepts records but never writes them. */
+  const createMeter = cost => {
+    const next = new CostMeter({
+      dir: cost.dir,
+      batchSize: cost.batchSize,
+      flushIntervalMs: cost.flushIntervalMs,
+      onError: error => ctx.logger?.warn?.('smart: cost write failed: %o', error),
+    })
+    if (!cost.enabled) next.record = () => {}
+    return next
+  }
+  const initialCost = readCostConfig()
+  const dir = initialCost.dir
+  // Reassignable on purpose: a cost* hot update REPLACES the writer (its
+  // private dir-readiness cache is bound to the constructor's dir), so the
+  // adapter and the ledger readers must follow the CURRENT instance rather
+  // than a stale activation-time capture.
+  let meter = createMeter(initialCost)
 
   // Coerce the unwrapped volatile values to the shapes adapter/pool expect.
   const rawChains = unwrap(config.chains)
@@ -101,20 +167,13 @@ export function apply(ctx, config = Config({})) {
   const rawAccounts = unwrap(config.accounts)
   const accounts = Array.isArray(rawAccounts) ? rawAccounts : undefined
 
-  const meter = new CostMeter({
-    dir,
-    batchSize,
-    flushIntervalMs,
-    onError: error => ctx.logger?.warn?.('smart: cost write failed: %o', error),
-  })
-  // A disabled meter still accepts records but never writes them.
-  if (!costEnabled) meter.record = () => {}
-
   // Expose the REAL cost ledger to the settings client over a typed @Remote
   // service (`smartProvider/cost`). Same read path/口径 as the smart-cost host
   // command; the client mounts the matching contribution and renders these
   // numbers directly — no invented empty state, no client-side JSONL parsing.
-  const statsReader = () => readCostStats(dir)
+  // Read through the LIVE meter, so a hot costDir edit moves the reader with
+  // the writer instead of leaving the settings page on the old ledger.
+  const statsReader = () => readCostStats(meter.dir)
   // L5b: live availability registry reader — adapter is constructed below, so
   // read it lazily at call time. projectStatus() (L1 availability.js) merges
   // ledger + #recordHop session signals (workbuddy routes don't write cost.jsonl).
@@ -153,7 +212,8 @@ export function apply(ctx, config = Config({})) {
       now: Date.now(),
     })
   }
-  new SmartProviderRemote(ctx, statsReader, dir, registryReader, () => adapter?.probe, healthReader)
+  // Kept as a handle: a cost* hot update repoints its ledger directory too.
+  const remote = new SmartProviderRemote(ctx, statsReader, dir, registryReader, () => adapter?.probe, healthReader)
 
   // ranking is volatile: normalize defensively (Config({}) in tests yields
   // schemastery markers for volatile paths, so never trust the raw type).
@@ -164,15 +224,25 @@ export function apply(ctx, config = Config({})) {
   // never in the shipped product default — a different user has no such
   // model, so baking it in would repeat the P1 "my配比 for everyone" bug.
   const PKG_DIR = dirname(fileURLToPath(import.meta.url))
-  const readUserPositionOverrides = () => {
-    const path = join(PKG_DIR, 'registry', 'position-overrides.user.yaml')
+  /** Read the overrides block out of ONE registry YAML (missing/broken -> {}). */
+  const readOverridesFile = path => {
     if (!existsSync(path)) return {}
     try {
       const doc = yaml.parse(readFileSync(path, 'utf8'))
       return doc && typeof doc.overrides === 'object' && !Array.isArray(doc.overrides) ? doc.overrides : {}
     } catch { return {} }
   }
-  const userPositionOverrides = readUserPositionOverrides()
+  // Same 口径 as registry-lib.mjs's custom-routes: the USER file wins and the
+  // SHIPPED product template is the fallback - never the other way round.
+  // Previously only the .user.yaml was read, so a build that ships a template
+  // (registry/position-overrides.yaml) saw its content vanish silently. Both
+  // empty -> {} exactly as before, so an unconfigured install is unchanged.
+  const readPositionOverrides = () => {
+    const user = readOverridesFile(join(PKG_DIR, 'registry', 'position-overrides.user.yaml'))
+    if (Object.keys(user).length) return user
+    return readOverridesFile(join(PKG_DIR, 'registry', 'position-overrides.yaml'))
+  }
+  const userPositionOverrides = readPositionOverrides()
   const withRouting = cfg => {
     const out = normalizeRankingConfig(cfg)
     const raw = cfg && typeof cfg === 'object' ? cfg : {}
@@ -259,21 +329,31 @@ export function apply(ctx, config = Config({})) {
   // entirely when `chains` is defined.
   async function refreshDiscoveredChains() {
     try {
-      const providers = runtime.listProviders?.() ?? []
-      const routes = []
-      for (const entry of providers) {
-        const provider = strId(entry)
-        if (!provider || provider === 'smart') continue // never route to itself
-        const listed = await runtime.listModels?.(provider)
-        const models = Array.isArray(listed)
-          ? listed.map(m => (typeof m === 'string' ? m : m && typeof m === 'object' ? m : null)).filter(Boolean)
-          : []
-        if (models.length) routes.push({ provider, models })
-      }
+      const { routes, skipped } = await collectProviderRoutes(
+        () => runtime.listProviders?.() ?? [],
+        provider => runtime.listModels?.(provider),
+      )
       // P2: route metadata feeds the two-layer position classifier for ALL
       // users (including those with configured chains). P1 chain override
       // below still applies only when the user has NO configured chains.
+      // Assigned UNCONDITIONALLY: whatever was discovered must reach the
+      // adapter even when part of the registry failed, which is the whole
+      // point of the per-provider try/catch above.
       adapter.routes = routes
+      // One summary instead of a warn per provider: a missing adapter is an
+      // expected, non-fatal condition (vendor routes come and go).
+      if (skipped.length) {
+        const head = skipped.slice(0, 8)
+        const rest = skipped.length - head.length
+        const tail = rest > 0 ? ` (+${rest} more)` : ''
+        if (routes.length === 0) {
+          ctx.logger?.warn?.('dsh-smart-provider: auto-chain discovery found no usable provider; skipped %d without an adapter: %s%s',
+            skipped.length, head.join(', '), tail)
+        } else {
+          ctx.logger?.info?.('dsh-smart-provider: discovery kept %d provider(s) and skipped %d without an adapter: %s%s',
+            routes.length, skipped.length, head.join(', '), tail)
+        }
+      }
       if (chains !== undefined) return // user-configured chains are authoritative
       const auto = discoverAutoChain(routes)
       if (auto.length === 0) {
@@ -324,26 +404,85 @@ export function apply(ctx, config = Config({})) {
   }, 'dsh-smart-provider.directory')
 
   // Volatile config edits (settings page) are committed in place by the Loader
-  // and notified through `loader/volatile-update`. Rebuild the adapter's
-  // chains/accounts/ranking in place so edits take effect without a restart.
+  // and notified through `loader/volatile-update`. EVERY key the schema marks
+  // volatile must be honored here: the handled set used to be
+  // chains/accounts/ranking only, so health, the top-level routing field and
+  // the cost* fields were written by the settings page and silently ignored
+  // until a restart (task-6).
+  const VOLATILE_KEYS = new Set([
+    'chains', 'accounts', 'ranking', 'health', 'routing',
+    'costEnabled', 'costDir', 'costBatchSize', 'costFlushIntervalMs',
+  ])
+  const COST_KEYS = ['costEnabled', 'costDir', 'costBatchSize', 'costFlushIntervalMs']
+  /** Normalize the loader payload into the set of volatile keys it mentions.
+   *  Both the 'a.b' string form and the array form are accepted. */
+  const changedKeys = paths => {
+    const changed = new Set()
+    for (const p of Array.isArray(paths) ? paths : [paths]) {
+      for (const k of Array.isArray(p) ? p : String(p).split('.')) {
+        if (VOLATILE_KEYS.has(k)) changed.add(k)
+      }
+    }
+    return changed
+  }
+  /**
+   * Re-derive the health deps after an edit and hand the adapter the fresh
+   * options. The registries are PRESERVED while health stays enabled - they are
+   * the SAME objects the settings reader (healthReader) and the cold-start
+   * hydration write into, so swapping them would erase every proven verdict.
+   * Only a real enabled/disabled flip replaces them (and then they start empty,
+   * exactly like a restart). Nothing here can re-enable an explicit opt-out:
+   * buildHealthDeps() remains the single parser of that matrix.
+   */
+  const applyHealthUpdate = () => {
+    const next = buildHealthDeps(config)
+    const wasEnabled = adapter.health !== undefined
+    const isEnabled = next !== undefined
+    if (!wasEnabled && !isEnabled) return
+    let applied = next
+    if (wasEnabled && isEnabled) {
+      applied = { ...next }
+      if (adapter.availabilityRegistry) applied.availabilityRegistry = adapter.availabilityRegistry
+      if (adapter.accountHealth) applied.accountHealth = adapter.accountHealth
+    }
+    adapter.health = applied
+    adapter.healthSingleCooldown = adapter.health?.healthSingleCooldown === true
+    adapter.availabilityRegistry = adapter.health ? (adapter.health.availabilityRegistry ?? {}) : undefined
+    adapter.accountHealth = adapter.health?.accountHealth
+    adapter.virtualProviders = adapter.health && Array.isArray(adapter.health.virtualProviders)
+      ? new Set(adapter.health.virtualProviders) : undefined
+  }
   ctx.on('loader/volatile-update', (paths = []) => {
-    const changed = paths.some(p => {
-      const keys = Array.isArray(p) ? p : String(p).split('.')
-      return keys.some(k => k === 'chains' || k === 'accounts' || k === 'ranking')
-    })
-    if (!changed) return
+    const changed = changedKeys(paths)
+    if (changed.size === 0) return
     try {
-      const nextRawChains = unwrap(config.chains)
-      const nextChains = nextRawChains && typeof nextRawChains === 'object' && !Array.isArray(nextRawChains)
-        && !Object.hasOwn(nextRawChains, 'meta') ? nextRawChains : undefined
-      const nextRawAccounts = unwrap(config.accounts)
-      const nextAccounts = Array.isArray(nextRawAccounts) ? nextRawAccounts : undefined
-      adapter.reconfigure({
-        chains: nextChains,
-        accounts: nextAccounts,
-        ranking: withRouting(unwrap(config.ranking)),
-      })
-      ctx.logger?.info?.('dsh-smart-provider: applied volatile config update')
+      // cost* -> the writer's dir and its private dir-readiness cache are fixed
+      // at construction, so REPLACE the meter and repoint every reader at the
+      // new instance; the old one is closed so what it queued still lands.
+      if (COST_KEYS.some(k => changed.has(k))) {
+        const previous = meter
+        meter = createMeter(readCostConfig())
+        adapter.meter = meter
+        remote.costDir = meter.dir
+        try { void previous.close()?.catch?.(() => {}) } catch { /* already closed */ }
+      }
+      // health/routing/ranking/chains/accounts -> in-place reconfigure.
+      if (['health', 'routing', 'ranking', 'chains', 'accounts'].some(k => changed.has(k))) {
+        const nextRawChains = unwrap(config.chains)
+        const nextChains = nextRawChains && typeof nextRawChains === 'object' && !Array.isArray(nextRawChains)
+          && !Object.hasOwn(nextRawChains, 'meta') ? nextRawChains : undefined
+        const nextRawAccounts = unwrap(config.accounts)
+        const nextAccounts = Array.isArray(nextRawAccounts) ? nextRawAccounts : undefined
+        // health/routing can flip the pool's health wiring and the ranking
+        // rewrite must not resurrect a registry the user just opted out of.
+        applyHealthUpdate()
+        adapter.reconfigure({
+          chains: nextChains,
+          accounts: nextAccounts,
+          ranking: withRouting(unwrap(config.ranking)),
+        })
+      }
+      ctx.logger?.info?.('dsh-smart-provider: applied volatile config update (%s)', [...changed].join(', '))
     } catch (error) {
       ctx.logger?.warn?.('dsh-smart-provider: volatile config update failed: %o', error)
     }
@@ -427,7 +566,9 @@ export function apply(ctx, config = Config({})) {
       // CostMeter has no totalCostUsd()/rowCount(): read the JSONL ledger
       // directly so an empty ledger still returns a real {rows:0} structure.
       let rows = []
-      let source = dir || join(homedir(), '.dsh', 'smart-provider')
+      // Follow the LIVE meter (identical default when unconfigured) so a hot
+      // costDir edit moves this command with the writer instead of the old dir.
+      const source = meter.dir
       try {
         const text = readFileSync(join(source, 'cost.jsonl'), 'utf8')
         rows = text.split('\n').filter(Boolean).map(line => {
