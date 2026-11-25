@@ -650,47 +650,74 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
     // ---- styles: only --dsw-alias-* tokens --------------------------------
     const S = {
       wrap: { display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 0 24px', color: 'var(--dsw-alias-label-primary)', fontSize: 13 },
-      tabs: { display: 'flex', gap: 6, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8, flexWrap: 'wrap' },
-      tab: extra => ({
+      tabs: { display: 'flex', gap: 4, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 0, flexWrap: 'wrap' },
+      tab: active => ({
         cursor: 'pointer', border: 'none', borderRadius: 'var(--dsw-radius-sm)',
-        padding: '6px 12px', fontFamily: 'inherit', fontSize: 13, lineHeight: '20px',
-        color: 'var(--dsw-alias-label-primary)',
-        background: extra ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+        padding: '8px 14px 10px', marginBottom: -1, fontFamily: 'inherit', fontSize: 13, lineHeight: '20px',
+        fontWeight: active ? 600 : 400,
+        color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+        background: active ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+        boxShadow: active ? 'inset 0 -2px 0 var(--dsw-alias-brand-primary-new-colorprimary-new-color)' : 'none',
       }),
-      card: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)', padding: 12 },
+      card: {
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)',
+        padding: 14, background: 'var(--dsw-alias-bg-layer-1)',
+        boxShadow: '0 1px 2px var(--dsw-alias-bg-mask-2)',
+      },
+      sectionTitle: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)', lineHeight: '20px' },
+      summary: { cursor: 'pointer', fontWeight: 600, color: 'var(--dsw-alias-label-primary)', padding: '2px 0', lineHeight: '20px' },
       row: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', flexWrap: 'wrap' },
       grow: { flex: 1, minWidth: 120 },
       label: { color: 'var(--dsw-alias-label-secondary)', minWidth: 96 },
       input: {
-        background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)',
+        background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-primary)',
         border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)',
-        padding: '4px 8px', fontFamily: 'inherit', fontSize: 13, minWidth: 80,
+        padding: '5px 9px', fontFamily: 'inherit', fontSize: 13, minWidth: 80,
+        outlineColor: 'var(--dsw-alias-border-selected)',
       },
       select: { fontFamily: 'inherit', fontSize: 13 },
       btn: {
         cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
         color: 'var(--dsw-alias-label-primary)',
-        background: 'var(--dsw-alias-bg-layer-1)',
+        background: 'var(--dsw-alias-bg-layer-2)',
         border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)',
-        padding: '4px 10px',
+        padding: '5px 11px', outlineColor: 'var(--dsw-alias-border-selected)',
       },
       primary: {
-        cursor: 'pointer', fontFamily: 'inherit', fontSize: 13,
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 500,
         color: 'var(--dsw-alias-bg-layer-1)',
         background: 'var(--dsw-alias-brand-primary-new-colorprimary-new-color)',
-        border: 'none', borderRadius: 'var(--dsw-radius-sm)', padding: '5px 14px',
+        border: '1px solid var(--dsw-alias-border-selected)', borderRadius: 'var(--dsw-radius-sm)', padding: '5px 14px',
+        outlineColor: 'var(--dsw-alias-border-selected)',
       },
       muted: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, lineHeight: '18px' },
       code: { fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 12, overflowWrap: 'anywhere' },
       err: { color: 'var(--dsw-alias-state-error-primary)', fontSize: 12 },
       ok: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 12 },
+      empty: {
+        color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, lineHeight: '18px', textAlign: 'center',
+        padding: '10px 12px', border: '1px dashed var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)',
+      },
+      unsaved: {
+        display: 'inline-block', fontSize: 11, lineHeight: '16px', padding: '1px 8px',
+        color: 'var(--dsw-alias-state-warn-label)', background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-state-warn-primary)', borderRadius: 'var(--dsw-radius-sm)',
+      },
+      badge: color => ({
+        display: 'inline-flex', alignItems: 'center', fontSize: 12, lineHeight: '18px',
+        padding: '1px 8px', color, background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)',
+        whiteSpace: 'nowrap',
+      }),
       table: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
-      th: { textAlign: 'left', borderBottom: '1px solid var(--dsw-alias-border-l2)', padding: '6px 8px', color: 'var(--dsw-alias-label-secondary)' },
-      td: { borderBottom: '1px solid var(--dsw-alias-border-l2)', padding: '6px 8px', verticalAlign: 'top' },
+      th: { textAlign: 'left', borderBottom: '1px solid var(--dsw-alias-border-l2)', padding: '8px', color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-2)', fontWeight: 500 },
+      td: { borderBottom: '1px solid var(--dsw-alias-border-l1)', padding: '8px', verticalAlign: 'top' },
       pill: extra => ({
-        display: 'inline-block', borderRadius: 'var(--dsw-radius-sm)', padding: '1px 6px', fontSize: 11,
-        color: extra ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)',
-        background: 'var(--dsw-alias-bg-layer-1)',
+        display: 'inline-block', borderRadius: 'var(--dsw-radius-sm)', padding: '2px 8px', fontSize: 11,
+        // UNKNOWN / unreviewed is not an error: neutral badge, never red.
+        color: extra ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-secondary)',
+        background: extra ? 'var(--dsw-alias-bg-layer-2)' : 'var(--dsw-alias-bg-layer-1)',
+        border: '1px solid ' + (extra ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-border-l2)'),
       }),
       // CF-3: conversation cost pill — colors are --dsw-alias-* only.
       costPill: {
@@ -709,26 +736,29 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       },
       hero: {
         border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)',
-        padding: '16px', background: 'var(--dsw-alias-bg-layer-1)',
+        padding: '18px 20px', background: 'var(--dsw-alias-bg-layer-2)',
+        boxShadow: '0 2px 8px var(--dsw-alias-bg-mask-2)',
         display: 'flex', flexDirection: 'column', gap: 8,
       },
-      heroTitle: { fontSize: 16, fontWeight: 600, color: 'var(--dsw-alias-label-primary)', lineHeight: '24px' },
+      heroTitle: { fontSize: 17, fontWeight: 600, color: 'var(--dsw-alias-label-primary)', lineHeight: '25px' },
       heroText: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', lineHeight: '22px' },
       choiceBtn: active => ({
         cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, lineHeight: '20px',
-        padding: '10px 14px', borderRadius: 'var(--dsw-radius-md)', textAlign: 'left',
-        border: '1px solid var(--dsw-alias-border-l2)',
+        padding: '11px 14px', borderRadius: 'var(--dsw-radius-md)', textAlign: 'left',
+        border: '1px solid ' + (active ? 'var(--dsw-alias-border-selected)' : 'var(--dsw-alias-border-l2)'),
         color: 'var(--dsw-alias-label-primary)',
-        background: active ? 'var(--dsw-alias-interactive-bg-hover)' : 'var(--dsw-alias-bg-layer-2)',
-        display: 'flex', flexDirection: 'column', gap: 2, minWidth: 130,
+        background: active ? 'var(--dsw-alias-interactive-bg-hover)' : 'var(--dsw-alias-bg-layer-1)',
+        boxShadow: active ? 'inset 0 0 0 1px var(--dsw-alias-border-selected)' : 'none',
+        display: 'flex', flexDirection: 'column', gap: 3, minWidth: 130,
       }),
       choiceTitle: { fontWeight: 600 },
-      choiceSub: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' },
-      step: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', fontSize: 13, lineHeight: '20px' },
+      choiceSub: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', lineHeight: '17px' },
+      step: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', fontSize: 13, lineHeight: '20px' },
       stepNum: {
         flex: 'none', width: 22, height: 22, borderRadius: '50%',
         background: 'var(--dsw-alias-interactive-bg-hover)', color: 'var(--dsw-alias-label-primary)',
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11,
+        border: '1px solid var(--dsw-alias-border-l2)',
       },
       arrow: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, paddingLeft: 4 },
     }
@@ -950,7 +980,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         ),
         // ② 首屏主操作：先让用户"选择怎么选"，紧贴状态条，不再被模型大卡挡在下面。
         h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
+          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('preset.pick')),
           h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
             choices.map(c => h('button', {
               key: c.id, type: 'button', disabled: !!working,
@@ -968,7 +998,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         // 已识别模型：计数摘要 + 展开。首屏只有数量与可见的探测按钮，
         //    pill 墙、长说明与诊断都收进 details（信息不丢，但不占首屏）。
         h('details', { style: S.card },
-          h('summary', { style: { cursor: 'pointer', fontWeight: 500, listStyle: 'none', display: 'flex', alignItems: 'center', gap: 8 } },
+          h('summary', { style: S.summary },
             piLoaded
               ? fmt(t, 'pi.availableN', { models: modelCount, providers: providerCount })
               : t('pi.available'),
@@ -1030,7 +1060,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                     // 其余已登记模型：折叠，不丢（"能发现"仍成立）。
                     otherModels.length > 0
                       ? h('details', { style: { marginTop: 6 } },
-                        h('summary', { style: { cursor: 'pointer', fontSize: 11 } },
+                        h('summary', { style: { ...S.summary, fontSize: 12, fontWeight: 500, color: 'var(--dsw-alias-label-secondary)' } },
                           fmt(t, 'pi.otherModels', { n: otherModels.length })),
                         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 } },
                           otherModels.map(m => {
@@ -1252,10 +1282,10 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           h('div', { style: S.heroText }, t('chains.plainExplain')),
         ),
         // 卡片头：保存入口 + 未保存标记。不展开任何 <details> 也能看到。
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l1)', paddingBottom: 10 } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-            h('span', { style: { fontWeight: 600 } }, t('chains.cardTitle')),
-            dirty ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-state-warn-label)' } }, t('card.unsaved')) : null,
+            h('span', { style: S.sectionTitle }, t('chains.cardTitle')),
+            dirty ? h('span', { style: S.unsaved }, t('card.unsaved')) : null,
           ),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
             msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
@@ -1285,7 +1315,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
               }, t('action.confirmDelete'))
               : h('button', { type: 'button', style: S.btn, onClick: () => arm(`g${gi}`) }, t('action.delete')),
           ),
-          ...g.hops.map((hop, hi) => h('div', { key: hi, style: { ...S.step, borderBottom: '1px solid var(--dsw-alias-border-l2)' } },
+          ...g.hops.map((hop, hi) => h('div', { key: hi, style: { ...S.step, borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
             h('span', { style: S.stepNum }, String(hi + 1)),
             select(provOpts, hop.provider, v => update(gi, x => ({ ...x, hops: x.hops.map((h, i) => i === hi ? { ...h, provider: v } : h) })), t('field.provider')),
             select(modelOpts, hop.model, v => update(gi, x => ({ ...x, hops: x.hops.map((h, i) => i === hi ? { ...h, model: v } : h) })), t('field.model')),
@@ -1726,11 +1756,23 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           h('div', { style: S.heroText }, t('accounts.plainExplain')),
           accountCountLine,
         ),
+        h('div', null,
+          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('preset.pick')),
+          h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
+            choices.map(c => h('button', {
+              key: c.id, type: 'button', disabled: !!working,
+              style: S.choiceBtn(strategy === c.id), onClick: () => applyPreset?.(c.id),
+            },
+              h('span', { style: S.choiceTitle }, c.title),
+              h('span', { style: S.choiceSub }, c.sub),
+            )),
+          ),
+        ),
         // 卡片头：保存入口 + 未保存标记（Advanced 默认折叠也看得见）。
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l1)', paddingBottom: 10 } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-            h('span', { style: { fontWeight: 600 } }, t('accounts.cardTitle')),
-            dirty ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-state-warn-label)' } }, t('card.unsaved')) : null,
+            h('span', { style: S.sectionTitle }, t('accounts.cardTitle')),
+            dirty ? h('span', { style: S.unsaved }, t('card.unsaved')) : null,
           ),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
             msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
@@ -1826,7 +1868,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
             // 计费与等级细节：默认折叠，字段语义见 lib/ranking.js
             // ACCOUNT_RANKING_FIELDS；文案用大白话，不暴露原始字段名。
             h('details', { style: { marginTop: 6 } },
-              h('summary', { style: { cursor: 'pointer', fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
+              h('summary', { style: { ...S.summary, fontSize: 12, fontWeight: 500, color: 'var(--dsw-alias-label-secondary)' } },
                 t('account.detailsTitle')),
               h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 } },
                 h(Field, { label: t('account.speedTier'), help: t('account.speedTierHelp') },
@@ -1866,7 +1908,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           )),
           h('button', { type: 'button', style: S.btn, onClick: () => setRows(p => [...p, blankAccount()]) }, t('action.addAccount')),
           h('div', { style: S.card },
-            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('ranking.title')),
+            h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('ranking.title')),
             h('div', { style: { ...S.muted, marginBottom: 8 } }, t('ranking.priorityHelp')),
             h(RankingForm, {
               t,
@@ -1879,7 +1921,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
             }),
           ),
           h('div', { style: S.card },
-            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('routing.title')),
+            h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('routing.title')),
             h('div', { style: { ...S.muted, marginBottom: 8 } }, t('routing.intro')),
             h(RoutingForm, { t, cfg: obj(rankingDraft?.routing), onChange: v => setRankingDraft(d => ({ ...d, routing: v })) }),
           ),
@@ -1923,51 +1965,38 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         if (!Number.isFinite(n)) return '—'
         return digits ? n.toFixed(digits) : String(Math.round(n))
       }
-      // 老账本行没有延迟字段：两列全缺时整组不渲染，避免一排无意义的破折号。
-      const hasLatency = rows.some(r => r?.ttftMs != null || r?.tokensPerSecond != null)
-      const columns = ['time', 'model', 'tokens', ...(hasLatency ? ['ttft', 'tps'] : []), 'cost', 'status']
-      const renderRows = list => h('div', { style: { overflowX: 'auto' } },
-        h('table', { style: { ...S.table, minWidth: hasLatency ? 720 : 540 } },
-          h('thead', null, h('tr', null, columns.map(k =>
-            h('th', { key: k, style: S.th }, t(`cost.col.${k}`))))),
-          h('tbody', null, list.map((r, i) => h('tr', { key: `${str(r?.requestId)}-${i}` },
-            [str(r?.timestamp).replace('T', ' ').slice(0, 19),
-             `${str(r?.provider)}/${str(r?.model)}`,
-             `${Number(r?.inputTokens || 0)}+${Number(r?.outputTokens || 0)}`,
-             ...(hasLatency ? [numOrDash(r?.ttftMs), numOrDash(r?.tokensPerSecond, 1)] : []),
-             `$${Number(r?.costUsd || 0).toFixed(6)}`,
-             r?.failed ? t('cost.failed') : t('cost.ok'),
-            ].map((v, j) => h('td', { key: j, style: S.td }, v)))),
+      const columns = ['time', 'model', 'tokens', 'ttft', 'tps', 'cost', 'status']
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        // ① 逐笔明细
+        h('div', { style: S.card },
+          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, fmt(t, 'cost.detailTitle', { n: Number(detail.total || 0) })),
+          rows.length === 0
+            ? h('div', { style: S.muted }, t('cost.detailNone'))
+            : h('div', { style: { overflowX: 'auto' } },
+              h('table', { style: { ...S.table, minWidth: 720 } },
+                h('thead', null, h('tr', null, columns.map(k =>
+                  h('th', { key: k, style: S.th }, t(`cost.col.${k}`))))),
+                h('tbody', null, rows.map((r, i) => h('tr', { key: `${str(r?.requestId)}-${i}` },
+                  [str(r?.timestamp).replace('T', ' ').slice(0, 19),
+                   `${str(r?.provider)}/${str(r?.model)}`,
+                   `${Number(r?.inputTokens || 0)}+${Number(r?.outputTokens || 0)}`,
+                   numOrDash(r?.ttftMs),
+                   numOrDash(r?.tokensPerSecond, 1),
+                   `$${Number(r?.costUsd || 0).toFixed(6)}`,
+                   r?.failed ? t('cost.failed') : t('cost.ok'),
+                  ].map((v, j) => h('td', { key: j, style: S.td }, v)))),
+                ),
+              ),
+            ),
+          h('div', { style: { ...S.row, marginTop: 8 } },
+            h('button', { type: 'button', style: S.btn, disabled: page <= 0, onClick: () => setPage(p => Math.max(0, p - 1)) }, t('cost.prevPage')),
+            h('span', { style: S.muted }, ` ${page + 1} / ${pages} `),
+            h('button', { type: 'button', style: S.btn, disabled: page + 1 >= pages, onClick: () => setPage(p => p + 1) }, t('cost.nextPage')),
           ),
         ),
-      )
-      const topRows = rows.slice(0, 10)
-      const restRows = rows.slice(10)
-      const canExpand = restRows.length > 0 || pages > 1
-      const pager = h('div', { style: { ...S.row, marginTop: 8 } },
-        h('button', { type: 'button', style: S.btn, disabled: page <= 0, onClick: () => setPage(p => Math.max(0, p - 1)) }, t('cost.prevPage')),
-        h('span', { style: S.muted }, ` ${page + 1} / ${pages} `),
-        h('button', { type: 'button', style: S.btn, disabled: page + 1 >= pages, onClick: () => setPage(p => p + 1) }, t('cost.nextPage')),
-      )
-      const section = { borderTop: '1px solid var(--dsw-alias-border-l2)', paddingTop: 10 }
-      const subTitle = { style: { ...S.muted, fontSize: 12, marginBottom: 4 } }
-      return h('div', { style: { ...S.card, display: 'flex', flexDirection: 'column', gap: 10 } },
-        // ① 逐笔明细：首屏 Top 10，其余与分页一起收进二级折叠。
-        rows.length === 0
-          ? h('div', { style: S.muted }, t('cost.detailNone'))
-          : h('div', null,
-            renderRows(topRows),
-            canExpand
-              ? h('details', { style: { marginTop: 8 } },
-                h('summary', { style: { ...S.muted, cursor: 'pointer' } }, fmt(t, 'cost.expandAll', { n: restRows.length || rows.length })),
-                restRows.length ? h('div', { style: { marginTop: 8 } }, renderRows(restRows)) : null,
-                pager,
-              )
-              : null,
-          ),
-        // ② 时间趋势（纯 CSS 柱状图，压低高度）
-        h('div', { style: section },
-          h('div', subTitle, t('cost.timelineTitle')),
+        // ② 时间趋势（纯 CSS 柱状图）
+        h('div', { style: S.card },
+          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('cost.timelineTitle')),
           timeline.length === 0
             ? h('div', { style: S.muted }, t('cost.detailNone'))
             : h('div', { style: { display: 'flex', alignItems: 'flex-end', gap: 10, minHeight: 48 } },
@@ -1978,9 +2007,9 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
               )),
             ),
         ),
-        // ③ 按模型/提供商分组：只列分项，金额不在这里重复汇总。
-        h('div', { style: section },
-          h('div', subTitle, t('cost.byModelTitle')),
+        // ③ 按模型/提供商分组
+        h('div', { style: S.card },
+          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('cost.byModelTitle')),
           byModel.length === 0
             ? h('div', { style: S.muted }, t('cost.detailNone'))
             : byModel.map(g => h('div', { key: `${str(g?.provider)}/${str(g?.model)}`, style: { padding: '3px 0' } },
@@ -1988,9 +2017,9 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
             ),
         ),
         // ④ 节省账本（诚实标注，绝不编数字）
-        h('div', { style: section },
-          h('div', subTitle, t('cost.savingsTitle')),
-          h('div', { style: { ...S.muted, color: 'var(--dsw-alias-state-warn-label)' } }, t('cost.savingsNotice')),
+        h('div', { style: S.card },
+          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('cost.savingsTitle')),
+          h('div', { style: { ...S.muted, marginBottom: 8, color: 'var(--dsw-alias-state-warn-label)' } }, t('cost.savingsNotice')),
           savingModels.length === 0
             ? h('div', { style: S.muted }, t('cost.noComparable'))
             : savingModels.map(m => h('div', { key: str(m?.model), style: { padding: '3px 0' } },
@@ -2212,23 +2241,15 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         body = h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('health.disabledExplain'))
       } else if (accounts.length === 0 && routes.length === 0) {
         // 健康层开着但确实没有数据 —— 绝不写成「不可用」。
-        body = h('div', { style: S.muted }, t('health.empty'))
+        body = h('div', { style: S.empty }, t('health.empty'))
       } else {
-        // 常显只留摘要行；明细表整体折叠。关闭 / 有异常时默认展开，不让问题藏起来。
-        const coolingCount = accounts.filter(a => ['COOLING', 'HALF_OPEN'].includes(str(a?.state).toUpperCase())).length
-        const degradedCount = routes.filter(r => ['DEGRADED', 'DEPRECATED'].includes(str(r?.health).toUpperCase())).length
-        const abnormal = snap.enabled === false || coolingCount > 0 || degradedCount > 0
-        const summaryStyle = { color: abnormal ? HEALTH_WARN_COLOR : HEALTH_NEUTRAL_COLOR, fontSize: 12 }
-        const tableBlock = { marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--dsw-alias-border-l2)' }
-        body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-          h('div', { style: { ...S.muted, marginBottom: 6 } }, t('health.billingHint')),
-          h('details', { style: S.card, open: abnormal },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 500, color: coolingCount > 0 ? HEALTH_WARN_COLOR : undefined } },
-              fmt(t, 'health.accountSummary', { n: accounts.length, k: coolingCount })),
+        body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+          h('div', null,
+            h('div', { style: { ...S.sectionTitle, marginBottom: 6 } }, t('health.accountsTitle')),
             accounts.length === 0
-              ? h('div', { style: { ...S.muted, marginTop: 8 } }, t('health.empty'))
-              : h('div', { style: tableBlock, overflowX: 'auto' },
-                h('table', { style: { ...S.table, minWidth: 560 } },
+              ? h('div', { style: S.empty }, t('health.empty'))
+              : h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { ...S.table, minWidth: 640 } },
                 h('thead', null, h('tr', null,
                   h('th', { style: S.th, scope: 'col' }, t('health.id')),
                   h('th', { style: S.th, scope: 'col' }, t('health.state')),
@@ -2269,20 +2290,25 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                         cooling && remain > 0 ? h('span', { style: { ...summaryStyle, marginLeft: 6 } }, fmtDuration(t, remain)) : null,
                       ),
                     ),
-                    h('td', { style: S.td }, freeTagText(t, freeForAccount(row))),
+                    h('td', { style: S.td },
+                      h('span', { style: S.badge(accountStateColor(row.state)) }, accountStateText(t, row.state)),
+                      reason ? h('div', { style: S.muted }, `${t('health.coolReason')}: ${reason}`) : null,
+                    ),
+                    h('td', { style: S.td }, cooling && remain > 0 ? fmtDuration(t, remain) : '—'),
+                    h('td', { style: S.td }, String(Number(row.streak) || 0)),
+                    h('td', { style: S.td }, String(Number(row.usage) || 0)),
                     h('td', { style: S.td }, samplesText(t, row.samples)),
                   )
                 })),
                 ),
               ),
           ),
-          h('details', { style: S.card, open: abnormal },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 500, color: degradedCount > 0 ? HEALTH_WARN_COLOR : undefined } },
-              fmt(t, 'health.routeSummary', { m: routes.length, j: degradedCount })),
+          h('div', null,
+            h('div', { style: { ...S.sectionTitle, marginBottom: 6 } }, t('health.routesTitle')),
             routes.length === 0
-              ? h('div', { style: { ...S.muted, marginTop: 8 } }, t('health.empty'))
-              : h('div', { style: tableBlock, overflowX: 'auto' },
-                h('table', { style: { ...S.table, minWidth: 480 } },
+              ? h('div', { style: S.empty }, t('health.empty'))
+              : h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { ...S.table, minWidth: 560 } },
                 h('thead', null, h('tr', null,
                   h('th', { style: S.th, scope: 'col' }, t('health.provider')),
                   h('th', { style: S.th, scope: 'col' }, t('health.model')),
@@ -2301,7 +2327,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                     h('td', { style: S.td }, str(row.provider) || '—'),
                     h('td', { style: S.td }, str(row.modelId) || '—'),
                     h('td', { style: S.td },
-                      h('span', { style: { color: routeHealthColor(row.health), fontWeight: 500 } }, routeHealthText(t, row.health)),
+                      h('span', { style: S.badge(routeHealthColor(row.health)) }, routeHealthText(t, row.health)),
                     ),
                     h('td', { style: S.td }, freeTagText(t, freeForRoute(row))),
                   )
@@ -2457,21 +2483,15 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         ),
         // 概览卡：2 位小数总花费 / 调用总数 / 节省金额 + 刷新
         h('div', { style: S.card },
-          h('button', { type: 'button', style: { ...S.muted, cursor: 'pointer', fontFamily: 'inherit', padding: 0, border: 'none', background: 'none', marginBottom: 6 }, onClick: refresh }, t('action.refresh') + ' ↻'),
-          h('div', { style: S.muted },
-            costState.status === 'loading' && !hasSnapCost
-              ? t('cost.loading')
-              : (costState.status === 'error' && !hasSnapCost
-                ? fmt(t, 'cost.loadFailed', { reason: str(costState.reason) || '?' })
-                : fmt(t, 'cost.overviewLine', {
-                  total: `$${totalUsd.toFixed(2)}`, n: records, savings: savingsValue,
-                })),
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 } },
+            h('span', { style: S.sectionTitle }, t('cost.overviewTitle')),
+            h('button', { type: 'button', style: S.btn, onClick: refresh }, t('action.refresh')),
           ),
         ),
         // 逐笔明细 / 趋势 / 按模型 / 节省账本 全部收进「详细数据」折叠；
         // 失败时默认展开，让错误当场可见。
         h('details', { style: S.card, open: failed },
-          h('summary', { style: { cursor: 'pointer', fontWeight: 600 } },
+          h('summary', { style: S.summary },
             fmt(t, 'cost.detailBlock', { n: records })),
           h('div', { style: { marginTop: 10 } },
             h(CostDetailBlocks, { t, state: detailState, page, setPage, onRetry: refresh }),
@@ -3035,7 +3055,17 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         setPresetNotice({ ok, msg: ok ? fmt(t, 'preset.applied', { name: str(preset.label) || id }) : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}` })
       }, [config, revision, mutate, t])
 
-      return h('div', { style: S.wrap },
+      return h('div', { className: 'dsh-smart-wrap', style: S.wrap },
+        h('style', { 'data-dsh-smart-ui': 'true' }, `
+          .dsh-smart-wrap button { transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+          .dsh-smart-wrap button:where(:not(:disabled)):hover { border-color: var(--dsw-alias-border-selected); }
+          .dsh-smart-wrap button:where(:not(:disabled)):active { box-shadow: inset 0 1px 2px var(--dsw-alias-bg-mask-2); }
+          .dsh-smart-wrap button:focus-visible,
+          .dsh-smart-wrap input:focus-visible,
+          .dsh-smart-wrap select:focus-visible,
+          .dsh-smart-wrap summary:focus-visible { outline: 2px solid var(--dsw-alias-border-selected); outline-offset: 2px; }
+          .dsh-smart-wrap summary:hover { color: var(--dsw-alias-label-primary); }
+        `),
         h('div', { style: S.tabs },
           TABS.map(item => h('button', {
             key: item.id, type: 'button', style: S.tab(tab === item.id),
