@@ -260,3 +260,67 @@ test('rankAccountsForHop consumes ctx.speedEvidence (measured beats manual tier)
   assert.equal(withEvidence[0].id, 'measured')
 })
 
+// ---------------------------------------------------------------------------
+// 6. P1 (task-9): the adapter actually produces speed evidence
+// ---------------------------------------------------------------------------
+
+test('adapter records a real successful call as speed evidence (measured ttft reaches the pool)', async () => {
+  const runtime = timedRuntime([
+    { sleepMs: 15, chunk: { type: 'text-delta', text: 'hi' } },
+    { chunk: { type: 'usage', usage: { inputTokens: 3, outputTokens: 4 } } },
+    { chunk: { type: 'finish', reason: { kind: 'stop' } } },
+  ])
+  const meter = new CostMeter({ dir: mkdtempSync(join(tmpdir(), 'lat6-')) })
+  const adapter = new SmartAdapter({
+    runtime,
+    chains: { auto: [{ provider: 'p1', model: 'm1' }] },
+    meter,
+  })
+  assert.deepEqual(adapter.accountPool.readSpeedEvidence(), {}, 'no evidence before any call')
+  await collect(adapter)
+  await meter.close()
+
+  const evidence = adapter.accountPool.readSpeedEvidence()
+  const accountId = 'hop:p1/m1'
+  assert.ok(evidence[accountId], 'the implicit hop account has measured evidence')
+  assert.ok(evidence[accountId].ttftMs >= 10, 'ttft reflects the scripted 15ms first-chunk delay, got ' + evidence[accountId].ttftMs)
+  assert.ok(evidence[accountId].tokensPerSecond > 0, 'tokensPerSecond derived from real usage')
+})
+
+test('adapter records NOTHING for a failed attempt (failure is not speed evidence)', async () => {
+  const failing = timedRuntime([
+    { chunk: { type: 'finish', reason: { kind: 'error', failure: { code: 'QUOTA', message: '402 exhausted' } } } },
+  ])
+  const healthy = timedRuntime([
+    { sleepMs: 12, chunk: { type: 'text-delta', text: 'ok' } },
+    { chunk: { type: 'finish', reason: { kind: 'stop' } } },
+  ])
+  let hop = 0
+  const streams = [failing, healthy]
+  const switching = {
+    get stream() {
+      return options => {
+        const picked = streams[Math.min(hop, streams.length - 1)]
+        hop += 1
+        return picked.stream(options)
+      }
+    },
+    resolveRetryPolicy(c) { return c },
+    resolveModelInfo(p, m) { return Promise.resolve({ provider: p, id: m, name: m }) },
+    imageRequestPricing() { return undefined },
+  }
+  const meter = new CostMeter({ dir: mkdtempSync(join(tmpdir(), 'lat7-')) })
+  const adapter = new SmartAdapter({
+    runtime: switching,
+    chains: { auto: [{ provider: 'p1', model: 'm1' }, { provider: 'p2', model: 'm1' }] },
+    meter,
+  })
+  const chunks = await collect(adapter)
+  assert.equal(chunks.at(-1).reason.kind, 'stop', 'second hop succeeded')
+  await meter.close()
+
+  const evidence = adapter.accountPool.readSpeedEvidence()
+  assert.deepEqual(Object.keys(evidence), ['hop:p2/m1'],
+    'only the successful hop is evidence; the failed hop never produced content')
+})
+

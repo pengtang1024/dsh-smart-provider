@@ -217,3 +217,85 @@ test('all accounts cooling down yields a RATE_LIMIT error without any call', asy
   assert.equal(runtime.calls.length, 0)
   assert.equal(chunks.at(-1).reason.failure.code, 'RATE_LIMIT')
 })
+
+// ---------------------------------------------------------------------------
+// P1 (task-9): measured speed evidence must actually reach account selection.
+// Before this task ctx.speedEvidence had no producer, so the documented
+// "measured > speedTier > neutral" chain always fell through to a speedTier
+// most users never set (0.5 forever).
+// ---------------------------------------------------------------------------
+
+const SPEED_CHAINS = { auto: [{ provider: 'p1', model: 'm1' }] }
+const SPEED_ACCOUNTS = [
+  { id: 'acctA', provider: 'p1', models: ['m1'] },
+  { id: 'acctB', provider: 'p1', models: ['m1'] },
+]
+// Only the speed factor can move these two accounts: same provider (so the
+// respectHopRoute layer ties), same model/prices, same usage, no tiers.
+const SPEED_ONLY_RANKING = { enabled: true, strategy: 'custom', weights: { cost: 0, speed: 1, tier: 0, load: 0 } }
+
+test('P1: without measurement the ordering is exactly the legacy comparator order', () => {
+  const ranked = new AccountPool({ chains: SPEED_CHAINS, accounts: SPEED_ACCOUNTS, ranking: SPEED_ONLY_RANKING })
+  const legacy = new AccountPool({ chains: SPEED_CHAINS, accounts: SPEED_ACCOUNTS })
+  assert.deepEqual(ranked.readSpeedEvidence(), {}, 'a fresh pool has no evidence')
+  const rankedIds = ranked.plan(SPEED_CHAINS.auto).map(a => a.account.id)
+  assert.deepEqual(rankedIds, legacy.plan(SPEED_CHAINS.auto).map(a => a.account.id),
+    'no evidence -> byte-identical to the pre-task-9 legacy order')
+  assert.deepEqual(rankedIds, ['acctA', 'acctB'])
+})
+
+test('P1: a faster measured ttft moves that account to the front of the same hop', () => {
+  const pool = new AccountPool({ chains: SPEED_CHAINS, accounts: SPEED_ACCOUNTS, ranking: SPEED_ONLY_RANKING })
+  pool.recordLatency('acctB', { ttftMs: 300, tokensPerSecond: 45 })   // fast band
+  pool.recordLatency('acctA', { ttftMs: 5000, tokensPerSecond: 4 })   // slow band
+  assert.deepEqual(pool.plan(SPEED_CHAINS.auto).map(a => a.account.id), ['acctB', 'acctA'],
+    'measured fast account wins the hop')
+  // Real evidence now overrides a pessimistic manual speedTier as well.
+  const tiered = new AccountPool({
+    chains: SPEED_CHAINS,
+    accounts: [
+      { id: 'measured', provider: 'p1', models: ['m1'], ranking: { speedTier: 'slow' } },
+      { id: 'manual', provider: 'p1', models: ['m1'], ranking: { speedTier: 'normal' } },
+    ],
+    ranking: SPEED_ONLY_RANKING,
+  })
+  assert.deepEqual(tiered.plan(SPEED_CHAINS.auto).map(a => a.account.id), ['manual', 'measured'],
+    'baseline: manual normal tier (0.6) beats the manual slow tier (0.2) before any measurement')
+  tiered.recordLatency('measured', { ttftMs: 250 })
+  assert.deepEqual(tiered.plan(SPEED_CHAINS.auto).map(a => a.account.id), ['measured', 'manual'],
+    'measured ttft overrides the hand-set tier end to end')
+})
+
+test('P1: bad samples (0 / NaN / negative / missing / non-numeric) are ignored', () => {
+  const pool = new AccountPool({ chains: SPEED_CHAINS, accounts: SPEED_ACCOUNTS, ranking: SPEED_ONLY_RANKING })
+  for (const sample of [{ ttftMs: 0 }, { ttftMs: Number.NaN }, { ttftMs: -5 }, { ttftMs: Infinity },
+    {}, { ttftMs: 'abc' }, null, undefined]) {
+    assert.equal(pool.recordLatency('acctA', sample), false, 'rejected: ' + JSON.stringify(sample))
+  }
+  assert.equal(pool.recordLatency('', { ttftMs: 120 }), false, 'empty account id rejected')
+  assert.deepEqual(pool.readSpeedEvidence(), {}, 'no evidence recorded from bad samples')
+  assert.deepEqual(pool.plan(SPEED_CHAINS.auto).map(a => a.account.id), ['acctA', 'acctB'],
+    'ordering unchanged by rejected samples')
+})
+
+test('P1: EWMA smooths samples (one outlier cannot pin the account) and stays bounded by 5', () => {
+  const pool = new AccountPool({ chains: SPEED_CHAINS, accounts: SPEED_ACCOUNTS, ranking: SPEED_ONLY_RANKING })
+  pool.recordLatency('acctA', { ttftMs: 200 })
+  assert.equal(pool.readSpeedEvidence().acctA.ttftMs, 200, 'first sample is stored as measured')
+  pool.recordLatency('acctA', { ttftMs: 4000 })
+  assert.equal(pool.readSpeedEvidence().acctA.ttftMs, 2100, 'second sample averages (alpha 1/2)')
+  for (let i = 0; i < 8; i += 1) pool.recordLatency('acctA', { ttftMs: 4000 })
+  const smoothed = pool.readSpeedEvidence().acctA.ttftMs
+  assert.ok(smoothed > 3000 && smoothed < 4000, 'converges toward recent samples, got ' + smoothed)
+})
+
+test('P1: the evidence table can be handed to a rebuilt pool (hot reload safety)', () => {
+  const pool = new AccountPool({ chains: SPEED_CHAINS, accounts: SPEED_ACCOUNTS, ranking: SPEED_ONLY_RANKING })
+  pool.recordLatency('acctA', { ttftMs: 300 })
+  const rebuilt = new AccountPool({
+    chains: SPEED_CHAINS, accounts: SPEED_ACCOUNTS, ranking: SPEED_ONLY_RANKING,
+    speedEvidence: pool.speedEvidence,
+  })
+  assert.deepEqual(rebuilt.readSpeedEvidence(), { acctA: { ttftMs: 300 } })
+  assert.deepEqual(rebuilt.plan(SPEED_CHAINS.auto).map(a => a.account.id), ['acctA', 'acctB'])
+})
