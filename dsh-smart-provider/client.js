@@ -1128,7 +1128,8 @@ window.__ModuleLoader__.load({
     // 诚实性纪律（本面板的验收核心）：
     //   · 零样本 / 未知状态一律「暂无数据」+ 中性色，绝不显示「不可用」、绝不伪造绿；
     //   · 健康层被配置关闭时明说关闭，不假装正常；
-    //   · 不做 setInterval 倒计时（泄漏风险），只显示快照时间 + 手动「重新读取」。
+    //   · 倒计时用组件内单一 setTimeout 每秒现算（不用 setInterval，避免泄漏），
+    //     卸载/隐藏时清理；保留快照时间 + 手动「重新读取」。
     const HEALTH_SUCCESS_COLOR = 'var(--dsw-alias-state-success-primary)'
     // 冷却/降级用警告色，**绝不用 error 红**。按卡上写法优先 --dsw-alias-state-warning-primary；
     // 实测本构建（DSH NEXT app.asar）里该名定义数为 0，真正存在的是
@@ -1192,18 +1193,78 @@ window.__ModuleLoader__.load({
       if (k === 'metered') return t('health.tierMetered')
       return t('health.tierUnknown')
     }
-    const samplesText = samples => {
+    // 零样本 = 暂无数据：字段缺失或 success+failure 全为 0 都算零样本，绝不写「0 / 0」。
+    const samplesInfo = samples => {
       const s = obj(samples)
-      return `${Number(s.success) || 0} / ${Number(s.failure) || 0}`
+      const ok = Number(s.success) || 0
+      const fail = Number(s.failure) || 0
+      return { ok, fail, total: ok + fail }
+    }
+    const samplesText = (t, samples) => {
+      const { ok, fail, total } = samplesInfo(samples)
+      return total === 0 ? t('health.noSamples') : `${ok} / ${fail}`
+    }
+    // 可信度阈值与 lib/availability.js CONFIDENCE 对齐：HIGH .95 / MEDIUM .7 / LOW .25。
+    const confText = (t, conf) => {
+      const n = Number(conf)
+      if (!Number.isFinite(n) || n <= 0) return t('health.confUnknown')
+      if (n >= 0.95) return t('health.confHigh')
+      if (n >= 0.7) return t('health.confMedium')
+      if (n >= 0.25) return t('health.confLow')
+      return t('health.confUnknown')
+    }
+    // hop: 前缀只作内部标识，显示层去掉；完整值放 title，长 id 靠 overflowWrap 断行。
+    const displayId = raw => {
+      const s = str(raw)
+      return s.startsWith('hop:') ? s.slice(4) : s
+    }
+    // 倒计时现算：优先 wire 上的 until - Date.now()；until 缺失退首次生成的 remainingMs 兜底。
+    const remainNow = row => {
+      const until = Number(row.until)
+      if (Number.isFinite(until) && until > 0) return Math.max(0, until - Date.now())
+      return Number(row.remainingMs) || 0
     }
     // 诊断行沿用成本页的样式（11px 等宽，可断行），失败原因不隐藏。
     const diagStyle = { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' }
+    const implicitBadge = { ...S.muted, marginLeft: 6, fontSize: 10, padding: '1px 6px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)' }
+    const idCell = { ...S.td, overflowWrap: 'anywhere' }
 
     function AccountHealthPanel({ t, snapshot, diag, loading, onRefresh }) {
       const snap = obj(snapshot)
       const accounts = arr(snap.accounts)
       const routes = arr(snap.routes)
       const snapAt = Number(snap.generatedAt)
+      // 倒计时用组件内单一 setTimeout 每秒 tick 重绘（不用 setInterval）。
+      // tab 隐藏时暂停；卸载时 alive=false + clearTimeout + 摘监听，三重清理防泄漏。
+      const [, setTick] = useState(0)
+      const aliveRef = useRef(true)
+      useEffect(() => {
+        let alive = true
+        aliveRef.current = true
+        let timer = null
+        const schedule = () => {
+          if (!alive || (typeof document !== 'undefined' && document.hidden)) return
+          timer = setTimeout(() => {
+            if (!alive) return
+            setTick(v => v + 1)
+            schedule()
+          }, 1000)
+        }
+        const onVis = () => {
+          if (typeof document === 'undefined' || !alive) return
+          if (document.hidden) {
+            if (timer) { clearTimeout(timer); timer = null }
+          } else if (!timer) schedule()
+        }
+        schedule()
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis)
+        return () => {
+          alive = false
+          aliveRef.current = false
+          if (timer) clearTimeout(timer)
+          if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis)
+        }
+      }, [])
 
       // 分支顺序即优先级：loading → 无通道 → 健康层关闭 → 无数据 → 两张表。
       let body
@@ -1226,15 +1287,16 @@ window.__ModuleLoader__.load({
             h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.accountsTitle')),
             accounts.length === 0
               ? h('div', { style: S.muted }, t('health.empty'))
-              : h('table', { style: S.table },
+              : h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { ...S.table, minWidth: 640 } },
                 h('thead', null, h('tr', null,
-                  h('th', { style: S.th }, t('health.id')),
-                  h('th', { style: S.th }, t('health.provider')),
-                  h('th', { style: S.th }, t('health.state')),
-                  h('th', { style: S.th }, t('health.coolRemain')),
-                  h('th', { style: S.th }, t('health.streak')),
-                  h('th', { style: S.th }, t('health.usage')),
-                  h('th', { style: S.th }, t('health.samples')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.id')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.provider')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.state')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.coolRemain')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.streak')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.usage')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
                 )),
                 h('tbody', null, accounts.map((a, i) => {
                   const row = obj(a)
@@ -1242,12 +1304,13 @@ window.__ModuleLoader__.load({
                   const state = str(row.state).toUpperCase()
                   const reason = row.reason === null || row.reason === undefined ? '' : str(row.reason)
                   const cooling = state === 'COOLING' || state === 'HALF_OPEN'
-                  const remain = Number(row.remainingMs) || 0
-                  return h('tr', { key: `a:${str(row.id) || i}` },
-                    h('td', { style: S.td },
-                      h('div', null,
-                        str(row.id) || '—',
-                        row.implicit === true ? h('span', { style: { ...S.muted, marginLeft: 6 } }, t('health.implicit')) : null,
+                  const remain = cooling ? remainNow(row) : 0
+                  const fullId = str(row.id)
+                  return h('tr', { key: `a:${fullId || i}` },
+                    h('td', { style: idCell },
+                      h('div', { title: fullId || undefined },
+                        displayId(fullId) || '—',
+                        row.implicit === true ? h('span', { style: implicitBadge }, t('health.implicit')) : null,
                       ),
                       h('div', { style: S.muted }, fmt(t, 'health.lastSeen', {
                         ok: row.lastSuccessAt === null || row.lastSuccessAt === undefined ? t('health.never') : fmtClock(row.lastSuccessAt),
@@ -1265,23 +1328,25 @@ window.__ModuleLoader__.load({
                     h('td', { style: S.td }, cooling && remain > 0 ? fmtDuration(t, remain) : '—'),
                     h('td', { style: S.td }, String(Number(row.streak) || 0)),
                     h('td', { style: S.td }, String(Number(row.usage) || 0)),
-                    h('td', { style: S.td }, samplesText(row.samples)),
+                    h('td', { style: S.td }, samplesText(t, row.samples)),
                   )
                 })),
+                ),
               ),
           ),
           h('div', null,
             h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.routesTitle')),
             routes.length === 0
               ? h('div', { style: S.muted }, t('health.empty'))
-              : h('table', { style: S.table },
+              : h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { ...S.table, minWidth: 560 } },
                 h('thead', null, h('tr', null,
-                  h('th', { style: S.th }, t('health.provider')),
-                  h('th', { style: S.th }, t('health.model')),
-                  h('th', { style: S.th }, t('health.health')),
-                  h('th', { style: S.th }, t('health.tier')),
-                  h('th', { style: S.th }, t('health.confidence')),
-                  h('th', { style: S.th }, t('health.samples')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.provider')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.model')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.health')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.tier')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.confidence')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
                 )),
                 h('tbody', null, routes.map((r, i) => {
                   const row = obj(r)
@@ -1293,10 +1358,11 @@ window.__ModuleLoader__.load({
                       h('span', { style: { color: routeHealthColor(row.health), fontWeight: 500 } }, routeHealthText(t, row.health)),
                     ),
                     h('td', { style: S.td }, tierText(t, row.tier)),
-                    h('td', { style: S.td }, Number.isFinite(conf) ? conf.toFixed(2) : '—'),
-                    h('td', { style: S.td }, samplesText(row.samples)),
+                    h('td', { style: S.td }, confText(t, conf), Number.isFinite(conf) ? h('div', { style: S.muted, title: `${t('health.confidence')}: ${conf.toFixed(2)}` }, conf.toFixed(2)) : null),
+                    h('td', { style: S.td }, samplesText(t, row.samples)),
                   )
                 })),
+                ),
               ),
           ),
         )
@@ -1312,9 +1378,11 @@ window.__ModuleLoader__.load({
             h('span', { style: S.muted }, fmt(t, 'health.snapshotAt', { time: snapshot && Number.isFinite(snapAt) && snapAt > 0 ? fmtClock(snapAt) : '—' })),
             h('button', {
               type: 'button',
-              style: S.btn,
-              onClick: () => { try { void onRefresh?.() } catch { /* 刷新失败由 diag 行自曝 */ } },
-            }, t('health.refresh')),
+              style: { ...S.btn, opacity: loading ? 0.6 : 1, cursor: loading ? 'not-allowed' : undefined },
+              disabled: loading,
+              'aria-busy': loading ? 'true' : undefined,
+              onClick: () => { try { void onRefresh?.(() => aliveRef.current) } catch { /* 刷新失败由 diag 行自曝 */ } },
+            }, loading ? t('health.refreshing') : t('health.refresh')),
           ),
         ),
         body,
@@ -1825,7 +1893,7 @@ window.__ModuleLoader__.load({
       'ranking.priorityHelp': '注意：priority 数字越小越优先，与等级（tier 越高越优先）方向相反。',
       'ranking.probeEnabled': '新模型自动探测（默认开启）', 'ranking.probeEnabledHelp': '默认开启：新模型自动发一次极小请求判断是否免费（免费0成本，付费≤1 token，结果缓存7天不重复花钱）。不需要可关掉。',
       'routing.title': '智能路由（两层）', 'routing.intro': '这里保存你对智能路由的设置。保存后立即生效，无需重启。',
-      'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '内置默认启用均衡策略；你也可以按自己的偏好切换或关闭。',
+      'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '内置默认启用，各策略中立等权、不偏向省钱或速度；你也可以显式关闭。',
       'routing.strategy': '选哪种路由风格',
       'routing.position': '模型定位', 'routing.positionHelp': '这是只读说明，不是可编辑的表格。',
       'routing.positionExplain': '每台模型的定位由自身能力自动推导（如是否支持推理、图片、长上下文）；个别模型可另外手填。当前页面不读取逐台模型的定位结果。',
@@ -1864,6 +1932,8 @@ window.__ModuleLoader__.load({
       'health.confidence': '可信度', 'health.routesTitle': '各模型路由健康',
       'health.accountsTitle': '账号池状态',
       'health.snapshotAt': '快照时间 {time}', 'health.refresh': '重新读取',
+      'health.refreshing': '读取中…', 'health.noSamples': '暂无样本',
+      'health.confHigh': '高', 'health.confMedium': '中', 'health.confLow': '低', 'health.confUnknown': '未知',
       'health.diag': '诊断：',
       'health.lastSeen': '最近成功 {ok} · 最近失败 {fail}', 'health.never': '无',
       'health.soon': '即将到期',
@@ -1942,7 +2012,7 @@ window.__ModuleLoader__.load({
       'ranking.priorityHelp': 'Note: lower priority number wins — opposite to tier (higher wins).',
       'ranking.probeEnabled': 'Auto-probe new models (on by default)', 'ranking.probeEnabledHelp': 'On by default: new models get one tiny request to detect if free (free=0 cost, paid ≤1 token, cached 7 days). Turn off to opt out.',
       'routing.title': 'Two-layer smart routing', 'routing.intro': 'These are your saved routing settings. Saving applies them live — no restart.',
-      'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'On by default with the balanced strategy; you can switch or turn it off.',
+      'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'On by default with neutral, equal-weight strategies — no bias toward cost or speed. You can turn it off explicitly.',
       'routing.strategy': 'Routing style',
       'routing.position': 'Model position', 'routing.positionHelp': 'Read-only explanation, not an editable table.',
       'routing.positionExplain': 'Each model position is derived from its own capabilities (reasoning, vision, long context); some can be declared manually. This page does not read per-model derived results.',
@@ -1981,6 +2051,8 @@ window.__ModuleLoader__.load({
       'health.confidence': 'Confidence', 'health.routesTitle': 'Per-model route health',
       'health.accountsTitle': 'Account pool state',
       'health.snapshotAt': 'Snapshot {time}', 'health.refresh': 'Read again',
+      'health.refreshing': 'Reading…', 'health.noSamples': 'No samples yet',
+      'health.confHigh': 'High', 'health.confMedium': 'Medium', 'health.confLow': 'Low', 'health.confUnknown': 'Unknown',
       'health.diag': 'Diagnostics:',
       'health.lastSeen': 'Last success {ok} · last failure {fail}', 'health.never': 'none',
       'health.soon': 'expiring soon',
