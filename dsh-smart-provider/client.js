@@ -1746,20 +1746,13 @@ window.__ModuleLoader__.load({
 // >>> custom-routes:candidates >>>
 const CUSTOM_PROVIDERS = ["x-opencode-free"];
 const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-202611","web-search-free","cat-jam-free","longcat-2.5-preview-free","step-5-preview-free"];
-// BEGIN free-model availability (口径 2026-11-24 修正: 任一 provider 成功即 available)
-// status = "该模型在 DSH 里是否有任一 provider 成功用过", 非 "opencode 上下文下可不可用"。
-// 判据双源: cost.jsonl 的 actual_model + failure_code=null; host 日志 request.complete/completed
-// (workbuddy 路由不写账本). task-77 的 "chat 400" 仅为 opencode 单上下文结论, 不推广.
-// hy4-flash-free: available — 账本 x-opencode-free 成功 8532 次; upstream /models 200 + chat 200
-// hy4flash-free: available — workbuddy provider 下 request.complete/completed 140+ 次且仍在涨;
-//   账本不记录 workbuddy 路由; opencode 上下文 400 是另一 provider 的结论, 不代表该模型全局不可用
-// hy4-flash-free-trial-202611: unavailable — promotion badge id (not a model); 仅 opencode chat 400;
-//   账本与日志双源均无成功记录
-// web-search-free: unavailable — top-level dsh-free-search plugin, not an LLM; 仅 opencode chat 400;
-//   双源均无成功记录
-// cat-jam-free: unavailable — 2026-11-24 仅 opencode chat probe 400; 双源均无成功记录
-// longcat-2.5-preview-free: unavailable — 2026-11-24 仅 opencode chat probe 400 (historical deprecated);
-//   双源均无成功记录
-// step-5-preview-free: unavailable — 2026-11-24 仅 opencode chat probe 400; 双源均无成功记录
+// BEGIN free-model availability (generated — task-77)
+// hy4-flash-free: available — upstream /models 200 + chat 200 content=2; E2E 3473 cost=0
+// hy4flash-free: available — workbuddy/hy4flash-free: host log request.complete/completed x140 and rising (2026-11-24); ledger does not record workbuddy route; opencode chat 400 was single-context only
+// hy4-flash-free-trial-202611: unavailable — promotion badge id (not a model); opencode chat 400 only; no success in ledger or host logs (no other provider found)
+// web-search-free: unavailable — top-level dsh-free-search plugin, not an LLM; opencode chat 400 only; no success in ledger or host logs
+// cat-jam-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
+// longcat-2.5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only (historical deprecated); no success in ledger or host logs (other providers not observed)
+// step-5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
 // END free-model availability
 // <<< custom-routes:candidates <<<

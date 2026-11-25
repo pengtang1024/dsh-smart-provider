@@ -2,6 +2,28 @@
 
 本项目所有显著变更都记录在本文件中。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-11-25
+
+### Added
+
+- **冷启动健康水合**：新增 `lib/health-persistence.js`。插件激活时从 `cost.jsonl` + `probe-cache.jsonl` 纯读重放已持久化的健康证据 —— L1 逐行走 `updateHealth()`（与实时路径、探测共用同一个分类入口，键保持 `(provider, modelId)` 元组粒度），L2 交给既有的 `rebuildFromLedger()` 重建后合并进适配器持有的同一注册表对象，探测结论（free / metered / unknown）回灌 L1。此前 `buildHealthDeps()` 交出空注册表、`rebuildFromLedger()` 没有调用方，每次重载都会清零已经由真实流量证明过的路由判决、计费置信度与账号冷却/连击。读取上界 = 4 MiB 尾部字节窗 + 5000 行（`DEFAULT_HYDRATION_BOUNDS`，常量、不可配）；只读，文件缺失 / 目录不存在 / 损坏行 / 半行 / 尾部截断都不抛错；`health=false` 时完全不水合（连文件都不打开）；重放不覆盖更新的实时证据（按时间戳比对）；一行 info 汇总重放与跳过计数。
+- **tier 诊断可行动化**：新增 `explainTierMiss()`。层一没有候选匹配时 relax 行为不变（不阻断请求、所有路由可用），但告警从「只报任务类型」升级为可照做的诊断：缺失的位置标签、每个候选路由实际携带的标签（超过 8 个截断并注明剩余数量）、该标签为什么无法自动推导（`thrifty` / `swift` 永远只能手填）、可复制的 `positionOverrides` 两种写法、`tierPolicy` 只能改尝试顺序而不能凭空造标签的边界说明，以及明确的 NOT blocked。首行字面保持不变，`grep 'relaxing to all available routes'` 仍然有效；空路由列表也会留一行可行动告警而不是静默返回 `[]`。
+- **query-cost 报表追加两段**：`scripts/query-cost.mjs` 在原有花费汇总与分组花费表之后新增 **failure rate**（每组 `failed / calls`，只有真实 `failure_code` 才算失败，缺失或空串算成功）与 **latency**（ttft 均值、nearest-rank `p50`、ttft 样本数、tok/s 均值、tps 样本数）。缺延迟键的老行被排除在延迟统计之外、绝不当 0ms；样本 <3 打 `*`；无样本打 `-`；整次选择无样本给诚实空态文案；垃圾值不产生 `NaN` / `Infinity`。
+- **测试门禁自动发现 + 发现守卫**：`scripts/run-tests.mjs` 全量模式扫 `test/*.test.mjs` 自动执行（**新增测试文件无需注册**）；`test/` 下存在未被执行的 `.mjs` 即非 0 退出并逐个点名，`test/` 下一个 suite 都没有也非 0 退出（避免「跑 0 个测试=成功」）。
+
+### Changed
+
+- **`positionOverrides` 双形态**：对象形态 `{ "vendor/model": { "tags": [...] } }`（主推，与 `registry/position-overrides.user.yaml` 的 `overrides` 同形）与数组形态 `{ "vendor/model": [...] }` 都受支持；两者都经小写/去空格/白名单过滤后与 catalog 自动推导结果**保守合并**（不是替换）。README §七 的配置示例改为对象形态，并点明两种写法都有效。
+- **`tierLimit` 语义明确化**：非有限值（`NaN`）、`-1`、`0` 回落默认 2 层，小数向下取整（`2.9 → 2`），`1` / `2` 正常切片；该语义写进配置字段说明与 `selectTiers()` 的 JSDoc。
+- **文档与包结构同步**：README / docs/DETAIL.md 同步以上改动、包结构（`lib/health-persistence.js`、`test/persistence.test.mjs`、`test/routing-tier.test.mjs`、`test/query-cost.test.mjs`）与实测验证数字（`npm test` 159/159、`npm run test:unit` 123/123，2026-11-25，退出码 0）；README §十 改写为「自动发现 + 发现守卫」门禁说明，§十一 新增两条已知限制。
+- 版本号 `1.1.0 → 1.2.0`（本次三块改动均为 feat 级）。
+
+### Fixed
+
+- **`positionOverrides` 数组形态静默无效**：实现此前只读 `.tags`，用户照 README 文档写的数组形态被完全忽略 —— `selectTiers` 依旧报 `no tier matches ... relaxing`，且没有任何提示。现在两种形态等价生效。**这是一处可感知的行为变化**：以前「配了等于没配」的数组写法开始真正影响选路。
+- **`tierLimit` 非法值让层一自相矛盾**：`-1` 会静默丢掉最后一层、`0` 会在已有匹配的情况下一层都不选，与「层一永不阻断请求」的契约打架；现在统一回落默认值。
+- **测试门禁假绿**：新测试文件躺在 `test/` 却没注册进清单时，门禁照样全绿而测试从未执行（连续三个 task 踩过）；现在自动发现 + 发现守卫把「存在但永不执行」变成非 0 退出。
+
 ## [1.1.0] - 2026-11-25
 
 ### Added

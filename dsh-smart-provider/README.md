@@ -43,6 +43,7 @@ dsh-smart-provider/
 │   ├── account-health.js     L2 账号状态机：冷却/退避/半开恢复、失败分层、账本重建
 │   ├── provider-topology.js  L2a 拓扑分类：自带池 vs 直连，纯结构化证据（无白名单）
 │   ├── health-setup.js       L7 接线：默认开启、opt-out 解析、注册表组装
+│   ├── health-persistence.js 冷启动水合：从 cost.jsonl / probe-cache.jsonl 只读重放健康证据（task-6）
 │   ├── probe.js              极小真实探测（1 token）+ TTL 缓存，替代按名字猜免费
 │   ├── ranking.js            账号择优评分（默认关闭，中立 .25 默认）
 │   ├── routing.js            P2 两层智能路由四个纯函数（默认关闭）
@@ -60,15 +61,18 @@ dsh-smart-provider/
 │   ├── query-cost.mjs        “模型 X 花了多少钱 / 占比多少” 命令行工具
 │   ├── gen-custom-routes.mjs 由 user.yaml 生成自定义路由配置
 │   ├── validate-custom-routes.mjs 自定义路由配置校验
-│   └── run-tests.mjs         统一验证入口：语法检查 + 全套测试（自动选 Electron Node）
-├── test/
+│   └── run-tests.mjs         统一验证入口：语法检查 + 自动发现的全部测试（含发现守卫，自动选 Electron Node）
+├── test/                    放进来就会被执行（*.test.mjs，无需注册；见 §十）
 │   ├── account-pool.test.mjs 账号池回归测试（需 DSH runtime 读 app.asar）
-│   ├── health.test.mjs       健康层回归测试（纯逻辑，任何 Node 可跑）
-│   ├── ranking.test.mjs      路由排序回归测试（纯逻辑）
-│   ├── pricing.test.mjs      定价降级与解析顺序回归测试（纯逻辑）
+│   ├── compaction.test.mjs   虚拟模型 contextWindow / 压缩预检回归测试（task-5，需 DSH runtime）
+│   ├── health.test.mjs       健康层回归测试（55 条纯逻辑，任何 Node 可跑）
 │   ├── latency.test.mjs      延迟度量与速度因子回归测试（需 DSH runtime）
 │   ├── loading.test.mjs      加载路径回归测试（需 DSH runtime）
-│   └── compaction.test.mjs   虚拟模型 contextWindow / 压缩预检回归测试（task-5，需 DSH runtime）
+│   ├── persistence.test.mjs  冷启动水合回归测试（task-6，19 条纯逻辑）
+│   ├── pricing.test.mjs      定价降级与解析顺序回归测试（纯逻辑）
+│   ├── query-cost.test.mjs   query-cost 报表段回归测试（task-8，11 条纯逻辑）
+│   ├── ranking.test.mjs      路由排序回归测试（纯逻辑）
+│   └── routing-tier.test.mjs tier 选择 / relax 诊断 / 手填标签回归测试（task-7，14 条纯逻辑）
 ├── locale/{en,zh}.json       插件显示元数据
 ├── docs/DETAIL.md            插件管理器详情页
 ├── icon.svg                  原创图标
@@ -237,6 +241,29 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 客户端拿不到 `stream`（只有 Host 有），所以探测在 Host 侧：每个 `(provider, model)` 发**一次 max_tokens=1** 的请求，读 `usage.cost`/`billingSource` 得出 `free`/`metered`/`unknown`。结论写入 L1 并带正确的置信度；缓存 7 天，单次调用最多 3 个真实探测，超出返回诚实的 `unknown`（附身份，不隐藏）。`unknown` **永不阻断**——“不能挡”这条规则优先于任何猜测。
 
+### 冷启动水合 —— 重放磁盘上已经证明过的证据（1.2.0）
+
+`buildHealthDeps()` 交出的注册表是**空**的，于是 1.2.0 以前每次重载/重启插件，L1 的路由判决（`HEALTHY` / `DEGRADED` / `DEPRECATED`、免费还是付费的计费置信度）与 L2 的账号状态（冷却、连击、样本）全部清零 —— 而这些证据早已被真实流量证明过、就躺在 `cost.jsonl` 里，连 `rebuildFromLedger()` 都没有任何调用方。
+
+现在激活时由 `lib/health-persistence.js` **纯读重放**一次：
+
+- **L1 路由层** —— `cost.jsonl` 逐行走 `updateHealth()`，和实时路径、探测共用同一个分类入口（不另写第二套判定），键保持 `(provider, modelId)` 元组粒度，绝不按 provider 或裸 modelId 合并；`probe-cache.jsonl` 里记录的探测结论（`free` / `metered` / `unknown`）也回灌进 L1，同一 `(provider, model)` 只取最新一条，`unknown` 保持诚实样本、不硬判成免费。
+- **L2 账号层** —— 同一批行交给 `rebuildFromLedger()` 重建冷却/连击/样本，结果**合并进适配器持有的那个注册表对象**，不是造一份新注册表：首屏读到的就是它。
+- **上界 = 4 MiB 尾部字节窗 + 5000 行**（`DEFAULT_HYDRATION_BOUNDS`）。理由：最新几行才代表当前结论；两层本来就有样本上限（L1 滑窗 200、L2 按连击封顶），L1 的计费置信度 20 条免费样本即饱和，重放更老的行不会改变任何判决，只会增加启动耗时。字节窗从行中间开始的那半行会被丢掉，行窗超限时只保留最新 `maxLines` 行。**这两个是常量，没有暴露成用户配置**（见 §十一）。
+- **只读 + 容错**：只 `open(file, 'r')` —— 不 mkdir、不 append、不改写。文件缺失（首次运行）、目录不存在、半行（进程被杀在 append 中途）、损坏行、非对象行一律不抛错：坏账本绝不能挡住插件激活。被跳过的行数与原因（`malformed` / `no-key` / `newer-live`）都进 info 汇总。
+- **不覆盖更新的实时证据**：水合是 `ctx.effect` 里的 fire-and-forget（`apply()` 是同步的，激活不等磁盘），真实请求可能先落地。每行重放前都比对注册表已有记录的时间戳/`updatedAt`，已经有更新证据就跳过（`newer-live`）；时间戳缺失或非法的行按 0 处理，因此必输给任何实时记录。
+- **`health=false` 时不水合**：显式关闭（`health:false` / `health.enabled:false` / `ranking.health.enabled:false`）时 `buildHealthDeps()` 返回 `undefined`，水合返回 `{hydrated:false, reason:'health-disabled'}`，**连文件都不打开**，legacy 路径逐字节不变。
+- **一行 info 汇总**，可用来核对实际重放了什么（实际是一条单行，下面为便于阅读折了行）：
+
+```
+smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malformed=0 no-key=0 newer-live=0)
+  L2 accounts=3 (newer-live=0 no-account=0) | probe-cache.jsonl rows=3 replayed=1 skipped=0
+  (malformed=0 duplicate=2 newer-live=0) | total skipped rows=0 | truncated lines=0+0 bytes=0+0
+  | bounds maxBytes=4194304 maxLines=5000
+```
+
+这是本机 2026-11-25 对真实账本的一次只读重放：224 行只落到 **4** 个 `(provider, modelId)` 键 —— 行数不等于路由数，L1 是按元组归集的；`probe-cache.jsonl` 的 3 行里 2 行同键被 `duplicate` 计数、只回灌最新 1 条。
+
 ### 关闭方式
 
 `health` 与 `ranking.health` 都是 volatile，设置页改完即时生效，无需重启。任一种写法即关闭，且关闭后代码路径逐字节回到 legacy：
@@ -253,7 +280,7 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 ### 配置方式
 
-routing 配置嵌在 `ranking` 对象下（schema.js:62-67 声明 `routing` 字段为 volatile，配置页可改、无需重启）。`adapter.js` 读取 `ranking.routing`；未配置、`null` 或 `enabled !== true` 时该代码路径完全不运行。字段格式：
+routing 配置嵌在 `ranking` 对象下（`schema.js` 的 `routing` 字段声明为 volatile，配置页可改、无需重启）。`adapter.js` 读取 `ranking.routing`；未配置、`null` 或 `enabled !== true` 时该代码路径完全不运行。字段格式：
 
 ```json
 {
@@ -265,7 +292,7 @@ routing 配置嵌在 `ranking` 对象下（schema.js:62-67 声明 `routing` 字�
       "strategy": "balanced",
       "tierPolicy": "auto",
       "weights": { "cost": 0.25, "speed": 0.25, "tier": 0.25, "load": 0.25 },
-      "positionOverrides": { "vendor/model": ["reasoning", "longctx"] },
+      "positionOverrides": { "vendor/model": { "tags": ["reasoning", "longctx"] } },
       "tierLimit": 2,
       "longContextTokens": 200000,
       "dynamicAuto": []
@@ -278,8 +305,8 @@ routing 配置嵌在 `ranking` 对象下（schema.js:62-67 声明 `routing` 字�
 - `strategy` —— 8 种预设之一：`balanced` / `cost-first` / `speed-first` / `reasoning-first` / `longctx-first` / `vision-first` / `legacy` / `custom`；`balanced` 是中立默认，省钱（cost-first）是显式选择。
 - `tierPolicy` —— 层一强制层（`auto` 不强制；`reasoning-first` / `longctx-first` / `vision-first` 会强制优先选对应位置）。
 - `weights` —— 层二账号评分权重，自定义时归一化；routing 启用时会覆盖 ranking 的权重。
-- `positionOverrides` —— 手动指定某模型的位置标签（键用 `provider/model` 或 `model`）。
-- `tierLimit` —— 最多选几个候选层（默认 2）。
+- `positionOverrides` —— 手动指定某模型的位置标签（键用 `provider/model` 或 `model`）。**两种形态都受支持**：上面示例的对象形态 `{ "vendor/model": { "tags": ["reasoning"] } }`（**主推**，与 `registry/position-overrides.user.yaml` 里的 `overrides` 完全同形，方便同一份东西在文件与 cordis 配置之间搬），以及数组形态 `{ "vendor/model": ["reasoning"] }`。两种形态都先做小写 / 去空格 / 白名单过滤，再与 catalog 自动推导出的能力标签**保守合并**（合并，不是替换）。**可感知的行为变化**：1.2.0 之前实现只读 `.tags`，于是 README 自己写的数组形态是**静默无效**的 —— 你照文档配了 `positionOverrides`，`selectTiers` 依旧报 `no tier matches ... relaxing`，且没有任何提示；现在数组形态同样生效，两种写法等价。
+- `tierLimit` —— 最多选几个候选层（默认 2）。**语义**：非有限值（`NaN`）、`-1`、`0` 一律回落到默认 2（以前 `-1` 会静默少一层、`0` 会匹配上了也一层都不选，直接和「层一永不阻断请求」的契约打架）；小数向下取整（`2.9 → 2`）；`1` / `2` 正常切片。
 - `longContextTokens` —— 长上下文判定阈值（默认 200000；tokens 用 chars/4 估算，仅用于选路、不用于计费）。
 - `dynamicAuto` —— 动态 auto 链；只在用户没有配置该 outer model 与 `*` 时生效，显式配置始终优先（向后兼容）。
 
@@ -293,7 +320,33 @@ routing 配置嵌在 `ranking` 对象下（schema.js:62-67 声明 `routing` 字�
 - `tool !== false` → `tool`（聊天模型默认具备，保守策略避免误杀）
 - 所有模型都带 `general`
 
-自动结果总是保守、不会因缺元数据而失败；如果用户手填了 `tags`（受支持标签白名单过滤），则以手填为准并与 `general` 合并，来源标记为 `auto` / `user` / `mixed`。手填适合 catalog 元数据缺失或不准确时纠正位置。
+自动结果总是保守、不会因缺元数据而失败。手填（`positionOverrides`，对象形态 `{tags:[...]}` 与数组形态 `[...]` 都收，见上）走的是**合并**而不是替换：手填标签经小写/去空格/白名单过滤后并入 catalog 自动推导出的能力标签，来源标记为 `auto` / `user` / `mixed`。合并是有意的——早期版本用替换，结果给一个免费模型打上 `thrifty` 就把它的 `vision` 冲掉了，能力过滤静默失效。
+
+`thrifty` 与 `swift` **永远无法自动推导**：它们描述的是「便宜」和「快」，catalog 里没有这两个字段，只能靠 `positionOverrides` 手填（`registry/position-overrides.user.yaml` 就是为此存在的）。手填适合 catalog 元数据缺失或不准确时纠正位置。
+
+### relax 诊断 —— 从「一句话」到「照做就行」（1.2.0）
+
+层一没有候选匹配时不阻断请求：所有可用路由原样放行（relax）。这条规则没变，变的是**告警内容**。以前只报任务类型（`smart routing: no tier matches task "reasoning"; relaxing to all available routes`），你自己得去猜为什么、该改哪里；现在首行**字面保持不变**（`grep 'relaxing to all available routes'` 的老做法继续有效，诊断是紧跟其后的续行），续行把整件事说清楚。
+
+本机直接调用 `selectTiers()` 的实测输出（两个假想路由都不带 `reasoning`）：
+
+```
+smart routing: no tier matches task "reasoning"; relaxing to all available routes
+  task: kind="reasoning" signals=[hard-tokens]
+  needed position tag(s): "reasoning" — no candidate route carries "reasoning"
+  candidate routes (2) and the position tags they do carry:
+    - vendor/cheap-flash: tool, general
+    - vendor/big-flash: tool, general, longctx
+  why "reasoning" is missing everywhere: auto-derived only when the model catalog reports reasoning:true
+  fix — declare the tag for a model you actually have (both shapes below work, copy either one):
+    "ranking": {"routing":{"positionOverrides":{"vendor/cheap-flash/<model-id>":["reasoning"]}}}
+    registry form: {"overrides":{"vendor/cheap-flash/<model-id>":{"tags":["reasoning"]}}}
+    key = "vendor/cheap-flash/<model-id>" (replace <model-id> with a model served by route "vendor/cheap-flash"); a bare model id also works
+  note: tierPolicy only reorders which tier is tried first; it cannot invent a tag that no route carries
+  relax outcome: all 2 route(s) stay available; the request is NOT blocked
+```
+
+诊断固定给出五件事：缺的是哪个位置标签；每个候选路由**实际**带哪些标签（超过 8 个路由会截断并注明「还有 N 个」，不刷屏）；这个标签为什么自动推导不出来（每种标签一条原因，例如 `longctx` 只在 `contextWindow >= longContextTokens` 时自动出现，调大阈值会让更多请求掉进这个坑）；**可复制**的修法（cordis 配置形态与 registry 形态各一份，键用候选里第一个真实路由）；以及 `tierPolicy` 只能改「先试哪层」、**不能凭空造出没有路由携带的标签**这条边界。最后一句明确 `NOT blocked`。空路由列表也留一行可行动告警，不再静默返回 `[]`。
 
 ### 向后兼容
 
@@ -312,7 +365,7 @@ DSH 自身没有货币级计量（`dsh-token-meter` 明确说 “not a billing r
    `usage_complete=false` 表示没有上报 usage 块（不是“零 token”）。
 4. **非阻塞写入** —— 入队只是内存 push；后台 flusher 按批（默认 16 条或 2 秒）执行一次 `fs.appendFile`。不等待流。磁盘错误转给 `ctx.logger.warn`，绝不传播进 LLM 流。
 5. **成本 Tab 真账** —— `lib/cost-stats.js` 读真实 `cost.jsonl` 并聚合（总花费 / 免费笔数 / 付费笔数 / 失败笔数 / 按 provider 拆分），经 `lib/remote.js` 的 `@Remote` 服务 `smartProvider.cost()` 提供给设置页，不依赖估算占位。
-6. **查询脚本** —— 命令行回答花费与占比问题：
+6. **查询脚本** —— 命令行回答花费 / 占比 / 失败率 / 延迟问题（1.2.0 起报表追加两段，见下）：
 
 ```bash
 # 按实际模型汇总（含花费占比列）
@@ -328,6 +381,34 @@ node scripts/query-cost.mjs --account acctA
 node scripts/query-cost.mjs --by-account          # 按 account_id 汇总花费
 node scripts/query-cost.mjs --since 2026-11-23
 ```
+
+**报表结构（1.2.0 起）**：前两段（花费汇总 + 分组花费表）**逐字节不变**，老用法不受影响；其后追加两段：
+
+- **failure rate（按分组）** —— 该组 `failed / calls`。只有真的写了 `failure_code` 的行算失败；`failure_code` 缺失、`null` 或空串算成功（不会把「没记失败码」误读成失败）。
+- **latency（按分组）** —— `ttft ms` 均值、`p50 ms`、`ttft n` 样本数、`tok/s` 均值、`tps n` 样本数。
+  - **缺延迟键的老行不计入延迟统计**，绝不当成 0ms —— 一个 0 会把均值静默拉低，报出一个从未观测到的「变快」。`ttft_ms` 真的等于 0 是合法样本，「没有这个键」是另一件事，两者不能混。
+  - `p50` 用 **nearest-rank**，不做插值：偶数样本的插值中位数是任何一次请求都没产生过的数字，这份报表只印实测值。
+  - 样本 <3 时在 `ttft n` 后打 `*`（一两行的均值不是趋势）；某组某个指标没样本打 `-`；整次选择都没有延迟样本时打一行诚实的空态文案，而不是一片 0。
+  - 垃圾值（`"abc"`、`NaN`、`Infinity`、负数 ttft、0 tok/s）进不了统计，报表里永远不会出现 `NaN` / `Infinity`。
+
+本机实测（2026-11-25，真实账本 221 条，`node scripts/query-cost.mjs`，退出码 0）节选：
+
+```
+failure rate (per route):
+  route                                           calls  failed   fail%
+  workbuddy/deepseek-v4-pro                           3       0    0.0%
+  workbuddy/deepseek-v4-flash                         2       0    0.0%
+  deepseek-account/deepseek-flash                   216       0    0.0%
+
+latency (per route):
+  route                                           ttft ms  p50 ms  ttft n    tok/s  tps n
+  workbuddy/deepseek-v4-pro                             -       -       0        -      0
+  workbuddy/deepseek-v4-flash                           -       -       0        -      0
+  deepseek-account/deepseek-flash                     415     318     182    153.8    182
+  '-' = no sample for that metric (rows without the key are skipped, not counted as 0)
+```
+
+前两条 route 的 `-` 正是「1.1.0 之前写下的老行没有延迟键」：它们照常计入 `calls` / `failed`，但不贡献任何延迟样本。
 
 ---
 
@@ -373,16 +454,32 @@ dsh-smart-provider: discovered N neutral auto hop(s) from live registry
 
 以下命令均在本包目录执行。DSH 运行时探针使用 `ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE"` —— 必须用 Electron 的 Node，因为 `@deepseek-ai/dsh-llm` 在 `app.asar` 内部，普通 Node 读不了 asar。
 
+### 测试门禁：自动发现 + 发现守卫（1.2.0 的根治项）
+
+`scripts/run-tests.mjs` 不再维护硬编码清单，全量模式**扫 `test/*.test.mjs` 并全部执行**：**新增测试文件不需要注册**，放进 `test/` 且以 `.test.mjs` 结尾就会跑。
+
+光有自动发现还不够：文件名拼错、扩展名写错、把一个 helper 停在 `test/` 里，都会变成「文件在磁盘上、却永远不执行」的假绿（连续三个 task 都踩过同一个坑：新测试躺在盘上而没人把它加进数组，门禁照样全绿）。所以门禁带**发现守卫**：`test/` 下只要有未被执行的 `.mjs` 文件，就非 0 退出并逐个点名，提示改成 `<name>.test.mjs` 或移出 `test/`。守卫在两种模式下都**先跑**（`--unit` 也一样），所以漏跑在最快的门禁上就会暴露；反向也兜住：`test/` 下一个 `*.test.mjs` 都没有时同样非 0 退出（否则「跑了 0 个测试」也会显示成功）。
+
+本机实测（2026-11-25）：临时放一个 `test/_guard_probe.tmp.mjs` 后跑 `npm run test:unit`，**EXIT=1**，stderr 为
+
+```
+FAIL: 1 file(s) under test/ are never executed by the full gate:
+  test/_guard_probe.tmp.mjs
+Rename it to <name>.test.mjs (or move it out of test/) so it actually runs.
+```
+
+`--unit` 是一个**纯逻辑白名单**（当前 6 个 suite：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence`），其余需要 DSH runtime 的 suite 会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
+
 ```bash
-# 1) 一条命令跑完整验证门槛（语法检查 + 全套测试，自动选运行时）
+# 1) 一条命令跑完整验证门槛（语法检查 + 全部自动发现的测试，自动选运行时）
 npm test
-# => 语法检查逐文件 ok；tests 109 / pass 109 / fail 0（2026-11-25 实测，退出码 0）
+# => 发现 11 个 suite；语法检查逐文件 ok；tests 159 / pass 159 / fail 0（2026-11-25 实测，退出码 0）
 
-# 2) 只跑纯逻辑套件（health + ranking + pricing，任何 Node 都行，无需 DSH）
+# 2) 只跑纯逻辑子集（6 个 suite，任何 Node 都行，无需 DSH；会打印未覆盖的 suite）
 npm run test:unit
-# => tests 79 / pass 79 / fail 0（退出码 0）
+# => tests 123 / pass 123 / fail 0（退出码 0）
 
-# 3) 不带 npm 时等价写法
+# 3) 不带 npm 时等价写法（全量就是发现出来的那批文件）
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/*.test.mjs
 
 # 4) JSON 完整性（默认表当前 4 行零价声明；示例导出 151 行）
@@ -417,10 +514,18 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 健康层的 55 条断言全部是纯逻辑回归（`test/health.test.mjs`），覆盖：故障分类的 P0/P2 不连累模型、5xx 与 404 的三次阈值、计费证据等级与重命名清零、账号冷却退避与封顶、冷却到期只变半开、半开只发一个许可、自带池路由不被冷却、拓扑无名字白名单、默认开启与四种 opt-out 写法、探测的 1 token 与 TTL 缓存命中。其中探测用例把缓存重定向到临时目录，不写用户家目录。
 
+1.2.0 新增的三个纯逻辑 suite（条数均为本机实测：`node --test <file>` 逐文件跑出来的）：
+
+- `test/persistence.test.mjs` **19 条** —— 冷启动水合：L1/L2/probe 三层分别重放、按 `(provider,modelId)` 归集、缺失文件与目录、损坏行 / 半行 / 尾部截断、行窗与字节窗上界（含边界对齐、过紧窗口返回 0 行）、默认上界就是 4 MiB / 5000 行、四种 opt-out 形态都不水合且不读文件、重放不覆盖更新的实时证据（时间戳为 0 的行必输）、以及「只读：不创建也不修改任何文件」。
+- `test/routing-tier.test.mjs` **14 条** —— 层一选择与 relax 诊断：标签匹配与静默、relax 时点名缺失标签 / 候选实际标签 / 可复制修法、结构化证据 `explainTierMiss()`、候选列表截断、空路由列表仍有可行动告警、**positionOverrides 数组形态生效**、两种形态都接受且与 catalog 标签合并、`tierLimit` 的 `-1/0/NaN`/小数/1/2 语义、诊断是只读的且永不抛错。
+- `test/query-cost.test.mjs` **11 条** —— 报表：混合账本里旧行被排除在延迟统计之外（不当 0ms）、全旧账本的空态文案、只有吞吐没有 ttft、空账本、垃圾延迟值不产生 NaN/Infinity、`ttft_ms=0` 是真实样本、`p50` 在 n=1..4 用 nearest-rank、失败率只认真实失败码、老 CLI 表面（花费列 / `--model` 脚注 / `--by-account` / `--since`）未变、缺账本路径是诚实空态、`--help` 记录了两段追加与排除规则。
+
 注意：schemastery 的 schema 是可调用的（`Config({})`），不是 zod 风格（`Config.parse()`）；在加载器之外，volatile 字段返回的是标记对象，`apply()` 会做防御性强制转换。
 
 ## 十一、尚未验证 / 注意事项
 
+- **水合上界是常量，不可配（1.2.0 的已知限制）**：`DEFAULT_HYDRATION_BOUNDS`（4 MiB 尾部字节窗 / 5000 行）没有暴露成用户配置。设计判断是「最新几千行足够决定所有判决」（L1 滑窗 200、L2 按连击封顶、计费置信度 20 条饱和），但这仍是一条硬编码假设：账本极端大、或某天真需要回放更老的证据时，改不了，只能等后续版本。
+- **relax 诊断每次都完整打印**：诊断本身很有用，但 relax 是每次请求都会走的热路径 —— 如果一段时间里每个请求都 relax，同一份诊断会被反复刷进日志。按配置/按标签集合做 warn-once 去重还没做（已立 backlog 卡 task-11）。
 - 成本估算是离线标价，未与 provider 真实账单对账；订阅与折扣未建模。
 - 健康层的判定逻辑有完整单元回归，但**尚未与真实多账号故障场景对账**：半开恢复、连击退避、拓扑自动升级的收益数字依赖用户自己的资源和流量，本文档不承诺具体收益。真实效果的观察口径是 `cost.jsonl` 里的 `failure_code` 分布与 `smart-health` 命令输出的账号状态。
 - P2 两层路由默认关闭；开启后 8 预设在真实多账号场景下的效果，依赖用户自己的配置与资源，本文档不承诺具体收益数字。
@@ -433,4 +538,4 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 ## English summary (secondary)
 
-`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a settings page with real pi-ai resources and `@Remote` real-ledger cost tab, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), and P2 opt-in two-layer routing (`ranking.routing.enabled=true`, 8 presets, byte-for-byte legacy when off). See `docs/DETAIL.md` for the plugin detail page and the three design docs in the parent workspace for the full design rationale.
+`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a settings page with real pi-ai resources and `@Remote` real-ledger cost tab, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 opt-in two-layer routing (`ranking.routing.enabled=true`, 8 presets, byte-for-byte legacy when off; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (159 full-suite / 123 pure-logic assertions, measured 2026-11-25, exit 0). See `docs/DETAIL.md` for the plugin detail page and the three design docs in the parent workspace for the full design rationale.

@@ -19,6 +19,7 @@ import { SmartAdapter } from './lib/adapter.js'
 import { discoverAutoChain } from './lib/chains.js'
 import { CostMeter } from './lib/cost-meter.js'
 import { buildHealthDeps } from './lib/health-setup.js' // L7: three-layer health power-on (default-on, opt-out)
+import { hydrateHealthEvidence } from './lib/health-persistence.js' // task-6: cold-start replay of persisted health evidence
 import { createProbe } from './lib/probe.js' // task-107: minimal real probe replaces name guessing
 import { SmartProviderRemote, readCostStats } from './lib/remote.js'
 import {
@@ -192,6 +193,28 @@ export function apply(ctx, config = Config({})) {
   })
 
   const handle = runtime.registerAdapter(['smart'], adapter)
+
+  // task-6 cold-start hydration: the registries buildHealthDeps() created start
+  // empty, so a reload used to erase every proven route verdict (HEALTHY /
+  // DEGRADED / DEPRECATED, free-vs-metered billing confidence) and every account
+  // cooldown/streak. Replay the persisted evidence once from cost.jsonl +
+  // probe-cache.jsonl (read-only, bounded tail window).
+  // Fire-and-forget inside ctx.effect: apply() is synchronous and activation must
+  // never wait for disk. If a real request wins the race, the replay's
+  // timestamp/updatedAt guard keeps that newer live evidence — the hydration
+  // skips rows older than what the registry already holds. health === undefined
+  // (user opted out) skips hydration entirely; nothing is even opened.
+  if (health) {
+    ctx.effect(() => {
+      void hydrateHealthEvidence({
+        dir,
+        health,
+        info: message => ctx.logger?.info?.('%s', message),
+        warn: message => ctx.logger?.warn?.('%s', message),
+      })
+      return () => {}
+    }, 'dsh-smart-provider.health-hydration')
+  }
 
   // P1 user resource adaptation: when the user has NOT configured chains,
   // build a NEUTRAL auto chain from the live DSH registry instead of shipping

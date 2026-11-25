@@ -23,7 +23,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   readRegistry, readExistingAuto, buildChains, buildProviders, buildPricing,
-  flattenModels, yaml, describeChange, REGISTRY_FILE, PKG_DIR,
+  flattenModels, yaml, describeChange, REGISTRY_FILE, PKG_DIR, RESERVED_IDS,
 } from '../registry/registry-lib.mjs'
 
 const WRITE = process.argv.includes('--write')
@@ -39,6 +39,20 @@ const CM_B = '    # >>> custom-routes:chains >>>'
 const CM_E = '    # <<< custom-routes:chains <<<'
 const JS_B = '// >>> custom-routes:candidates >>>'
 const JS_E = '// <<< custom-routes:candidates <<<'
+// Fallback registration for app-managed profiles that have no llm-pi-ai
+// "providers:" anchor. P0 2026-11-25: a SECOND dsh-llm-pi-ai instance cannot
+// coexist with the app-managed one — apply() unconditionally registers every
+// installed catalog provider as configurable (DUPLICATE_DIRECTORY) and one
+// authorization flow per catalog provider (DUPLICATE_FLOW) on every mount,
+// with no config switch (Config only has "providers"). Verified in asar:
+// dsh-llm-pi-ai/src/index.ts:169,264,280,305; dsh-llm/lib/index.js:2041.
+// So the fallback patches the SINGLE existing llm-pi-ai entry's config with a
+// providers dict, which is a whole-config replace but the entry had no
+// configured providers before (that is exactly why the anchor is absent).
+const FB_B = '# >>> custom-routes:providers-insert >>>'
+const FB_E = '# <<< custom-routes:providers-insert <<<'
+const PI_ID = 'llm-pi-ai'
+const PI_NAME = '@deepseek-ai/dsh-llm-pi-ai'
 
 /** Replace an exact marker block, or insert `body` right after `anchor`.
  *  `begin` must be unique in the document; we guard against duplicates.
@@ -87,19 +101,59 @@ let cordis = originalCordis
 const providersYaml = yaml.stringify(providers, { indent: 2 }).trimEnd()
   .split('\n').map(l => '      ' + l).join('\n')
 const providersBlock = `${PM_B}\n${providersYaml}\n${PM_E}`
-const providersAnchor = '    providers:\n'
-const upserted = upsertBlock(cordis, PM_B, PM_E, providersBlock, providersAnchor)
+// Anchor = a 4-space "providers:" line. A bare string also substring-matches
+// the legacy 8-space insert line and our own fallback block; the marker-range
+// check below excludes the latter. The former is removed by the anchor-present
+// branch, so it cannot survive a gen --write.
+const providersAnchor = '\n    providers:\n'
+const fallbackAnchorAt = cordis.indexOf(FB_B)
+const fallbackEndAt = fallbackAnchorAt === -1 ? -1 : cordis.indexOf(FB_E, fallbackAnchorAt)
+// An existing fallback marker owns its llm-pi-ai entry and that entry IS now
+// the canonical anchor. On re-run, do not insert a NEW providers block into
+// the file; let the marker upsert replace the whole block in place.
+const providersAnchorInFallback = fallbackAnchorAt !== -1 && fallbackEndAt > fallbackAnchorAt
+const upserted = providersAnchorInFallback
+  ? null
+  : upsertBlock(cordis, PM_B, PM_E, providersBlock, providersAnchor)
 let providersAnchorMissing = false
 let chainsAnchorMissing = false
 if (upserted === null) {
   providersAnchorMissing = true
-  // Honest degrade (C3 follow-up): a live cordis.patch.yml managed by the DSH
-  // app may have no llm-pi-ai providers block at all (no '    providers:'
-  // anchor). Skipping is correct; injecting a synthetic llm-pi-ai block into
-  // the user's patch would not be. The reason stays visible in the report.
-  console.warn('WARN providers: live cordis.patch.yml has no llm-pi-ai "providers:" anchor (app-managed shape) — providers block NOT written; chains/client/pricing artifacts still generated. Register llm-pi-ai in this profile to enable the providers block.')
+  // App-managed profiles have no llm-pi-ai providers anchor: that means the
+  // single app-managed llm-pi-ai instance has no configured providers, not that
+  // a second instance is needed. A second instance is FATAL — apply() registers
+  // the whole catalog as configurable providers and auth flows on every mount
+  // (see constants above). Patch the one existing entry's config instead.
+  if ('smart' in providers || Object.keys(providers).some(id => RESERVED_IDS.has(id))) {
+    throw new Error('gen-custom-routes: refusing to register a reserved provider in fallback insert (smart/RESERVED_IDS must not be declared twice — DUPLICATE_ADAPTER)')
+  }
+  // Marker block holds the full llm-pi-ai entry (column 0). providersYaml is
+  // already 6-space indented (route keys under a "providers:" key); inside
+  // "- id:" -> config -> providers the route keys sit at 6 spaces too, so no
+  // re-indent is needed — only the "providers:" key itself is added at 4.
+  const fallbackBlock = [
+    FB_B,
+    '- id: ' + PI_ID,
+    "  name: '" + PI_NAME + "'",
+    '  config:',
+    '    providers:',
+    providersYaml,
+    FB_E,
+  ].join('\n')
+  cordis = upsertBlock(cordis, FB_B, FB_E, fallbackBlock)
+  console.warn('WARN providers: live cordis.patch.yml has no llm-pi-ai "providers:" anchor (app-managed shape) — registered x-* routes in the single llm-pi-ai entry config (marker ' + FB_B.trim() + '). Verify: grep -n "' + FB_B.trim() + '" ~/.dsh/profiles/' + PROFILE + '/cordis.patch.yml && node scripts/validate-custom-routes.mjs; then restart the Host to recompose the plugin tree.')
 } else {
+  // Existing anchor: keep the original in-place update. The upserter already
+  // rewrote the providers body at the anchor. Drop any stale fallback marker
+  // (legacy insert form or our own earlier single-instance form): for the
+  // single-instance form the upserter has already refreshed the anchor entry,
+  // so deleting the duplicate column-0 block is correct.
   cordis = upserted
+  if (cordis.includes(FB_B) && cordis.includes(FB_E)) {
+    const a = cordis.indexOf(FB_B)
+    const b = cordis.indexOf(FB_E, a) + FB_E.length
+    cordis = cordis.slice(0, a) + cordis.slice(b).replace(/^\n/, '')
+  }
 }
 
 // ---- 2. smart config.chains block (4-space indent, volatile) -------------
@@ -217,14 +271,28 @@ if (missingRequired.length) {
   process.exit(3)
 }
 const idsAfter = topLevelIds(finalCordis)
-const removed = idsBefore.filter(id => !idsAfter.includes(id))
-const added = idsAfter.filter(id => !idsBefore.includes(id))
+// The fallback entry itself is owned by this marker. On a second --write run
+// it is already present in idsBefore; it must be allowed to be replaced (not
+// counted as removed) so the run is byte-idempotent.
+const fallbackOwned = originalCordis.includes(FB_B) && originalCordis.includes(FB_E)
+const removed = idsBefore.filter(id => !idsAfter.includes(id) && !(fallbackOwned && id === PI_ID))
+// The single-instance fallback adds one `llm-pi-ai` patch entry to an
+// app-managed profile that has no llm-pi-ai entry in its patch layer at all.
+// That entry is the app's own plugin (name asserted below), not a new plugin
+// instance, and is required for the x-* routes to have an adapter. Any OTHER
+// added id is still a hard failure.
+const EXPECTED_FALLBACK_ADD = providersAnchorMissing ? [PI_ID] : []
+const added = idsAfter.filter(id => !idsBefore.includes(id) && !EXPECTED_FALLBACK_ADD.includes(id))
 const duplicated = idsAfter.filter((id, i) => idsAfter.indexOf(id) !== i)
 if (removed.length || added.length || duplicated.length) {
   console.error('GUARD FAIL: top-level entry id set changed — refusing to write cordis.patch.yml')
   if (removed.length) console.error('  removed: ' + removed.join(', '))
   if (added.length) console.error('  unexpected added: ' + added.join(', '))
   if (duplicated.length) console.error('  duplicated: ' + duplicated.join(', '))
+  process.exit(3)
+}
+if (providersAnchorMissing && !idsBefore.includes(PI_ID) && !idsAfter.includes(PI_ID)) {
+  console.error('GUARD FAIL: app-managed fallback must add exactly one "' + PI_ID + '" patch entry')
   process.exit(3)
 }
 console.log(`guard: ${idsAfter.length} top-level entry ids unchanged (incl. agent-default-model=${idsAfter.includes('agent-default-model')})`)

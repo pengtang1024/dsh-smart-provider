@@ -1,7 +1,7 @@
 {
   "name": "@local/dsh-smart-provider",
   "displayName": "DSH 智能模型路由（Smart Provider）",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {

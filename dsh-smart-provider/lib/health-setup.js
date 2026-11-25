@@ -17,6 +17,14 @@
  * (index.js registryReader) and L4's AccountPool: the adapter keeps the same
  * object references, so one real attempt updates the very registry the first
  * screen reads. No DSH dependency, no I/O, no provider/model names hardcoded.
+ *
+ * Cold start (task-6): this module only CREATES the registries, deliberately
+ * empty and synchronously (apply() must not await disk). index.js then calls
+ * hydrateHealthEvidence() (lib/health-persistence.js) from a ctx.effect and
+ * fills these SAME objects in place from cost.jsonl / probe-cache.jsonl — L1 by
+ * replaying updateHealth() rows, L2 by merging rebuildFromLedger() records —
+ * so a reload no longer erases proven health/billing evidence. When the user
+ * opt-outs (this factory returns undefined) that hydration is skipped entirely.
  */
 
 import { createAccountHealthRegistry } from './account-health.js'

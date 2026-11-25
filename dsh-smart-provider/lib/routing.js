@@ -26,8 +26,62 @@ export const POSITION_TAGS = Object.freeze([
 /** Default thresholds — conservative, can be overridden by config. */
 const DEFAULT_LONGCTX_TOKENS = 200000
 const DEFAULT_TIER_LIMIT = 2
+/** Candidate routes rendered in the relax diagnostic before it truncates. */
+const MAX_DIAGNOSED_ROUTES = 8
 
 function asArray(value) { return Array.isArray(value) ? value : [] }
+
+/** Position metadata for one route id, from a Map or a plain object. */
+function positionFor(positions, route) {
+  if (positions instanceof Map) return positions.get(route)
+  return positions && typeof positions === 'object' ? positions[route] : undefined
+}
+
+/** Deduplicated task kinds in priority order (primary first). */
+function wantedPositions(task) {
+  const wanted = []
+  for (const candidate of [task?.kind, ...asArray(task?.secondary)]) {
+    if (typeof candidate === 'string' && candidate && !wanted.includes(candidate)) wanted.push(candidate)
+  }
+  return wanted
+}
+
+/**
+ * tierLimit normalizer. A non-positive limit used to fall straight into
+ * slice(0, tierLimit), which for -1 silently drops the last tier and for 0
+ * returns NO tier at all even when routes matched — both contradict the layer-1
+ * contract (pick the best tier, never block), so invalid values fall back to
+ * the documented default instead of disabling routing by accident.
+ */
+function normalizeTierLimit(value) {
+  if (!Number.isFinite(value)) return DEFAULT_TIER_LIMIT
+  const floored = Math.floor(value)
+  return floored >= 1 ? floored : DEFAULT_TIER_LIMIT
+}
+
+/**
+ * Where a position tag normally comes from. One sentence per missing tag,
+ * used by the relax diagnostic so the log says WHY, not just WHAT.
+ */
+const POSITION_ORIGIN_HINTS = Object.freeze({
+  reasoning: 'auto-derived only when the model catalog reports reasoning:true',
+  longctx: 'auto-derived only when contextWindow >= ' + DEFAULT_LONGCTX_TOKENS
+    + '; raising ranking.routing.longContextTokens makes fewer requests land in longctx',
+  vision: "auto-derived only when the model catalog lists input:['image']",
+  tool: 'auto-derived for chat models (catalog tool !== false); absent only when the catalog says tool:false',
+  thrifty: 'never auto-derived — only positionOverrides can declare it (free/cheap models belong here)',
+  swift: 'never auto-derived — only positionOverrides can declare it (fast models belong here)',
+  general: 'every derived position carries it; a route with no tags at all has no position metadata',
+})
+
+function originHintFor(position) {
+  return POSITION_ORIGIN_HINTS[position] ?? 'no auto-derivation rule exists for this tag'
+}
+
+/** Render a tag list as "a", "b" for diagnostics. */
+function quoteList(list) {
+  return list.map(item => '"' + item + '"').join(', ')
+}
 
 /** Cheap token estimate: chars/4. Used ONLY for the longctx threshold, never
  *  for billing. Honest approximation (design marks precision unverified). */
@@ -117,12 +171,33 @@ export function classifyTask(options, config = {}) {
 }
 
 /**
+ * User-declared position tags, accepting BOTH shapes that exist in the wild:
+ *   array form  — { "vendor/model": ["reasoning", "longctx"] }  (README)
+ *   object form — { "vendor/model": { tags: ["reasoning"] } }   (registry yaml)
+ * Reading only `.tags` silently ignored the documented array form, so a user
+ * who configured positionOverrides exactly as documented still got
+ * "no tier matches ... relaxing". Tags are trimmed/lowercased and filtered
+ * against the whitelist; order is preserved, duplicates dropped.
+ */
+function declaredTagList(declared) {
+  const raw = Array.isArray(declared) ? declared : asArray(declared?.tags)
+  const tags = []
+  for (const tag of raw) {
+    if (typeof tag !== 'string') continue
+    const normalized = tag.trim().toLowerCase()
+    if (!POSITION_TAGS.includes(normalized) || tags.includes(normalized)) continue
+    tags.push(normalized)
+  }
+  return tags
+}
+
+/**
  * Derive a model's position tags from catalog metadata, overridden by a
  * user declaration when present. Missing metadata is conservative, never
  * fatal: tools default 'yes' for chat models, vision/structured default 'no'.
  *
  * @param {object} model ModelInfo {id, reasoning, contextWindow, input, maxTokens}
- * @param {object} [userDeclared] partial {tags, reasoning, vision, tool, ...}
+ * @param {object|string[]} [userDeclared] {tags:[...]} or a bare tag array
  * @returns {{tags:string[], source:'auto'|'user'|'mixed'}}
  */
 export function derivePosition(model, userDeclared) {
@@ -136,7 +211,7 @@ export function derivePosition(model, userDeclared) {
   if (src.tool !== false) auto.push('tool')
   auto.push('general')
 
-  const explicitTags = asArray(declared.tags).filter(t => POSITION_TAGS.includes(t))
+  const explicitTags = declaredTagList(declared)
   // P2 fix (capability stage 2): user/override tags must MERGE with catalog-
   // derived capabilities, not replace them. Replacing dropped `vision` when a
   // free model was tagged `thrifty`, silently breaking capability filtering.
@@ -147,36 +222,110 @@ export function derivePosition(model, userDeclared) {
 }
 
 /**
+ * Explain one failed layer-1 selection in terms a user can act on: what the
+ * request needed, what each candidate route actually carries, why the wanted
+ * tags are absent, and a copy-pasteable positionOverrides snippet. Pure: reads
+ * its inputs, never mutates, never decides anything, never throws.
+ *
+ * @param {object} task classifyTask result ({kind, secondary, signals})
+ * @param {Map<string, object>|object} positions routeId -> {tags}
+ * @param {string[]} routes candidate route ids
+ * @returns {{wanted:string[], missing:string[],
+ *   candidates:Array<{route:string, tags:string[]}>, suggestion:object, message:string}}
+ */
+export function explainTierMiss(task, positions, routes) {
+  const kind = typeof task?.kind === 'string' && task.kind ? task.kind : 'unknown'
+  const secondary = asArray(task?.secondary).filter(k => typeof k === 'string' && k)
+  const signals = asArray(task?.signals).filter(s => typeof s === 'string' && s)
+  const wanted = wantedPositions(task)
+  const available = asArray(routes).filter(route => typeof route === 'string' && route)
+  const candidates = available.map(route => ({
+    route,
+    tags: asArray(positionFor(positions, route)?.tags).filter(tag => typeof tag === 'string'),
+  }))
+  const missing = wanted.filter(position => !candidates.some(c => c.tags.includes(position)))
+  // A task with no kind information cannot name a "missing" tag; fall back to
+  // the kind placeholder so the line still reads correctly.
+  const missingEffective = missing.length ? missing : [kind]
+
+  const lines = []
+  lines.push('  task: kind="' + kind + '"'
+    + (secondary.length ? ' secondary=[' + secondary.join(', ') + ']' : '')
+    + (signals.length ? ' signals=[' + signals.join(', ') + ']' : ''))
+  lines.push('  needed position tag(s): ' + quoteList(wanted.length ? wanted : [kind])
+    + ' — no candidate route carries ' + quoteList(missingEffective))
+  lines.push('  candidate routes (' + candidates.length + ') and the position tags they do carry:')
+  const shown = candidates.slice(0, MAX_DIAGNOSED_ROUTES)
+  for (const candidate of shown) {
+    lines.push('    - ' + candidate.route + ': '
+      + (candidate.tags.length ? candidate.tags.join(', ') : '(none — route has no position metadata)'))
+  }
+  if (candidates.length > shown.length) {
+    lines.push('    … and ' + (candidates.length - shown.length) + ' more route(s)')
+  }
+  for (const position of missingEffective) {
+    lines.push('  why "' + position + '" is missing everywhere: ' + originHintFor(position))
+  }
+
+  // The most useful snippet declares the tag on a route the user actually has.
+  const anchor = candidates[0]?.route ?? '<route>'
+  const overrideKey = anchor + '/<model-id>'
+  const suggestion = {
+    positionOverrides: { [overrideKey]: missingEffective.slice() },
+    equivalentRegistryForm: { overrides: { [overrideKey]: { tags: missingEffective.slice() } } },
+    keyForm: '"<route>/<model-id>" or a bare model id',
+  }
+  lines.push('  fix — declare the tag for a model you actually have (both shapes below work, copy either one):')
+  lines.push('    "ranking": ' + JSON.stringify({ routing: { positionOverrides: suggestion.positionOverrides } }))
+  lines.push('    registry form: ' + JSON.stringify(suggestion.equivalentRegistryForm))
+  lines.push('    key = "' + overrideKey + '" (replace <model-id> with a model served by route "' + anchor + '"); a bare model id also works')
+  lines.push('  note: tierPolicy only reorders which tier is tried first; it cannot invent a tag that no route carries')
+  lines.push('  relax outcome: all ' + candidates.length + ' route(s) stay available; the request is NOT blocked')
+  return { wanted, missing, candidates, suggestion, message: lines.join('\n') }
+}
+
+/**
  * Layer 1 selection: task kind -> ordered candidate position tiers, with
  * hard capability filtering and an availability-first fallback (relax + WARN).
  *
- * @param {{kind:string, secondary:string[]}} task classifyTask result
- * @param {Map<string, object>} positions routeId -> Position ({tags})
+ * The relax fallback is deliberate and UNCHANGED: a task whose position tag no
+ * route carries still gets every available route, because tiering is an
+ * optimisation and must never block a request. What changed is the warning — it
+ * now carries the full diagnosis (needed tags, each candidate's tags, why the
+ * tags are absent, a copy-pasteable positionOverrides snippet) instead of
+ * naming only the task kind.
+ *
+ * @param {{kind:string, secondary:string[], signals?:string[]}} task classifyTask result
+ * @param {Map<string, object>|object} positions routeId -> Position ({tags})
  * @param {string[]} routes available route ids
- * @param {object} [policy] { tierPolicy, warnings?, tierLimit? }
+ * @param {object} [policy] { warn?, tierLimit? } — invalid tierLimit (0/negative/
+ *   non-numeric) falls back to the documented default instead of selecting no tier
  * @returns {Array<{position:string, routes:string[]}>}
  */
 export function selectTiers(task, positions, routes, policy = {}) {
-  const wanted = [task?.kind, ...asArray(task?.secondary)].filter(Boolean)
   const warn = typeof policy.warn === 'function' ? policy.warn : () => {}
-  const tierLimit = Number.isFinite(policy.tierLimit) ? policy.tierLimit : DEFAULT_TIER_LIMIT
+  const tierLimit = normalizeTierLimit(policy.tierLimit)
+  const wanted = wantedPositions(task)
+  const available = asArray(routes)
 
-  let candidates = []
+  const candidates = []
   for (const position of wanted) {
-    const matched = asArray(routes).filter(route => {
-      const pos = positions instanceof Map ? positions.get(route) : positions?.[route]
-      return pos && asArray(pos.tags).includes(position)
-    })
+    const matched = available.filter(route => asArray(positionFor(positions, route)?.tags).includes(position))
     if (matched.length) candidates.push({ position, routes: matched })
   }
 
-  // Hard filter fallback: if nothing matched, relax to the nearest available
-  // tier(s) and WARN instead of hard-failing the request.
   if (candidates.length === 0) {
-    const available = asArray(routes)
-    if (available.length === 0) return []
-    warn(`smart routing: no tier matches task "${task?.kind ?? 'unknown'}"; relaxing to all available routes`)
-    candidates = [{ position: 'general', routes: available }]
+    if (available.length === 0) {
+      // Nothing to route to at all: keep returning [] so the caller stays on its
+      // legacy chain, but leave one actionable line instead of failing silently.
+      warn('smart routing: no routes available for task "' + (task?.kind ?? 'unknown')
+        + '"; tier selection skipped and the request is NOT blocked')
+      return []
+    }
+    const diagnosis = explainTierMiss(task, positions, available)
+    warn('smart routing: no tier matches task "' + (task?.kind ?? 'unknown')
+      + '"; relaxing to all available routes\n' + diagnosis.message)
+    return [{ position: 'general', routes: available }]
   }
   return candidates.slice(0, tierLimit)
 }
