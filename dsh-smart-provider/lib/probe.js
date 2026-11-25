@@ -118,13 +118,19 @@ export function createProbe({
   }
   const inflight = new Map() // key -> Promise (dedupe concurrent probes)
 
+  /** Single freshness contract shared by probeOne / probeModels / peek. */
+  function isFresh(hit, now) {
+    return !!(hit && Number.isFinite(hit.probedAt)
+      && hit.probedAt + ttlMs > now && hit.verdict !== 'unknown')
+  }
+
   async function probeOne(provider, model) {
     await ensureLoaded()
     const key = registryKey({ provider, modelId: model })
     if (!key || provider === 'smart') return { provider, model, verdict: 'unknown', evidence: 'not probeable', ok: false, cost: 0 }
     const now = Date.now()
     const hit = cache.get(key)
-    if (hit && Number.isFinite(hit.probedAt) && hit.probedAt + ttlMs > now && hit.verdict !== 'unknown') {
+    if (isFresh(hit, now)) {
       return { provider, model, verdict: hit.verdict, evidence: `cached: ${hit.evidence}`, ok: true, cost: hit.cost ?? 0 }
     }
     if (inflight.has(key)) {
@@ -200,7 +206,7 @@ export function createProbe({
         if (!provider || !model) continue
         const key = registryKey({ provider, modelId: model })
         const hit = cache.get(key)
-        const isCached = hit && Number.isFinite(hit.probedAt) && hit.probedAt + ttlMs > Date.now() && hit.verdict !== 'unknown'
+        const isCached = isFresh(hit, Date.now())
         if (!isCached && spent >= maxPerCall) {
           // Over cap: return an honest unknown with identity; the client's
           // weak-signal fallback keeps it — "不能挡" holds.
@@ -226,7 +232,7 @@ export function createProbe({
     /** Read a cached verdict without probing (used by the UI projection if needed). */
     peek(provider, model) {
       const hit = cache.get(registryKey({ provider, modelId: model }))
-      return hit && hit.expiresAt > Date.now() ? { verdict: hit.verdict, evidence: hit.evidence } : undefined
+      return isFresh(hit, Date.now()) ? { verdict: hit.verdict, evidence: hit.evidence } : undefined
     },
   }
 }
