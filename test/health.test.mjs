@@ -677,7 +677,7 @@ test('opt-out matrix: Volatile wrappers are unwrapped at the outer surfaces', ()
 
 test('probe: the default cache lives under the CURRENT home, not a baked-in path', () => {
   assert.equal(DEFAULT_CACHE_FILE, join(homedir(), '.dsh', 'smart-provider', 'probe-cache.jsonl'))
-  assert.ok(!DEFAULT_CACHE_FILE.includes('/home/pt'), 'a literal other-user home would fail with EACCES')
+  assert.ok(DEFAULT_CACHE_FILE.startsWith(homedir() + '/'), 'cache must stay under the CURRENT home, not a baked-in path')
   assert.equal(PROBE_MAX_TOKENS, 1, 'one token per probe keeps a paid probe nearly free')
 })
 
