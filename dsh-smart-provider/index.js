@@ -29,8 +29,15 @@ import {
 /**
  * Cordis service injection (root cause of the previous `failed` plugin state:
  * ReflectService throws "cannot get property \"llm\" without inject").
+ *
+ * ONLY `llm` is a hard requirement. The router merely *optionally* uses
+ * sessions (hop records), commands (read-only host commands) and credentials
+ * (credential NAME listing); declaring them here made the whole plugin refuse
+ * to load in a lean profile that provides none of them — a headless E2E failed
+ * with "pending (waiting for service: credentials)" and then NO_ADAPTER. Those
+ * three are read through ctx.get() at use time instead (see optionalService).
  */
-export const inject = ['llm', 'sessions', 'commands', 'credentials']
+export const inject = ['llm']
 
 /** Accept either a provider object ({id,...}) or a bare id string. */
 function strId(entry) {
@@ -50,6 +57,21 @@ export function apply(ctx, config = Config({})) {
   if (!runtime?.registerAdapter || !runtime?.stream) {
     throw new Error('dsh-smart-provider requires ctx.llm with registerAdapter() and stream()')
   }
+
+  /**
+   * Read an optional cordis service without making it a load dependency.
+   * `ctx.<name>` throws when the name is not injected, so `ctx.get()` is the
+   * only supported way to probe for one. A missing service degrades to
+   * undefined and every call site below already tolerates that.
+   * @param {string} name service name
+   * @returns {() => any} lazy getter
+   */
+  const optionalService = name => () => {
+    try { return ctx.get?.(name) } catch { return undefined }
+  }
+  const getSessions = optionalService('sessions')
+  const getCommands = optionalService('commands')
+  const getCredentials = optionalService('credentials')
 
   // Volatile fields are filled by the loader at activation; a direct Config({})
   // (tests, or an unconfigured row) returns schemastery marker objects for
@@ -149,7 +171,9 @@ export function apply(ctx, config = Config({})) {
     chains,
     accounts,
     ranking,
-    sessions: ctx.sessions,
+    // Lazy bridge: only the hop record (P0-3) needs sessions, so the adapter
+    // keeps working when the profile has no sessions service.
+    sessions: { get: id => getSessions()?.get?.(id) },
     meter,
     logger: ctx.logger,
     health,
@@ -272,9 +296,13 @@ export function apply(ctx, config = Config({})) {
   // credentialRef is echoed only as the configured reference name).
   ctx.effect(() => {
     const off = []
+    const commands = getCommands()
+    if (typeof commands?.register !== 'function') {
+      ctx.logger?.info?.('dsh-smart-provider: commands service unavailable; host commands stay unregistered')
+      return () => {}
+    }
     const register = (name, description, handler) => {
-      if (typeof ctx.commands?.register !== 'function') return
-      off.push(ctx.commands.register({ name, description, handler }) ?? (() => {}))
+      off.push(commands.register({ name, description, handler }) ?? (() => {}))
     }
     register('smart-schema', 'Smart provider ranking schema', () => ({
       kind: 'text',
@@ -314,7 +342,7 @@ export function apply(ctx, config = Config({})) {
     register('smart-credentials', 'Smart provider configured credential names', async () => {
       let credentials = []
       try {
-        const records = await ctx.credentials?.listRecords?.() ?? []
+        const records = await getCredentials()?.listRecords?.() ?? []
         credentials = records
           .map(r => strId(r?.key ?? r?.id ?? r))
           .filter(Boolean)

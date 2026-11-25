@@ -6,40 +6,21 @@
  * workspace bundle fails with ERR_MODULE_NOT_FOUND.
  */
 
-import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { loadDshPackage } from './lib/dsh.js'
 
-function anchors() {
-  const list = []
-  const profileDir = process.env.DSH_PROFILE_DIR
-  if (profileDir) list.push(join(profileDir, 'package.json'))
-  const home = process.env.DSH_HOME
-  const profile = process.env.DSH_PROFILE
-  if (home && profile) list.push(join(home, 'profiles', profile, 'package.json'))
-  if (typeof process.resourcesPath === 'string') {
-    list.push(join(process.resourcesPath, 'app.asar', 'package.json'))
-  }
-  list.push('/opt/DSH NEXT/resources/app.asar/package.json')
-  return [...new Set(list)]
-}
-
+/**
+ * schemastery is resolved through the SAME manifest anchors as every other DSH
+ * package this bundle loads (lib/dsh.js). Keeping one anchor list means
+ * schema.js cannot drift back to a stale hard-coded install path, and a linked
+ * workspace bundle works in any profile — not only the one that happens to ship
+ * the package as a direct dependency.
+ */
 function loadSchemastery() {
-  const failures = []
-  for (const anchor of anchors()) {
-    let loaded
-    try {
-      loaded = createRequire(anchor)('@deepseek-ai/schemastery')
-    } catch (error) {
-      failures.push(`${anchor}: ${error?.code ?? error?.message ?? 'load failed'}`)
-      continue
-    }
-    const candidate = loaded?.default ?? loaded
+  const loaded = loadDshPackage('@deepseek-ai/schemastery')
+  for (const candidate of [loaded, loaded?.default]) {
     if (candidate && typeof candidate.object === 'function') return candidate
-    failures.push(`${anchor}: resolved without a usable object() builder`)
   }
-  throw new Error(
-    `dsh-smart-provider could not load @deepseek-ai/schemastery. Tried: ${failures.join('; ')}`,
-  )
+  throw new Error('dsh-smart-provider: @deepseek-ai/schemastery resolved without a usable object() builder')
 }
 
 const z = loadSchemastery()

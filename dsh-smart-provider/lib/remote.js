@@ -6,11 +6,55 @@
  * `@Remote` would emit after TS compilation, so the DSH Gateway's source-mode
  * discovery finds it and routes `smartProvider/cost` to cost().
  */
-import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import { anchors } from './dsh.js'
 import { readCostStats, readCostDetail } from './cost-stats.js'
 import { projectStatus } from './availability.js'
 
 const MARKER_KEY = '@deepseek-ai/dsh-typert-protocol/remote-methods'
+
+/**
+ * Load the Typert remote base class without assuming THIS profile happens to
+ * carry the package as a direct dependency.
+ *
+ * A bare `import` only resolves when DSH's loader maps the specifier for this
+ * bundle — true for a profile that already pulled the package in for another
+ * plugin, false for a freshly linked bundle in a profile that did not (the
+ * E2E headless profile failed exactly this way: failed to import ⇒ no smart
+ * adapter ⇒ NO_ADAPTER). The bare import stays first because it is the normal
+ * path; the manifest anchors are the fallback, and they reach the copy the
+ * installation itself ships.
+ *
+ * @returns {Promise<Function>} the TypertRemoteService base class
+ */
+async function loadTypertRemoteService() {
+  const failures = []
+  try {
+    const bare = await import('@deepseek-ai/dsh-typert-protocol')
+    if (typeof bare?.TypertRemoteService === 'function') return bare.TypertRemoteService
+    failures.push('bare import: no TypertRemoteService export')
+  } catch (error) {
+    failures.push(`bare import: ${error?.code ?? error?.message ?? 'failed'}`)
+  }
+  for (const anchor of anchors()) {
+    try {
+      // resolve() works for ESM packages; require() would throw ERR_REQUIRE_ESM.
+      const resolved = createRequire(anchor).resolve('@deepseek-ai/dsh-typert-protocol')
+      const mod = await import(pathToFileURL(resolved).href)
+      const service = mod?.TypertRemoteService ?? mod?.default?.TypertRemoteService
+      if (typeof service === 'function') return service
+      failures.push(`${anchor}: resolved without TypertRemoteService`)
+    } catch (error) {
+      failures.push(`${anchor}: ${error?.code ?? error?.message ?? 'failed'}`)
+    }
+  }
+  throw new Error(
+    `dsh-smart-provider could not load @deepseek-ai/dsh-typert-protocol. Tried: ${failures.join('; ')}`,
+  )
+}
+
+const TypertRemoteService = await loadTypertRemoteService()
 
 export { readCostStats, readCostDetail }
 

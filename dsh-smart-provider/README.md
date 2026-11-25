@@ -333,6 +333,30 @@ node scripts/query-cost.mjs --since 2026-11-23
 
 **切勿**在 `llm-pi-ai.providers` 里添加 `smart:` 块 —— 该路由由 `registerAdapter` 注册，两边都做会触发 `DUPLICATE_ADAPTER`。
 
+### 安装
+
+DSH 的安装单位是「组合包」：profile 的 `dependencies` 里要有这个包，`dsh.profile.bundles` 里要选中它，它的 `cordis.patch.yml` 才会进入 patch 链。官方 `installBundle` 这三件事一起做，不需要手改：
+
+- 图形界面：插件 → 添加插件 → 选择本目录；
+- `dsh plugin --profile <profile> add link:<本包绝对目录>`（headless/CLI 环境同样可用，等价于 `plugin-cli.js <profile> add ...`）；
+- 插件管理服务 / `plugin_manager` 工具的 `install_bundle`。
+
+本地目录安装保存为 `link:` 依赖，源码改动直接生效、不必重装。装好且激活后，host 日志应出现：
+
+```
+dsh-smart-provider: declared smart configurable provider (Smart Gateway)
+dsh-smart-provider: registered smart adapter with N chain keys
+dsh-smart-provider: discovered N neutral auto hop(s) from live registry
+```
+
+按卸载：`dsh plugin --profile <profile> remove @local/dsh-smart-provider`。
+
+### 运行时依赖契约
+
+- **只硬依赖 `llm` 服务。** `sessions` / `commands` / `credentials` 一律通过 `ctx.get()` 按需读取，缺失时对应功能降级（无 hop 记录 / 无只读命令 / 凭据名为空），**不会导致插件加载失败**。
+- 用到的 DSH 包（`dsh-llm` / `dsh-session` / `dsh-typert-protocol` / `schemastery`）在 `peerDependencies` 里声明；DSH 兼容门禁对当前运行时（`0.2.2-rc.5`）判定为满足。
+- 这些包一律通过 `lib/dsh.js` 的 manifest 锚点解析（profile → Electron resources → 各平台安装根），**不依赖「当前 profile 恰好装了它」**，所以 `link:` 进任意 profile（包括最小 headless）都能加载。
+
 ---
 
 ## 十、构建时已执行的验证
@@ -342,7 +366,7 @@ node scripts/query-cost.mjs --since 2026-11-23
 ```bash
 # 1) 一条命令跑完整验证门槛（语法检查 + 全套测试，自动选运行时）
 npm test
-# => 语法检查逐文件 ok；tests 79 / pass 79 / fail 0
+# => 语法检查逐文件 ok；tests 83 / pass 83 / fail 0
 
 # 2) 只跑纯逻辑套件（health + ranking + routing，任何 Node 都行，无需 DSH）
 npm run test:unit
@@ -361,6 +385,26 @@ node -e 'const p=require("./lib/pricing.json"); if(p._rows!==p.entries.length)th
 
 运行时冒烟验证了：`LlmRuntime.prototype.resolveModel` 不存在而 `resolveModelInfo` 存在（task-25 的 bug）；零重试策略；`listModels` 中的 `smart/auto`；仅在建立前回退（AUTH 切跳、发出内容后的错误不切、ABORTED 永不切）；带 `usage_complete` 的 JSONL 行写入；真实会话中出现的 `plugin:dsh-smart-provider/hop-selected` 记录；以及该记录在会话恢复时被保留。
 
+加载路径的 4 条断言（`test/loading.test.mjs`，需 Electron runtime）锁住两个真实缺陷：`inject` 只能有 `llm`（否则最小 profile 会卡在 `waiting for service`），以及 `lib/remote.js` 能在「profile 没有该包」时经锚点回退拿到 Typert 基类。
+
+真实端到端（本机实测，2026-11-25）：用一个最小 headless profile（`@deepseek-ai/dsh-base` + `dsh-headless` + 本包 + 一条真实 provider 连接器）把默认模型指向 `smart/auto`，执行 `dsh --profile headless --patch <overlay> "<prompt>"`。两次提问都拿到真实回答；`~/.dsh/smart-provider/cost.jsonl` 记下 5 行，`outer_model=auto`，实际路由为 `workbuddy/deepseek-v4-flash` 与 `workbuddy/deepseek-v4-pro`（链在两条真实跳次之间选择），最后一笔 `input=349 / output=11 / price_known=true / usage_complete=true / estimated_cost_usd=0.00096` —— 选路、真实调用、usage 捕获与计价全链路跑通。
+
+复现这个端到端（不需要碰 desktop profile）：
+
+```bash
+NODE="$DSH_NODE_EXECUTABLE"                        # Electron 二进制
+ASAR="/Applications/DSH NEXT.app/Contents/Resources/app.asar"
+# 1) 建最小 headless profile，装本包 + 一条真实 provider 连接器
+ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/plugin-cli.js" headless add "link:$PWD"
+ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/plugin-cli.js" headless add <provider 连接器包@版本>
+# 2) overlay 把默认模型指到 smart/auto
+printf '%s\n' '- id: agent-default-model' '  name: "@deepseek-ai/dsh-agent-default-model"' \
+  '  config: { provider: smart, model: auto }' > /tmp/smart-override.yml
+# 3) 一次性提问，答案经 smart 的链路由返回
+ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
+  --patch /tmp/smart-override.yml "只回复 OK"
+```
+
 健康层的 55 条断言全部是纯逻辑回归（`test/health.test.mjs`），覆盖：故障分类的 P0/P2 不连累模型、5xx 与 404 的三次阈值、计费证据等级与重命名清零、账号冷却退避与封顶、冷却到期只变半开、半开只发一个许可、自带池路由不被冷却、拓扑无名字白名单、默认开启与四种 opt-out 写法、探测的 1 token 与 TTL 缓存命中。其中探测用例把缓存重定向到临时目录，不写用户家目录。
 
 注意：schemastery 的 schema 是可调用的（`Config({})`），不是 zod 风格（`Config.parse()`）；在加载器之外，volatile 字段返回的是标记对象，`apply()` 会做防御性强制转换。
@@ -371,6 +415,8 @@ node -e 'const p=require("./lib/pricing.json"); if(p._rows!==p.entries.length)th
 - 健康层的判定逻辑有完整单元回归，但**尚未与真实多账号故障场景对账**：半开恢复、连击退避、拓扑自动升级的收益数字依赖用户自己的资源和流量，本文档不承诺具体收益。真实效果的观察口径是 `cost.jsonl` 里的 `failure_code` 分布与 `smart-health` 命令输出的账号状态。
 - P2 两层路由默认关闭；开启后 8 预设在真实多账号场景下的效果，依赖用户自己的配置与资源，本文档不承诺具体收益数字。
 - 自动测速属于 future（账本无起止时间）；`speedTier` 需手填。
+- HMR 的监听列表可能为空（日志 `watching []`）：此时**源码改动不会自动重载**，需要触发一次 profile 重组合（改配置 / 重装）或重启，宿主才会跑新代码。安装新组合包本身会立即触发重组合，不需要重启。
+- 最小 profile 里没有 `sessions` 服务，因此没有 `hop-selected` 会话记录；该记录依赖 `sessions`，属可选降级（账本中的 `account_id` 仍然完整）。
 - 配置页显示的 provider / model 数量随用户 DSH 实时注册表变化，文档不写死。
 
 ---

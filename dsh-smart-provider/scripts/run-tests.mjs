@@ -39,7 +39,7 @@ function sourceFiles() {
 /** The pure-logic suites: no DSH packages, so they run under any Node. */
 const UNIT_TESTS = ['test/health.test.mjs', 'test/ranking.test.mjs']
 /** The suites that need the real DSH runtime from app.asar. */
-const DSH_TESTS = ['test/account-pool.test.mjs']
+const DSH_TESTS = ['test/account-pool.test.mjs', 'test/loading.test.mjs']
 
 function run(command, args, env) {
   const result = spawnSync(command, args, {
