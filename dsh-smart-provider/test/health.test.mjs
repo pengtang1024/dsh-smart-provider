@@ -581,6 +581,95 @@ test('health wiring: nested ranking.health config reaches the account registry',
   // Unspecified fields keep the neutral default.
   assert.equal(deps.accountHealth.config.backoffFactor, DEFAULT_HEALTH_CONFIG.backoffFactor)
 })
+// --- Opt-out priority matrix -------------------------------------------------
+// The four surfaces are OR-ed: any false opts out. The documented order
+// (health, health.enabled, ranking.health, ranking.health.enabled) is the
+// priority matrix; no form can re-enable health. These cases lock the OR
+// semantics and deprecation warning behavior in place.
+
+test('opt-out matrix: each of the four shapes alone disables health', () => {
+  const cases = [
+    ['health === false', { health: false }],
+    ['health.enabled === false', { health: { enabled: false } }],
+    ['ranking.health === false', { ranking: { health: false } }],
+    ['ranking.health.enabled === false', { ranking: { health: { enabled: false } } }],
+  ]
+  for (const [label, config] of cases) {
+    assert.equal(buildHealthDeps(config), undefined, label)
+  }
+})
+
+test('opt-out matrix: absent / true / malformed values keep health ON', () => {
+  const enabled = [
+    {},
+    { health: true },
+    { health: { enabled: true } },
+    { health: 'yes' },
+    { health: 0 },
+    { ranking: { health: true } },
+    { ranking: { health: { enabled: true } } },
+    { ranking: { health: 'off' } },
+  ]
+  for (const config of enabled) {
+    const deps = buildHealthDeps(config)
+    assert.ok(deps, JSON.stringify(config))
+    assert.equal(deps.enabled, true, JSON.stringify(config))
+  }
+})
+
+test('opt-out matrix: OR wins when a false surface is mixed with truthy ones', () => {
+  assert.equal(buildHealthDeps({ health: false, ranking: { health: { enabled: true } } }), undefined)
+  assert.equal(buildHealthDeps({ health: { enabled: false }, ranking: { health: true } }), undefined)
+  assert.equal(buildHealthDeps({ health: true, ranking: { health: false } }), undefined)
+  assert.equal(buildHealthDeps({ ranking: { health: false, enabled: false } }), undefined)
+  assert.equal(buildHealthDeps({ health: { enabled: false, virtualProviders: ['x'] } }), undefined)
+})
+
+test('opt-out matrix: malformed containers are ignored, never crash', () => {
+  for (const bad of [null, 0, 'off', [], true]) {
+    const deps = buildHealthDeps({ health: bad, ranking: bad })
+    assert.ok(deps, 'non-object / non-false values leave health ON: ' + JSON.stringify(bad))
+    assert.equal(deps.enabled, true)
+  }
+})
+
+test('opt-out matrix: deprecated ranking.health.* false forms warn, modern forms do not', () => {
+  let warnings = []
+  const origWarn = console.warn
+  console.warn = msg => warnings.push(String(msg))
+  try {
+    buildHealthDeps({ health: false })
+    buildHealthDeps({ health: { enabled: false } })
+    assert.equal(warnings.length, 0, 'supported forms must not warn')
+
+    warnings = []
+    buildHealthDeps({ ranking: { health: false } })
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /DEPRECATED/)
+    assert.match(warnings[0], /ranking[.]health/)
+
+    warnings = []
+    buildHealthDeps({ ranking: { health: { enabled: false } } })
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /DEPRECATED/)
+    assert.match(warnings[0], /ranking[.]health[.]enabled/)
+
+    warnings = []
+    const deps = buildHealthDeps({ ranking: { health: { halfOpenPermits: 2 } } })
+    assert.ok(deps)
+    assert.equal(warnings.length, 0, 'legitimate nested config is not deprecated')
+  } finally {
+    console.warn = origWarn
+  }
+})
+
+test('opt-out matrix: Volatile wrappers are unwrapped at the outer surfaces', () => {
+  assert.equal(buildHealthDeps({ health: { get: () => false } }), undefined)
+  assert.equal(buildHealthDeps({ ranking: { get: () => ({ health: false }) } }), undefined)
+  assert.equal(buildHealthDeps({ health: { get: () => ({ enabled: false }) } }), undefined)
+  const deps = buildHealthDeps({ health: { get: () => true } })
+  assert.ok(deps && deps.enabled === true)
+})
 
 // ===========================================================================
 // probe.js — task-107 minimal probe + cache

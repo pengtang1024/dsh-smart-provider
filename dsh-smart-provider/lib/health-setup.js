@@ -7,11 +7,12 @@
  * write scope and `ranking` is already `z.any().volatile()` and the established
  * home for nested opt-in subsystems (ranking.routing).
  *
- * Opt-out surface (any of these, checked in order):
- *   config.health.enabled === false             // dedicated field, if added later
- *   config.ranking.health.enabled === false     // nested under the existing any()
- *   config.health === false                     // terse form
- * Absent / malformed => enabled (default-on).
+ * Opt-out matrix (single source of truth; any `false` opts out, OR semantics):
+ *   config.health === false                     // terse dedicated form
+ *   config.health.enabled === false             // dedicated field
+ *   config.ranking.health === false             // DEPRECATED - warns on use
+ *   config.ranking.health.enabled === false     // DEPRECATED - warns on use
+ * Absent / malformed => enabled (default-on). No form can re-enable health.
  *
  * Registries are created here and shared with L5's availabilityStatus reader
  * (index.js registryReader) and L4's AccountPool: the adapter keeps the same
@@ -34,18 +35,55 @@ function unwrap(value) {
   return value && typeof value.get === 'function' ? value.get() : value
 }
 
-function isOptOut(rawConfig) {
+/**
+ * The ordered opt-out matrix - the ONLY place health enable/disable is parsed.
+ * A `false` on any surface opts out (OR); absent/malformed values are ignored,
+ * so health stays ON by default and no surface can re-enable it.
+ *
+ * `config.health` and `config.ranking` are unwrapped first (schemastery
+ * Volatile refs); nested `.enabled` values are read as-is. That asymmetry is
+ * historical and intentional - do not "fix" it here without a behavior change.
+ *
+ * Only the two `ranking.health.*` OPT-OUT forms are deprecated. A
+ * `ranking.health` object still carries legitimate nested config
+ * (halfOpenPermits, topologyOpts, ...), so presence alone must NOT warn.
+ */
+function optOutSurfaces(rawConfig) {
   const config = rawConfig && typeof rawConfig === 'object' ? rawConfig : {}
   const dedicated = unwrap(config.health)
-  if (dedicated === false) return true
-  if (dedicated && typeof dedicated === 'object' && dedicated.enabled === false) return true
   const ranking = unwrap(config.ranking)
-  if (ranking && typeof ranking === 'object') {
-    const nested = ranking.health
-    if (nested === false) return true
-    if (nested && typeof nested === 'object' && nested.enabled === false) return true
+  const nested = ranking && typeof ranking === 'object' ? ranking.health : undefined
+  return [
+    { id: 'health', value: dedicated, deprecated: false, replacement: null },
+    {
+      id: 'health.enabled',
+      value: dedicated && typeof dedicated === 'object' ? dedicated.enabled : undefined,
+      deprecated: false,
+      replacement: null,
+    },
+    { id: 'ranking.health', value: nested, deprecated: true, replacement: 'health' },
+    {
+      id: 'ranking.health.enabled',
+      value: nested && typeof nested === 'object' ? nested.enabled : undefined,
+      deprecated: true,
+      replacement: 'health.enabled',
+    },
+  ]
+}
+
+function isOptOut(rawConfig) {
+  let optedOut = false
+  for (const surface of optOutSurfaces(rawConfig)) {
+    if (surface.value !== false) continue
+    optedOut = true
+    if (surface.deprecated) {
+      console.warn(
+        `[health-setup] DEPRECATED opt-out form '${surface.id} === false'; ` +
+        `use '${surface.replacement} === false' instead. Support will be removed in a future version.`
+      )
+    }
   }
-  return false
+  return optedOut
 }
 
 /**
