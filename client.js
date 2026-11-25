@@ -484,7 +484,7 @@ window.__ModuleLoader__.load({
     // snapshot (always reachable) plus static defaults. It never claims a
     // runtime "on/off" state it cannot prove, and it never shows a permanent
     // "checking…" spinner. It states what is CONFIGURED in plain language.
-    function Overview({ t, localConfig, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe, applyPreset, working }) {
+    function Overview({ t, localConfig, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe, applyPreset, working, presetNotice, costService, onOpenCost }) {
       const cfg = obj(localConfig)
       const configuredChains = obj(cfg.chains)
       const chains = Object.keys(configuredChains).length ? configuredChains : STATIC_DEFAULT_CHAINS
@@ -500,6 +500,33 @@ window.__ModuleLoader__.load({
       const providerCount = arr(pi?.providers).length
       const modelCount = arr(pi?.models).length
       const piLoaded = pi?.loaded === true
+      // 首屏一行健康提示：只报真实快照里的数字。三态 —— null=正在读、
+      // false=读不到通道（明说读不到，不渲染成"0 个账号一切正常"）、对象=真实快照。
+      const [health, setHealth] = useState(null)
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          let next = false
+          try {
+            const res = await costService?.accountHealth?.()
+            if (res && res.ok) next = res.value ?? false
+          } catch { next = false }
+          if (alive) setHealth(next)
+        }
+        void load()
+        return () => { alive = false }
+      }, [costService])
+      const healthAccounts = health && health !== false ? arr(health.accounts) : []
+      const coolingCount = healthAccounts.filter(a => {
+        const state = str(a?.state).toUpperCase()
+        return state === 'COOLING' || state === 'HALF_OPEN'
+      }).length
+      const healthText = health === null
+        ? t('overview.healthLoading')
+        : health === false
+          ? t('overview.healthNoChannel')
+          : fmt(t, 'overview.healthLine', { accounts: healthAccounts.length, cooling: coolingCount })
+      const diagLine = { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' }
       // 历史登记 seed（task-105 起已不参与准入过滤、也不参与状态判定）。
       // 真值 100% 来自运行时 pi.models + 双源投影 availProjection；零样本条目
       // 一律 UNKNOWN/资费未确认 —— 静态表绝不冒充"不可用"或"可用"。
@@ -569,85 +596,15 @@ window.__ModuleLoader__.load({
         ? fmt(t, 'hero.configuredExplain', { strategy: strategyName })
         : t('hero.defaultExplain')
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+        // ① 状态条：只陈述 configForms 里真实写入的事实，不假装运行状态。
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, heroTitle),
           h('div', { style: S.heroText }, heroExplain),
           h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, t('hero.configuredHint')),
           h('div', { style: { ...S.muted, color: 'var(--dsw-alias-label-tertiary)', marginTop: 2 } }, `v${PLUGIN_VERSION}`),
         ),
-        // 你已经在 DSH 里配好的真实模型/provider（来自 pi-ai，只读）。
+        // ② 首屏主操作：先让用户"选择怎么选"，紧贴状态条，不再被模型大卡挡在下面。
         h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('pi.available')),
-          !piLoaded
-            ? h('div', { style: S.muted }, t('pi.loading'))
-            : (providerCount === 0 && modelCount === 0)
-              ? h('div', null,
-                h('div', { style: S.muted }, t('pi.empty')),
-                pi?.detail
-                  ? h('div', { style: { ...S.muted, marginTop: 4, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `诊断：${pi.detail}`)
-                  : null,
-              )
-              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-                h(KV, { k: t('pi.providers'), v: providerCount }),
-                h(KV, { k: t('pi.models'), v: modelCount }),
-                providerCount > 0
-                  ? h('div', { style: { ...S.muted, marginTop: 4 } },
-                    fmt(t, 'pi.providerNames', {
-                      // 不截断：旧版 .slice(0,6) 把排在目录后面的 Smart Gateway
-                      // 切掉，导致"插件自己提供的没放进去"。全部列出，并对
-                      // 元 provider（智能路由，非独立模型提供商）显式标注类型。
-                      names: arr(pi.providers).map(p => {
-                        const id = str(p?.id)
-                        const name = str(p?.name) || id
-                        return id === 'smart' ? t('pi.smartTag') : name
-                      }).join('、'),
-                    }))
-                  : null,
-                // task-106 二次分区：① "可能免费"区（宽松判据，零样本也进，
-                // 标资费未确认）；② 其余已登记模型折叠区。不挡任何模型。
-                h('div', { style: { ...S.muted, marginTop: 6 } },
-                  h('div', { style: { marginBottom: 4 } }, t('pi.maybeFree')),
-                  maybeFreeModels.length > 0
-                    ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-                      maybeFreeModels.map(m => {
-                        const id = str(m?.id ?? m)
-                        const st = statusOf(id)
-                        const label = st.key === 'healthy' ? t('pi.availableTag') : t('pi.unknownTag')
-                        return h('span', { key: id, style: S.pill(st.key === 'healthy') },
-                          `${str(m?.name) || id} · ${label}${st.reviewed ? '' : `（${t('pi.unreviewed')}）`}`)
-                      })
-                    )
-                    : h('div', { style: S.muted }, t('pi.noMaybeFree')),
-                  // task-107: 手动重探入口（自动探测默认已开，此为强制重探 force）。
-                  probeEnabled && maybeFreeModels.length > 0
-                    ? h('button', {
-                      type: 'button', style: { ...S.btn, marginTop: 6 },
-                      onClick: () => onProbe?.(maybeFreeModels, true),
-                    }, t('pi.probeBtn'))
-                    : null,
-                  // task-111: 点击反馈自曝（成功结果数 / 失败具体原因），不再"点了没反应"。
-                  probeDiag
-                    ? h('div', { style: { ...S.muted, marginTop: 4, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `探测：${probeDiag}`)
-                    : null,
-                  h('div', { style: { ...S.muted, marginTop: 4, fontSize: 11 } }, t('pi.freeModelsHint')),
-                  // 其余已登记模型：折叠，不丢（"能发现"仍成立）。
-                  otherModels.length > 0
-                    ? h('details', { style: { marginTop: 6 } },
-                      h('summary', { style: { cursor: 'pointer', fontSize: 11 } },
-                        fmt(t, 'pi.otherModels', { n: otherModels.length })),
-                      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 } },
-                        otherModels.map(m => {
-                          const id = str(m?.id ?? m)
-                          return h('span', { key: id, style: S.pill(false) }, str(m?.name) || id)
-                        })),
-                    )
-                    : null,
-                  h('div', { style: { ...S.muted, marginTop: 2, fontSize: 11 } }, t('pi.otherProvidersHint')),
-                ),
-              ),
-        ),
-        // One-click plain-language choices — no dropdown, no numbers.
-        h('div', null,
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
           h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
             choices.map(c => h('button', {
@@ -659,13 +616,98 @@ window.__ModuleLoader__.load({
               h('span', { style: S.choiceSub }, c.sub),
             )),
           ),
-          working ? h('div', { style: S.muted }, t('preset.applying')) : null,
+          working ? h('div', { style: { ...S.muted, marginTop: 8 } }, t('preset.applying')) : null,
+          // ③ 点击反馈就近可见：{ok,msg} 结构化状态，成功绿、失败红（不靠文案猜颜色）。
+          presetNotice ? h('div', { style: { ...(presetNotice.ok ? S.ok : S.err), marginTop: 8 } }, presetNotice.msg) : null,
         ),
-        // Compact facts — chains/accounts 仍保留；策略开关与 hero 同源。
+        // ④ 一屏事实卡：链路数 / 账号数 / 择优是否用户自定义。
         h('div', { style: S.card },
           h(KV, { k: t('status.chains'), v: Object.keys(chains).length }),
           h(KV, { k: t('status.accounts'), v: accounts }),
           h(KV, { k: t('status.strategyEnabled'), v: rankingOn ? t('status.yes') : t('status.no') }),
+        ),
+        // ⑤ 一行健康提示：有真实快照才报数字，读不到就明说读不到；点击去「花费与健康」。
+        h('button', {
+          type: 'button', onClick: () => onOpenCost?.(),
+          style: {
+            ...S.card, cursor: 'pointer', width: '100%', textAlign: 'left',
+            fontFamily: 'inherit', fontSize: 12, color: 'var(--dsw-alias-label-secondary)',
+          },
+        }, healthText),
+        // ⑥ 已识别模型：整卡默认折叠，标题带数量；pill 列表、探测按钮与长说明都留在里面，
+        //    首屏不再出现长 pill 列表和一大段模型说明。
+        h('details', { style: S.card },
+          h('summary', { style: { cursor: 'pointer', fontWeight: 500 } },
+            piLoaded
+              ? fmt(t, 'pi.availableN', { models: modelCount, providers: providerCount })
+              : t('pi.available')),
+          h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 } },
+            !piLoaded
+              ? h('div', { style: S.muted }, t('pi.loading'))
+              : (providerCount === 0 && modelCount === 0)
+                ? h('div', { style: S.muted }, t('pi.empty'))
+                : h('div', null,
+                  h(KV, { k: t('pi.providers'), v: providerCount }),
+                  h(KV, { k: t('pi.models'), v: modelCount }),
+                  providerCount > 0
+                    ? h('div', { style: { ...S.muted, marginTop: 4 } },
+                      fmt(t, 'pi.providerNames', {
+                        // 不截断：旧版 .slice(0,6) 把排在目录后面的 Smart Gateway
+                        // 切掉，导致"插件自己提供的没放进去"。全部列出，并对
+                        // 元 provider（智能路由，非独立模型提供商）显式标注类型。
+                        names: arr(pi.providers).map(p => {
+                          const id = str(p?.id)
+                          const name = str(p?.name) || id
+                          return id === 'smart' ? t('pi.smartTag') : name
+                        }).join('、'),
+                      }))
+                    : null,
+                  // task-106 二次分区：① "可能免费"区（宽松判据，零样本也进，
+                  // 标资费未确认）；② 其余已登记模型折叠区。不挡任何模型。
+                  h('div', { style: { ...S.muted, marginTop: 6 } },
+                    h('div', { style: { marginBottom: 4 } }, t('pi.maybeFree')),
+                    maybeFreeModels.length > 0
+                      ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                        maybeFreeModels.map(m => {
+                          const id = str(m?.id ?? m)
+                          const st = statusOf(id)
+                          const label = st.key === 'healthy' ? t('pi.availableTag') : t('pi.unknownTag')
+                          return h('span', { key: id, style: S.pill(st.key === 'healthy') },
+                            `${str(m?.name) || id} · ${label}${st.reviewed ? '' : `（${t('pi.unreviewed')}）`}`)
+                        })
+                      )
+                      : h('div', { style: S.muted }, t('pi.noMaybeFree')),
+                    // task-107: 手动重探入口（自动探测默认已开，此为强制重探 force）。
+                    probeEnabled && maybeFreeModels.length > 0
+                      ? h('button', {
+                        type: 'button', style: { ...S.btn, marginTop: 6 },
+                        onClick: () => onProbe?.(maybeFreeModels, true),
+                      }, t('pi.probeBtn'))
+                      : null,
+                    h('div', { style: { ...S.muted, marginTop: 4, fontSize: 11 } }, t('pi.freeModelsHint')),
+                    // 其余已登记模型：折叠，不丢（"能发现"仍成立）。
+                    otherModels.length > 0
+                      ? h('details', { style: { marginTop: 6 } },
+                        h('summary', { style: { cursor: 'pointer', fontSize: 11 } },
+                          fmt(t, 'pi.otherModels', { n: otherModels.length })),
+                        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 } },
+                          otherModels.map(m => {
+                            const id = str(m?.id ?? m)
+                            return h('span', { key: id, style: S.pill(false) }, str(m?.name) || id)
+                          })),
+                      )
+                      : null,
+                    h('div', { style: { ...S.muted, marginTop: 2, fontSize: 11 } }, t('pi.otherProvidersHint')),
+                  ),
+                ),
+            // ⑦ 诊断行收进默认折叠的「诊断」details（pi 自检 + 探测反馈 + 开关状态）。
+            h('details', { style: { marginTop: 8 } },
+              h('summary', { style: { cursor: 'pointer', fontSize: 11 } }, t('pi.diagnostics')),
+              h('div', { style: diagLine }, `pi: ${str(pi?.detail) || '—'}`),
+              probeDiag ? h('div', { style: diagLine }, `probe: ${probeDiag}`) : null,
+              h('div', { style: diagLine }, `probeEnabled=${probeEnabled === true} verdicts=${Object.keys(obj(probeVerdicts)).length} samples=${Object.keys(obj(availProjection)).length}`),
+            ),
+          ),
         ),
       )
     }
@@ -1578,10 +1620,11 @@ window.__ModuleLoader__.load({
     }
 
     // ---- section root -----------------------------------------------------
+    // 三个 Tab（原四 Tab 合并）：普通用户 30 秒内只需要「看状态 / 选怎么选 / 看花费」。
+    // 原「切换链」与「账号池 + 择优」合并进「路由设置」，两张卡各自保留保存按钮与语义。
     const TABS = [
       { id: 'overview', labelKey: 'tab.overview' },
-      { id: 'chains', labelKey: 'tab.chains' },
-      { id: 'accounts', labelKey: 'tab.accounts' },
+      { id: 'routing', labelKey: 'tab.routing' },
       { id: 'cost', labelKey: 'tab.cost' },
     ]
 
@@ -1898,10 +1941,18 @@ window.__ModuleLoader__.load({
             onClick: () => setTab(item.id),
           }, t(item.labelKey))),
         ),
-        presetNotice ? h('div', { style: presetNotice.ok ? S.ok : S.err }, presetNotice.msg) : null,
-        tab === 'overview' ? h(Overview, { t, localConfig: config, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe: runProbe, applyPreset, working }) : null,
-        tab === 'chains' ? h(ChainsTab, { t, form, revision, mutate, config, pi }) : null,
-        tab === 'accounts' ? h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService }) : null,
+        // 总览把预设反馈画在按钮下方（首屏就近可见），其它 Tab 仍走顶部提示行。
+        presetNotice && tab !== 'overview' ? h('div', { style: presetNotice.ok ? S.ok : S.err }, presetNotice.msg) : null,
+        tab === 'overview' ? h(Overview, {
+          t, localConfig: config, pi, availProjection, probeVerdicts, probeEnabled, probeDiag,
+          onProbe: runProbe, applyPreset, working, presetNotice, costService: activeCostService,
+          onOpenCost: () => setTab('cost'),
+        }) : null,
+        // 路由设置 = 先链路卡、后账号/择优卡，两张卡各自的保存按钮与语义不变。
+        tab === 'routing' ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+          h(ChainsTab, { t, form, revision, mutate, config, pi }),
+          h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService }),
+        ) : null,
         tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}` }) : null,
       )
     }
@@ -1921,7 +1972,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       nav: 'Smart 智能路由',
-      'tab.overview': '总览', 'tab.chains': '切换链', 'tab.accounts': '账号池 + 择优', 'tab.cost': '成本 / 健康',
+      'tab.overview': '总览', 'tab.routing': '路由设置', 'tab.cost': '花费与健康',
       'action.save': '保存', 'action.saved': '已保存，立即生效（无需重启）', 'action.saveFailed': '保存失败',
       'action.refresh': '刷新',
       'status.registered': '已注册', 'status.yes': '是', 'status.no': '否', 'status.chains': '链路数',
@@ -1943,6 +1994,11 @@ window.__ModuleLoader__.load({
       'hero.defaultExplain': '你还没选过策略，当前按内置的均衡方式运行：按任务挑候选模型、再在候选里均衡选择。想更省钱或更快，点下面的按钮切换即可。',
       'hero.configuredHint': '这里只显示真实保存的设置；下面的按钮随时可以改。',
       'pi.available': '你在 DSH 里已经配好的模型',
+      'pi.availableN': '已识别的模型（{models} 个模型 / {providers} 个提供商）',
+      'pi.diagnostics': '诊断信息（自检与探测反馈）',
+      'overview.healthLoading': '正在读取账号健康…',
+      'overview.healthNoChannel': '读不到账号健康（没有数据通道）—— 点这里去「花费与健康」看诊断',
+      'overview.healthLine': '账号 {accounts} 个 · 冷却中 {cooling} 个 —— 点这里查看账号健康',
       'pi.loading': '正在读取你已配置的模型…',
       'pi.empty': '暂时没读到已配置的模型，可在「设置 → 模型」页添加。',
       'pi.providers': '提供商数', 'pi.models': '可用模型数',
@@ -2049,7 +2105,7 @@ window.__ModuleLoader__.load({
     }
     const en = {
       nav: 'Smart provider',
-      'tab.overview': 'Overview', 'tab.chains': 'Chains', 'tab.accounts': 'Accounts + Ranking', 'tab.cost': 'Cost / Health',
+      'tab.overview': 'Overview', 'tab.routing': 'Routing', 'tab.cost': 'Cost & health',
       'action.save': 'Save', 'action.saved': 'Saved — live without restart', 'action.saveFailed': 'Save failed',
       'action.refresh': 'Refresh',
       'status.registered': 'Registered', 'status.yes': 'Yes', 'status.no': 'No', 'status.chains': 'Chains',
@@ -2071,6 +2127,11 @@ window.__ModuleLoader__.load({
       'hero.defaultExplain': 'You have not chosen a strategy yet, so the built-in balanced default applies: pick candidate models by task, then balance within them. Tap a button to switch.',
       'hero.configuredHint': 'Only your real saved settings are shown here; the buttons below can change them anytime.',
       'pi.available': 'Models you already configured in DSH',
+      'pi.availableN': 'Models recognised ({models} models / {providers} providers)',
+      'pi.diagnostics': 'Diagnostics (self-check and probe feedback)',
+      'overview.healthLoading': 'Reading account health…',
+      'overview.healthNoChannel': 'Account health unavailable (no data channel) — open Cost & health for diagnostics',
+      'overview.healthLine': '{accounts} accounts · {cooling} cooling down — open account health',
       'pi.loading': 'Reading your configured models…',
       'pi.empty': 'No configured models found yet — add one on Settings → Models.',
       'pi.providers': 'Providers', 'pi.models': 'Available models',
