@@ -1,8 +1,8 @@
 /**
  * dsh-smart-provider — Web Client settings section.
  *
- * Registers a `settings.section` ("Smart 智能路由") with four tabs:
- * overview / chains / accounts+ranking / cost+health.
+ * Registers a `settings.section` ("Smart 智能路由") with three tabs:
+ * overview / routing (chains + accounts+ranking as two cards) / cost+health.
  *
  * Hard UI rules (dsh-doc practices.md §UI):
  *   - no iframe, no require('@deepseek-ai/dsh-client-ui-primitives')
@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const ENTRY = 'smart-provider'
     // 与 package.json 的 version 保持同步（浏览器模块无法 require package.json，
     // 故按本项目 STATIC_* 惯例内联）。改版本时两处都要更新。
-    const PLUGIN_VERSION = '2.1.0'
+    const PLUGIN_VERSION = '2.2.0'
 
     // ---- typed @Remote contribution for real cost data ---------------------
     // The Host registers a `smartProvider/cost` @Remote service (see lib/remote.js).

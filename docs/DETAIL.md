@@ -20,7 +20,7 @@
 - **查询报表（`scripts/query-cost.mjs`，1.2.0 起追加两段）。** 花费汇总与分组花费表保持不变，其后追加：**failure rate**（每组的 `failed / calls`；只有真的写了 `failure_code` 的行算失败，缺失或空串算成功）与 **latency**（`ttft` 均值、nearest-rank `p50`、ttft 样本数、`tok/s` 均值、tps 样本数）。**缺延迟键的老行不计入延迟统计**（绝不当 0ms：一个 0 会静默拉低均值、报出从未观测到的“变快”），`ttft_ms` 真为 0 仍是合法样本；样本 <3 打 `*`，无样本打 `-`，整次选择无样本打诚实空态文案；垃圾值（字符串、`NaN`、`Infinity`、负 ttft）进不了统计，报表里永不出现 `NaN`。
 - **定价是用户数据。** 随包默认表 `lib/pricing.json` 只含零价免费档声明（当前 4 行）；真实单价经 `DSH_SMART_PRICING_FILE` 或 `registry/pricing.user.json` 导入（解析顺序：环境变量 → 用户表 → 默认表）。无表可查的模型返回 tier 粗估（`known:false` / `estimated:true`，金额恒 0）；作者真实价格导出保留为 `lib/pricing.example.json` 示例，不在默认加载路径。
 - **两层智能路由 routing（P2，默认启用、中立等权）。** `lib/routing.js` 四个纯函数：请求分类、模型位置标签推导、候选层选择、预设解析。默认启用（`enabled:true` / `balanced` / 四因子 .25）；显式 `ranking.routing.enabled=false` 时逐字节走 legacy。8 种策略预设：`balanced` / `cost-first` / `speed-first` / `reasoning-first` / `longctx-first` / `vision-first` / `legacy` / `custom`。位置标签从模型 catalog 自动推导（reasoning / contextWindow≥200000 / 输入含 image / tool!==false / 通用），可用 `positionOverrides` 手填纠正 —— **对象形态 `{tags:[...]}` 与数组形态 `[...]` 都受支持**（此前只读 `.tags`，README 自带的数组写法静默无效），两者都做白名单过滤后与自动推导结果**保守合并**（不是替换）；`tierLimit` 的 `-1` / `0` / `NaN` 回落默认 2 层、小数向下取整。层一无匹配时 relax 不阻断请求，但告警从“只报任务类型”升级为可行动诊断：首行字面不变（grep 兼容），续行给出缺失标签、每个候选路由实际携带的标签、该标签为何无法自动推导、可复制的 `positionOverrides` 两种写法、以及 `tierPolicy` 不能凭空造标签的边界说明。配置错误只会 WARN 并回退 legacy，不会崩溃。
-- **成本 / 健康 Tab 真账。** 成本页通过 `@Remote` 服务 `smartProvider.cost()`（`lib/remote.js`）读取 `lib/cost-stats.js` 对真实 `cost.jsonl` 的聚合（总花费 / 免费 / 付费 / 失败 / 按 provider），不是估算占位；设置页同时展示来自 pi-ai 的真实 provider / model 与凭据名。
+- **「花费与健康」Tab 真账（设置页共三个 Tab：总览 / 路由设置 / 花费与健康，2.2.0 由四 Tab 合并）。** 该页通过 `@Remote` 服务 `smartProvider.cost()` / `costDetail()`（`lib/remote.js`）读取 `lib/cost-stats.js` 对真实 `cost.jsonl` 的聚合（总花费 / 免费 / 付费 / 失败 / 按 provider），不是估算占位；逐笔明细带固定 6 个延迟字段与 ttft / tok/s 两列，成本趋势按**本地自然日**分桶；设置页同时展示来自 pi-ai 的真实 provider / model 与凭据名。
 
 ## 安装
 
@@ -32,7 +32,7 @@
 
 `chains`、`accounts`、`ranking`、`ranking.routing`、`health` / `ranking.health` 均为 volatile 配置，设置页改完即时生效，无需重启。健康层可调 `health.accountHealth`（半开许可数 / 退避倍数 / 冷却上限）与 `health.topologyOpts`（拓扑证据），`health.virtualProviders` 追加虚拟路由（`smart` 永远在内）。routing 配置嵌在 `ranking.routing` 下（`schema.js` 的 `routing` 字段），字段：`enabled` / `strategy` / `tierPolicy` / `weights` / `positionOverrides` / `tierLimit` / `longContextTokens` / `dynamicAuto`。未配置时代码路径完全不运行；显式 `chains` 键与 `*` 始终优先于 `dynamicAuto`，老配置不会被动。账号池 `accounts` 每项形如 `{id, provider, credentialRef, models[]}`，省略时按旧 per-hop 模式运行。自建路由只在 `registry/custom-routes.user.yaml` 声明（`credentialRef` 只放引用名，绝不放明文 key）。
 
-详细设计依据父工作区的文档：`meta-provider-设计方案.md`、`多账号池设计方案.md`、`方案盲点审查.md`、`可用性自动管理设计.md`、`账号池自动管理深化设计.md`、`落地规格.md`。验证入口见包根目录 `npm test`（`scripts/run-tests.mjs`）：门禁自动发现 `test/*.test.mjs` 并全部执行（**新增测试文件无需注册**），并带发现守卫 —— `test/` 下存在未被执行的 `.mjs` 就非 0 退出并点名。当前全套 tests 159 / pass 159 / fail 0、`npm run test:unit`（6 个纯逻辑 suite）tests 123 / pass 123 / fail 0（均为 2026-11-25 实测，退出码 0）。
+详细设计依据父工作区的文档：`meta-provider-设计方案.md`、`多账号池设计方案.md`、`方案盲点审查.md`、`可用性自动管理设计.md`、`账号池自动管理深化设计.md`、`落地规格.md`。验证入口见包根目录 `npm test`（`scripts/run-tests.mjs`）：门禁自动发现 `test/*.test.mjs` 并全部执行（**新增测试文件无需注册**），并带发现守卫 —— `test/` 下存在未被执行的 `.mjs` 就非 0 退出并点名。当前全套（`node scripts/run-tests.mjs`，需 Electron 的 Node）19 个 suite / tests 254 / pass 254 / fail 0、`node scripts/run-tests.mjs --unit`（14 个纯逻辑 suite）tests 207 / pass 207 / fail 0（均为 2026-11-26 实测，退出码 0）。两套门禁应串行执行：`--unit` 的探针 TTL 用例用 5ms 边界，并发负载下会偶发假红。
 
 ---
 

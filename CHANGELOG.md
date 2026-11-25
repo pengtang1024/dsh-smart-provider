@@ -2,6 +2,58 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.2.0
+
+本轮为设置页重构 + Host 韧性修复版本，由 `2.1.0` 升级到 `2.2.0`（含新增功能，按语义化版本 minor 递增）。九个提交覆盖三个方向：设置页从四 Tab 合并到三 Tab 并修复一批「看起来保存成功了其实没有」的问题，Host 侧自动链路发现 / 热更新 / 自建路由生成的韧性修复，以及探测缓存与成本趋势口径的修正。
+
+### 修复
+
+- **保存账号会静默把 `ranking.enabled` 写成 `false`（连带关掉择优）**：账号卡保存时无条件构造整块 `ranking` 并写回，块一旦出现，Host 读的是 `enabled === true` —— 用户只是加个账号，择优就被关掉且界面不说。现在只有用户真的改过 `ranking` / `routing` 才写该键（指纹比对），且写之前把默认值为「开」的开关物化（`withOnDefaults`：`enabled`、`routing.enabled` 未显式关就写 `true`）。「加个账号」不再顺手改择优配置。
+- **开关默认值显示与 Host 相反**：界面把缺省当作「关」，Host 把缺省当作「开」，同一份配置两边读法相反。现在界面与 Host 同口径读缺省。
+- **一键预设不写 `routing.strategy`**：点预设只改了权重，策略字段仍为空，Host 回落到默认值，界面显示的策略与真正生效的策略不是同一个。现在预设同时写 `strategy` 并立即回显该预设权重；`balanced` 的权重与 Host 的 `BALANCED_WEIGHTS`（四因子 .25）对齐，不再各写一套。
+- **英文界面保存失败显示绿色**：失败态用了成功色常量，英文文案路径下尤其明显。现在失败一律走错误色，与中文一致。
+- **保存静默丢弃不完整行**：账号行缺 `provider`（只有名字）或缺 `id`（只有 provider）时，旧实现把它 `filter` 掉、仍提示「已保存」，用户输入凭空消失。现在这种行被标红并拦住整次保存，提示缺什么；确实不想填的空行需要用户自己删。
+- **`costDetail` 降级形状违反 strict codec，成本面板永久加载**：`lib/remote.js` 的 catch 路径手写了一个降级对象，缺 `savings.priceSource` / `savings.note`，客户端 strict schema 解析失败 → 整个成本区块停在 loading。现在降级形状抽成冻结常量 `EMPTY_COST_DETAIL`（`total` / `offset` / `limit` / `rows` / `timeline` / `byModel` / `savings{estimated,priceSource,note,models}`），由测试按 schema 逐字段守。
+- **成本行 6 个延迟字段被客户端 codec 丢弃**：strict codec 没列 `started_at` / `first_token_at` / `finished_at` / `ttft_ms` / `duration_ms` / `tokens_per_second`，Host 明明返回了、过线即被剥掉，成本明细的 ttft / tok/s 两列永远是空的。现在 6 个字段都在 schema 里。
+- **探针 `unknown` 永不缓存，每次开设置页都真打上游**：未命中缓存的 unknown 结论写不进缓存，设置页每挂载一次就发一轮 1 token 探测。现在 unknown 走短 TTL（`DEFAULT_UNKNOWN_TTL_MS` = 10 分钟，与 free/metered 的长 TTL 分开），TTL 内不再重复打上游。
+- **自动链路发现被单个无适配器 provider 整轮中止**（日志实证）：`listModels` 对 `trae-enterprise` / `qoder-global` / `workbuddy-global` / `trae-global` 抛 `no adapter registered for provider X`，旧实现一个 provider 抛错就整轮中止，`auto` 链直接空。现在逐 provider 容错（抽成可导出的纯函数 `collectProviderRoutes()`：失败即跳过并计数、`continue`），循环外无条件写 `adapter.routes` 并 reconfigure，收尾打一条汇总（成功 N / 跳过 M，跳过清单截断 8 个），只有**全部**失败才 warn。
+- **自建路由生成器在已有同名 provider 时 `DUPLICATE_KEY` 崩溃且写前不校验**：现在生成是幂等的（同名 provider 复用而不是再插一条），写入前先校验目标文件可解析、结构合法，失败则不落盘。
+- **成本趋势按 UTC 日切桶**：时间线用 `ts.slice(0,10)` 按 UTC 切日，东八区用户在 00:00–08:00 的花费被算到前一天。现在 `localDayOf()` 按**本地自然日**分桶（offset 可注入；逐时刻取 offset，DST 行不会错位）。
+- **水合同毫秒竞态**：`lib/health-persistence.js` 的账号层用 `>` 比较时间戳、路由层与探测层用 `>=`，同一毫秒内重放会覆盖实时证据。现在统一抽出 `liveWins()`：平局判给实时证据。
+- **`gen-custom-routes` 替换 `chains` 时丢 `ranking` 兄弟键**：写入 `chains` 时整体重建配置对象，把同级的 `ranking` 一起冲掉。现在只替换自己负责的键，兄弟键原样保留。
+
+### 新增
+
+- **设置页四 Tab → 三 Tab**：原「切换链」与「账号池 + 择优」合并进**路由设置**（两张卡各自保留自己的保存按钮与语义），与**总览**、**花费与健康**一起构成 `总览 / 路由设置 / 花费与健康`。`locale` 的 zh / en 文案同步；三 Tab 的 id 为 `overview` / `routing` / `cost`。
+- **首屏主操作上移**：「看完状态 → 选一个策略」在总览首屏即可完成，不必先滚到账号卡；总览上的花费入口一键跳到「花费与健康」。
+- **保存按钮常驻可见 + 未保存标记 + 切 Tab 保护**：两张卡都在卡片头放保存入口（不展开任何折叠区也看得见），草稿与打开时快照有差异时显示「未保存」，切 Tab 前二次确认（「切换（丢弃修改）」/「留在本页」），不静默丢改动。
+- **删除二次确认**：删除链路组 / 单个跳次 / 账号，第一次点变成确认按钮，3 秒不确认自动回退，不再单击即删。
+- **加载 / 空 / 错三态分家**：加载中、真的没有数据、通道出错三种状态各有各的文案与颜色，不再用空表冒充「没有数据」。
+- **诊断折叠**：`form` / `state` / 代码这类内部串收进默认折叠的「诊断」，只在失败时默认展开，正常界面不再被内部细节淹没。
+- **成本概览 + ttft / tok-s 两列**：「花费与健康」先给概览（总花费 / 笔数 / 免费·付费·失败 / 按 provider），再给逐笔明细，明细列为 时间 / 模型 / tokens / ttft / tok/s / 花费 / 状态；缺值显示 `—`，不当 0。
+- **账号计费与等级字段可编辑，且保留未知字段**：`speedTier` / `priceTier` / `costModel` / `quotaCost` / `priority` 在账号行内直接可改（取值来自 `lib/ranking.js` 的 `ACCOUNT_RANKING_FIELDS`，与 Host 同源）；保存时按 Host 默认值补全，`quotaCost` 只在 `costModel=subscription` 时才写；整行以展开方式重建，**用户手写的、模版里没有的字段不会被丢掉**。
+- **`credentialRef` 可输入**：账号行里能填凭据引用名（只写引用，不写明文 key）；留空则不写该键，表示用 DSH 已登录的账号。
+- **模型选择器支持搜索 / 只选免费 / 全选**：每个账号的模型列表可按关键字过滤、只看免费档、一键全选/全不选，不必在长列表里翻。
+- **清空自定义链路**：路由设置提供「清空自定义链路」，二次确认后写 `chains: {}`（**不是** `undefined`——不赌 `set` 对 undefined 的语义；Host 侧 `{}` 会归一到默认空 `auto` 链并走自动发现），只有写入成功才提示已清空。
+- **实测 ttft 接入账号择优**：`lib/account-pool.js` / `lib/adapter.js` 把账本里按 `account_id` 归集的实测延迟（`ttft_ms` / `tokens_per_second`）作为速度证据 `speedEvidence` 传给评分，取值顺序为「实测 → `speedTier` → 中性 0.5」；没有证据时评分与旧版逐字节一致。
+- **热更新覆盖面补全**：volatile 热更新键从 `chains` / `accounts` / `ranking` 扩到 `health`、顶层 `routing` 与 `costEnabled` / `costDir` / `costBatchSize` / `costFlushIntervalMs`。`health` 变更保留既有 registry 引用、只换选项（opt-out 仍由 `buildHealthDeps` 唯一解析）；`cost*` 重建 `CostMeter` 并把 adapter / reader / remote 重指到新实例（旧 meter 关闭）。
+- **`positionOverrides` 缺省回退随包模板**：用户文件优先，缺失或为空时回退到随包 `registry/position-overrides.yaml`（与 `registry-lib.mjs` 的 custom-routes 口径一致），两者都空才是 `{}`。
+
+### 迁移与注意
+
+- **老账本不迁移**：成本趋势改为按本地自然日分桶后，历史行仍按**读时的本地时区**重新分桶，不做数据迁移、不重写 `cost.jsonl`。
+- **未知 verdict 缓存 10 分钟**：`probe-cache` 里 `unknown` 结论的 TTL 是 10 分钟（`DEFAULT_UNKNOWN_TTL_MS`），到期后才会重新探测；期间上游恢复也不会立刻反映到「可能免费」分区。
+- **清空链路写的是 `{}`**：若你手工把 `chains` 写成 `null` / `undefined`，Host 同样归一到默认空链；两者等价，但界面产生的是 `{}`。
+- **未配置 `health` / `routing` / `cost*` 时行为与日志逐字不变**：热更新扩面只影响「改了这些键」的路径。
+
+### 验证（2026-11-26 实测）
+
+- 全量门禁 `DSH_NODE_EXECUTABLE="/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT" node scripts/run-tests.mjs`：**19 个 suite / 254 条测试，pass 254 / fail 0，退出码 0**。
+- 纯逻辑子集 `env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit`：**14 个 suite / 207 条测试，pass 207 / fail 0，退出码 0**。
+- `node --check client.js`：退出码 0。
+- 相对 2.1.0 记录的 233 / 197 条，两套门禁分别增加 21 / 10 条断言（新增覆盖：`costDetail` strict schema 形状与 catch 路径、本地日分桶、水合同毫秒平局、探针 unknown 短 TTL、自建路由生成幂等与写前校验、实测 ttft 择优）。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.2.0`。
+
 ## 2.1.0
 
 本轮为合并基线版本，由 `2.0.0` 升级到 `2.1.0`（含新增功能，按语义化版本 minor 递增）：合并远端 1.x 健康管理等提交（任务单记 12 个，`fetch` 后实测为 28 个，远端 `master` 由 `4e0f79d` 前进到 `bcad446`）+ 工程标准补齐完整基线。两侧内容逐文件合并保留，未丢弃任何一方：
