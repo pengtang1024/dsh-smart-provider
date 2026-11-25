@@ -80,15 +80,97 @@ function upsertBlock(text, begin, end, body, anchorAfter) {
 }
 
 /**
+ * Provider ids already declared in the live patch's providers map, with their
+ * 1-based line numbers. A provider key is a 6-space line directly under the
+ * 4-space "providers:" key; the map ends at the first line dedenting to <= 5.
+ * Needed because inserting a second key of the same name yields duplicate YAML
+ * keys, which the parser rejects (DUPLICATE_KEY) — the pre-fix crash.
+ */
+function providerKeyLines(text) {
+  const map = new Map()
+  const anchor = /^ {4}providers:[ \t]*$/m.exec(text)
+  if (!anchor) return map
+  const lines = text.split('\n')
+  const firstLine = text.slice(0, anchor.index).split('\n').length // 1-based
+  for (let i = firstLine; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^\s*(#.*)?$/.test(line)) continue // blank or comment inside the map
+    const key = /^ {6}([A-Za-z0-9_.-]+):[ \t]*$/.exec(line)
+    if (key) { if (!map.has(key[1])) map.set(key[1], i + 1); continue }
+    if (/^ {0,5}\S/.test(line)) break // dedented out of the providers map
+  }
+  return map
+}
+
+/** Provider ids this generator already owns, i.e. that live inside one of its
+ *  own marker blocks. Those are safe to replace; anything else is user data
+ *  and must never be shadowed by a second key of the same name. */
+function markerOwnedProviderIds(text) {
+  const ids = new Set()
+  for (const [begin, end] of [[PM_B, PM_E], [FB_B, FB_E]]) {
+    const a = text.indexOf(begin)
+    const b = a === -1 ? -1 : text.indexOf(end, a + 1)
+    if (a === -1 || b === -1) continue
+    for (const m of text.slice(a, b).matchAll(/^ {6}([A-Za-z0-9_.-]+):[ \t]*$/gm)) ids.add(m[1])
+  }
+  return ids
+}
+
+/**
+ * Replace only the "chains:" subtree of the smart-provider config, keeping
+ * sibling keys a hand edit put under the same config (e.g. "ranking:").
+ * Dropping them would silently reset user configuration on a file this script
+ * does not own. Returns null when that entry has no "chains:" key.
+ */
+function replaceChainsSubtree(text, afterConfigIndex, block) {
+  const head = text.slice(0, afterConfigIndex)
+  const lines = text.slice(afterConfigIndex).split('\n')
+  let from = -1
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === '    chains:') { from = i; break }
+    if (/^- /.test(lines[i])) break // next top-level entry: no chains key here
+    if (lines[i].trim() !== '' && !/^\s{4,}\S/.test(lines[i])) break
+  }
+  if (from === -1) return null
+  let to = from + 1
+  while (to < lines.length) {
+    const line = lines[to]
+    if (line.trim() === '' || /^\s{6,}\S/.test(line)) { to++; continue }
+    break // 4-space sibling key or top-level entry
+  }
+  while (to > from + 1 && lines[to - 1].trim() === '') to-- // keep the gap
+  const outLines = [...lines.slice(0, from), ...block.split('\n'), ...lines.slice(to)]
+  return head + outLines.join('\n')
+}
+
+/**
+ * Parse a cordis patch, or fail with the offending line/key and a non-zero
+ * exit. A raw YAMLParseError must never escape: the operator has to learn that
+ * NOTHING was written and which key collided. code 4 = rejected before writing.
+ */
+function parsePatch(text, label, code = 4) {
+  try {
+    const doc = yaml.parse(text)
+    if (!Array.isArray(doc)) throw new Error('top level is not a list')
+    return doc
+  } catch (err) {
+    const msg = String(err?.message ?? err).split('\n')[0]
+    const pos = Array.isArray(err?.linePos) ? err.linePos[0] : err?.linePos
+    const where = pos ? ` (line ${pos.line}, column ${pos.col})` : ''
+    console.error(`PARSE FAIL ${label}${where}: ${msg}`)
+    console.error('  Nothing was written: the generator validates the complete output before writing.')
+    process.exit(code)
+  }
+}
+
+/**
  * Top-level entry ids of a cordis patch (list items at column 0).
  * Used by the no-deletion guard below: the generator may edit the llm-pi-ai
  * providers block and the smart-provider config, but must NEVER add, drop or
  * rename a top-level plugin entry (history: agent-default-model was lost).
  */
-function topLevelIds(text) {
-  const doc = yaml.parse(text)
-  if (!Array.isArray(doc)) throw new Error('cordis.patch.yml: top level is not a list')
-  return doc.map(x => x?.id).filter(id => typeof id === 'string')
+function topLevelIds(text, label = 'cordis.patch.yml') {
+  return parsePatch(text, label).map(x => x?.id).filter(id => typeof id === 'string')
 }
 
 const doc = readRegistry(REGISTRY_FILE)
@@ -98,9 +180,32 @@ const idsBefore = topLevelIds(originalCordis)
 let cordis = originalCordis
 
 // ---- 1. providers block (6-space indent, inside llm-pi-ai.providers) ------
-const providersYaml = yaml.stringify(providers, { indent: 2 }).trimEnd()
+// Conflict check BEFORE inserting (P0 2026-11-26): a live patch may already
+// carry a route of the same id that this generator did not write (no marker).
+// Inserting a second key of that name yields duplicate YAML keys and the
+// parser then rejects the whole document (DUPLICATE_KEY at line N) — exactly
+// the crash this guard removes. Only ids this generator owns (inside its own
+// markers) are rewritten; foreign ids are skipped with an actionable note.
+const markerOwned = markerOwnedProviderIds(cordis)
+const foreignProviders = new Map(
+  [...providerKeyLines(cordis)].filter(([id]) => !markerOwned.has(id)),
+)
+const skippedProviders = Object.keys(providers).filter(id => foreignProviders.has(id))
+const providersToWrite = Object.fromEntries(
+  Object.entries(providers).filter(([id]) => !foreignProviders.has(id)),
+)
+if (skippedProviders.length) {
+  console.warn('WARN providers: already declared in cordis.patch.yml OUTSIDE the generator markers — NOT re-inserted (a second key of the same name is a duplicate YAML key -> DUPLICATE_KEY):')
+  for (const id of skippedProviders) console.warn(`  - ${id} at cordis.patch.yml:${foreignProviders.get(id)}`)
+  console.warn('  Those registrations already exist, so routing keeps working. To hand ownership to the generator, wrap that block in ' + PM_B.trim() + ' / ' + PM_E.trim() + ' (or merge by hand), then re-run.')
+}
+const providersYaml = yaml.stringify(providersToWrite, { indent: 2 }).trimEnd()
   .split('\n').map(l => '      ' + l).join('\n')
-const providersBlock = `${PM_B}\n${providersYaml}\n${PM_E}`
+// Every declared route already lives outside our markers: write nothing at all
+// (an empty markers-only block would not be valid YAML anyway).
+const providersBlock = Object.keys(providersToWrite).length
+  ? `${PM_B}\n${providersYaml}\n${PM_E}`
+  : null
 // Anchor = a 4-space "providers:" line. A bare string also substring-matches
 // the legacy 8-space insert line and our own fallback block; the marker-range
 // check below excludes the latter. The former is removed by the anchor-present
@@ -112,12 +217,16 @@ const fallbackEndAt = fallbackAnchorAt === -1 ? -1 : cordis.indexOf(FB_E, fallba
 // the canonical anchor. On re-run, do not insert a NEW providers block into
 // the file; let the marker upsert replace the whole block in place.
 const providersAnchorInFallback = fallbackAnchorAt !== -1 && fallbackEndAt > fallbackAnchorAt
-const upserted = providersAnchorInFallback
+const upserted = providersBlock === null || providersAnchorInFallback
   ? null
   : upsertBlock(cordis, PM_B, PM_E, providersBlock, providersAnchor)
 let providersAnchorMissing = false
 let chainsAnchorMissing = false
-if (upserted === null) {
+if (providersBlock === null) {
+  // Nothing left to insert: every declared route already has a registration in
+  // the live patch. Leave the document byte-untouched (this is what makes the
+  // second --write run a no-op on such a profile).
+} else if (upserted === null) {
   providersAnchorMissing = true
   // App-managed profiles have no llm-pi-ai providers anchor: that means the
   // single app-managed llm-pi-ai instance has no configured providers, not that
@@ -179,15 +288,19 @@ if (cordis.includes(CM_B) && cordis.includes(CM_E)) {
   finalCordis = cordis.replace(matched, matched.replace(/config: \{\}\n$/, 'config:\n' + chainsBlock + '\n'))
 } else if (smartPrefixRe.test(cordis)) {
   // Legacy/foreign shape: `config:` already has a bare `chains:` subtree
-  // (e.g. written by an older generator, or by hand). Replace exactly the
-  // smart-provider config subtree up to the next top-level `- id:` row,
-  // wrapping it in our markers so subsequent runs are idempotent. Never
-  // touch any other entry.
+  // (e.g. written by an older generator, or by hand). Replace ONLY that
+  // subtree, wrapping it in our markers so subsequent runs are idempotent.
+  // Sibling keys an operator put under the same config (e.g. `ranking:`) must
+  // survive: dropping them would silently reset user configuration.
   const m3 = cordis.match(smartPrefixRe)
-  const a = m3.index
-  const nextRow = cordis.indexOf('\n- id:', a + m3[0].length)
-  const end = nextRow === -1 ? cordis.length : nextRow + 1
-  finalCordis = cordis.slice(0, a) + m3[0] + '\n' + chainsBlock + '\n' + cordis.slice(end)
+  const rewritten = replaceChainsSubtree(cordis, m3.index + m3[0].length, chainsBlock)
+  if (rewritten === null) {
+    console.warn('WARN chains: smart-provider config has no own "chains:" key — chains block NOT written (config left untouched); other artifacts still generated.')
+    chainsAnchorMissing = true
+    finalCordis = cordis
+  } else {
+    finalCordis = rewritten
+  }
 } else {
   // Honest degrade: no smart-provider entry in the live patch either. Warn and
   // skip the chains artifact instead of failing the whole generation.
@@ -270,7 +383,10 @@ if (missingRequired.length) {
   console.error('  Restore them BEFORE gen --write; refusing to bake a broken patch.')
   process.exit(3)
 }
-const idsAfter = topLevelIds(finalCordis)
+// Parses the COMPLETE rewritten document: a duplicate key, a bad indent or any
+// other YAML error exits here, before a single byte is written (parsePatch
+// exits 4 and reports which line/key failed).
+const idsAfter = topLevelIds(finalCordis, 'generated cordis.patch.yml (refusing to write)')
 // The fallback entry itself is owned by this marker. On a second --write run
 // it is already present in idsBefore; it must be allowed to be replaced (not
 // counted as removed) so the run is byte-idempotent.
@@ -307,6 +423,10 @@ console.log('pi-ai profile:', JSON.stringify(providers, null, 2))
 console.log('pricing additions:', JSON.stringify(additions, null, 2))
 
 if (WRITE) {
+  // Last-mile gate: the exact text about to be written must parse. Any failure
+  // exits non-zero with the offending line/key and leaves all three files
+  // untouched (nothing above writes; the guards only mutate memory).
+  parsePatch(finalCordis, 'cordis.patch.yml (pre-write validation)')
   writeFileSync(CORDIS, finalCordis, 'utf8')
   writeFileSync(clientPath, clientAfter, 'utf8')
   writeFileSync(pricingPath, pricingAfter, 'utf8')

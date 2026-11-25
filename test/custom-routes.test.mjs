@@ -169,3 +169,163 @@ test('smart is never declared in the fallback insert (DUPLICATE_ADAPTER guard)',
   assert.match(r.stderr, /DUPLICATE_ADAPTER|reserved provider/)
   assert.ok(!readFileSync(patch, 'utf8').includes('custom-routes:providers-insert'))
 })
+
+// ---------------------------------------------------------------------------
+// P0 2026-11-26: the generator used to insert a x-* provider route even when
+// the live patch ALREADY declared it by hand without markers. The inserted
+// block duplicated the YAML key, so yaml.parse rejected the whole file with
+// "Map keys must be unique ... DUPLICATE_KEY" and the run died with a stack
+// trace. The fixtures below pin the fix: skip with an actionable note, replace
+// when the block is marker-owned, and refuse loudly (without writing) when the
+// live patch is already broken.
+// ---------------------------------------------------------------------------
+
+const HAND_WRITTEN_PROVIDER_PATCH = [
+  '- id: agent-default-model',
+  '  name: "@deepseek-ai/dsh-agent-default-model"',
+  '  config: {}',
+  '- id: llm-pi-ai',
+  '  name: "@deepseek-ai/dsh-llm-pi-ai"',
+  '  config:',
+  '    providers:',
+  '      x-opencode-free:',
+  '        displayName: Hand Written Free',
+  '        api: openai-completions',
+  '        baseURL: https://opencode.ai/inference/go/v1',
+  '        models: []',
+  '- id: smart-provider',
+  '  name: "@local/dsh-smart-provider"',
+  '  config: {}',
+  '',
+].join('\n')
+
+const MARKED_PROVIDER_PATCH = [
+  '- id: agent-default-model',
+  '  name: "@deepseek-ai/dsh-agent-default-model"',
+  '  config: {}',
+  '- id: llm-pi-ai',
+  '  name: "@deepseek-ai/dsh-llm-pi-ai"',
+  '  config:',
+  '    providers:',
+  '      # >>> custom-routes:providers >>>',
+  '      x-opencode-free:',
+  '        displayName: Stale Display Name',
+  '        api: openai-completions',
+  '        baseURL: https://stale.example.com/v1',
+  '        models: []',
+  '      # <<< custom-routes:providers <<<',
+  '- id: smart-provider',
+  '  name: "@local/dsh-smart-provider"',
+  '  config: {}',
+  '',
+].join('\n')
+
+const DUPLICATE_KEY_PATCH = [
+  '- id: agent-default-model',
+  '  name: "@deepseek-ai/dsh-agent-default-model"',
+  '  config: {}',
+  '- id: llm-pi-ai',
+  '  name: "@deepseek-ai/dsh-llm-pi-ai"',
+  '  config:',
+  '    providers:',
+  '      x-opencode-free:',
+  '        displayName: First',
+  '      x-opencode-free:',
+  '        displayName: Second',
+  '- id: smart-provider',
+  '  name: "@local/dsh-smart-provider"',
+  '  config: {}',
+  '',
+].join('\n')
+
+const CHAINS_WITH_RANKING_PATCH = [
+  '- id: agent-default-model',
+  '  name: "@deepseek-ai/dsh-agent-default-model"',
+  '  config: {}',
+  '- id: llm-pi-ai',
+  '  name: "@deepseek-ai/dsh-llm-pi-ai"',
+  '  config:',
+  '    providers:',
+  '      opencode-go:',
+  '        displayName: OpenCode Go',
+  '        api: openai-completions',
+  '        baseURL: https://opencode.ai/inference/go/v1',
+  '        models: []',
+  '- id: smart-provider',
+  '  name: "@local/dsh-smart-provider"',
+  '  config:',
+  '    chains:',
+  '      auto:',
+  '        - provider: opencode-go',
+  '          model: mimo-v2.6-flash',
+  '    ranking:',
+  '      enabled: true',
+  '      strategy: cost-first',
+  '      weights:',
+  '        cost: 0.7',
+  '',
+].join('\n')
+
+function countProviderKeys(text, id) {
+  return text.split('\n').filter(l => l === '      ' + id + ':').length
+}
+
+test('gen SKIPS a provider already declared outside the markers (no DUPLICATE_KEY, exit 0)', () => {
+  const { root, patch } = isolatedProfile(HAND_WRITTEN_PROVIDER_PATCH)
+  const g = run('gen-custom-routes.mjs', root, ['--write'])
+  assert.equal(g.status, 0, 'gen must not crash: ' + g.stdout + g.stderr)
+  assert.match(g.stderr, /already declared in cordis[.]patch[.]yml OUTSIDE the generator markers/)
+  assert.match(g.stderr, /x-opencode-free at cordis[.]patch[.]yml:[0-9]+/)
+  assert.match(g.stderr, /merge by hand/)
+  const text = readFileSync(patch, 'utf8')
+  assert.equal(countProviderKeys(text, 'x-opencode-free'), 1, 'provider key must NOT be duplicated')
+  assert.ok(!text.includes('custom-routes:providers >>>'), 'no providers block inserted over hand-written data')
+  assert.match(text, /displayName: Hand Written Free/, 'hand-written provider block must be untouched')
+  // Other artifacts are still generated, and a second run is a byte no-op.
+  assert.match(text, /# >>> custom-routes:chains >>>/)
+  const first = readFileSync(patch)
+  const g2 = run('gen-custom-routes.mjs', root, ['--write'])
+  assert.equal(g2.status, 0, 'second gen failed: ' + g2.stdout + g2.stderr)
+  assert.ok(first.equals(readFileSync(patch)), 'second run must not change the patch')
+})
+
+test('gen REPLACES a provider block that already carries generator markers (single key, idempotent)', () => {
+  const { root, patch } = isolatedProfile(MARKED_PROVIDER_PATCH)
+  const g = run('gen-custom-routes.mjs', root, ['--write'])
+  assert.equal(g.status, 0, 'gen failed: ' + g.stdout + g.stderr)
+  const text = readFileSync(patch, 'utf8')
+  assert.equal(countProviderKeys(text, 'x-opencode-free'), 1, 'marker-owned block must be replaced, not appended')
+  assert.match(text, /displayName: OpenCode Free/, 'marker-owned block must be refreshed from the registry')
+  assert.ok(!text.includes('stale.example.com'), 'stale body must be gone')
+  const first = readFileSync(patch)
+  const g2 = run('gen-custom-routes.mjs', root, ['--write'])
+  assert.equal(g2.status, 0)
+  assert.ok(first.equals(readFileSync(patch)), 'second run must not change the patch')
+})
+
+test('gen REFUSES an already-duplicate live patch: non-zero exit, offending line, file untouched', () => {
+  const { root, patch } = isolatedProfile(DUPLICATE_KEY_PATCH)
+  const before = readFileSync(patch)
+  const g = run('gen-custom-routes.mjs', root, ['--write'])
+  assert.notEqual(g.status, 0, 'a live patch with duplicate keys must fail the run')
+  assert.match(g.stderr, /PARSE FAIL/)
+  assert.match(g.stderr, /unique at line [0-9]+/)
+  assert.match(g.stderr, /Nothing was written/)
+  assert.ok(!g.stderr.includes('YAMLParseError'), 'must not dump a raw YAMLParseError stack')
+  assert.ok(!g.stdout.includes('WROTE'), 'must not claim a write')
+  assert.ok(before.equals(readFileSync(patch)), 'the original file must be left untouched')
+})
+
+test('hand-written chains keep sibling config keys (e.g. ranking) and gain markers', () => {
+  const { root, patch } = isolatedProfile(CHAINS_WITH_RANKING_PATCH)
+  const g = run('gen-custom-routes.mjs', root, ['--write'])
+  assert.equal(g.status, 0, 'gen failed: ' + g.stdout + g.stderr)
+  const text = readFileSync(patch, 'utf8')
+  assert.match(text, /# >>> custom-routes:chains >>>/)
+  assert.ok(text.includes('ranking:\n      enabled: true\n      strategy: cost-first'), 'sibling config must survive the rewrite')
+  assert.ok(text.includes('weights:\n        cost: 0.7'), 'nested sibling config must survive too')
+  const first = readFileSync(patch)
+  const g2 = run('gen-custom-routes.mjs', root, ['--write'])
+  assert.equal(g2.status, 0)
+  assert.ok(first.equals(readFileSync(patch)), 'second run must not change the patch')
+})
