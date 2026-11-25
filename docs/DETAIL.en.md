@@ -28,3 +28,11 @@ The detailed design is based on three documents in the parent workspace: `meta-p
 ## Summary (secondary)
 
 A meta-provider registered as the `smart` route, currently **installed and enabled** as the default model. It is a general intelligent router (cost / speed / capability / composite), neutral by default in code; saving-first is an opt-in user config. Verified: `smart/auto` in real sessions, `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources and an `@Remote` real-ledger cost tab, P1 resource adaptation and P2 opt-in two-layer routing (`ranking.routing.enabled=true`, 8 presets, byte-for-byte legacy when off). See the package README for the full configuration and verification commands.
+
+---
+
+## Support this project
+
+If this project helps you, a star on the repository ⭐ is always welcome and helps others find it.
+
+[https://github.com/pengtang1024/dsh-smart-provider](https://github.com/pengtang1024/dsh-smart-provider)

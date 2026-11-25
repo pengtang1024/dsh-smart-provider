@@ -27,3 +27,11 @@ El diseño detallado se basa en tres documentos del espacio de trabajo superior:
 ## Resumen (secundario)
 
 Un meta-proveedor registrado como ruta `smart`, actualmente **instalado y habilitado** como modelo predeterminado. Es un enrutador inteligente general (coste / velocidad / capacidad / compuesto), neutral por defecto en el código; «coste primero» es una configuración opcional del usuario. Verificado: `smart/auto` en sesiones reales, primer salto gratuito `x-opencode-free` (coste=0, 213+ filas reales del libro de contabilidad) con conmutación 402→de pago, una página de ajustes con recursos reales de pi-ai y una pestaña de coste `@Remote` con contabilidad real, P1 (adaptación de recursos) y P2 de enrutamiento de dos capas activo por defecto (`ranking.routing.enabled=true`, 8 preajustes, byte a byte igual al modo anterior cuando está desactivado). Consulta el README del paquete para la configuración completa y los comandos de verificación.
+
+---
+
+## Apoya este proyecto
+
+Si este proyecto te resulta útil, no dudes en darle una estrella ⭐ al repositorio para que más personas lo encuentren.
+
+[https://github.com/pengtang1024/dsh-smart-provider](https://github.com/pengtang1024/dsh-smart-provider)

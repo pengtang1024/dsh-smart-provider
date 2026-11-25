@@ -27,3 +27,11 @@ La conception détaillée repose sur trois documents de l'espace de travail pare
 ## Résumé (secondaire)
 
 Un méta-fournisseur enregistré comme route `smart`, actuellement **installé et activé** comme modèle par défaut. C'est un routeur intelligent général (coût / vitesse / capacité / composite), neutre par défaut dans le code ; « coût prioritaire » est une configuration optionnelle de l'utilisateur. Vérifié : `smart/auto` dans des sessions réelles, premier saut gratuit `x-opencode-free` (coût=0, 213+ lignes réelles du registre) avec bascule 402→payant, une page de paramètres avec les ressources réelles de pi-ai et un onglet coût `@Remote` utilisant le registre réel, P1 (adaptation aux ressources) et P2 de routage à deux niveaux actif par défaut (`ranking.routing.enabled=true`, 8 préréglages, ancien comportement octet pour octet quand désactivé). Consultez le README du paquet pour la configuration complète et les commandes de vérification.
+
+---
+
+## Soutenez ce projet
+
+Si ce projet vous est utile, n'hésitez pas à lui donner une étoile ⭐ sur le dépôt pour le faire découvrir.
+
+[https://github.com/pengtang1024/dsh-smart-provider](https://github.com/pengtang1024/dsh-smart-provider)

@@ -650,4 +650,6 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 ## 支持本项目
 
-如果这个插件帮你省了心、省了钱，或者单纯觉得它做得还行，欢迎给仓库点个 star ⭐ —— 2.5.0 起设置页总览的版本号行也直接提供了 GitHub star 链接，点一下就能直达仓库；你的一个星是对我们最大的鼓励，也让更多人能发现它。感谢！
+如果这个插件帮你省了心、省了钱，或者单纯觉得它做得还行，欢迎给仓库点个 star ⭐ —— 你的一个星是对我们最大的鼓励，也让更多人能发现它。感谢！
+
+仓库地址：[https://github.com/pengtang1024/dsh-smart-provider](https://github.com/pengtang1024/dsh-smart-provider)

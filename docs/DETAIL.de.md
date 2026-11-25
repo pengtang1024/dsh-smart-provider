@@ -29,3 +29,11 @@ Die detaillierte Begründung findet sich in drei Dokumenten des übergeordneten 
 ## Zusammenfassung (sekundär)
 
 Ein als `smart` Route registrierter Meta-Provider, derzeit **installiert und aktiviert** und als Standardmodell festgelegt. Er ist ein allgemeiner intelligenter Router (Kosten / Geschwindigkeit / Fähigkeiten / kombiniert), im Code neutral nach Voreinstellung; „Kosten zuerst" ist eine vom Nutzer aktivierte Konfiguration. Verifiziert: `smart/auto` in echten Sitzungen, kostenloser erster Hop `x-opencode-free` (cost=0, 213+ echte Ledger-Zeilen) mit Fallback 402→kostenpflichtig, eine Konfigurationsseite mit echten pi-ai-Ressourcen und einem `@Remote`-Ledger-Tab für Kosten, P1-Ressourcen-Adaption sowie standardmäßig aktives zweistufiges Routing (P2, `ranking.routing.enabled=true`, 8 Voreinstellungen, byte-für-byte Legacy bei Deaktivierung). Die vollständige Konfiguration und die Verifizierungsbefehle stehen in der README des Pakets.
+
+---
+
+## Projekt unterstützen
+
+Wenn dieses Projekt für Sie nützlich ist, freuen wir uns über einen Stern ⭐ im Repository — das hilft anderen, es zu finden.
+
+[https://github.com/pengtang1024/dsh-smart-provider](https://github.com/pengtang1024/dsh-smart-provider)

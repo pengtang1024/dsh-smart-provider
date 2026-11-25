@@ -29,3 +29,11 @@ A justificativa detalhada está em três documentos do diretório de trabalho pa
 ## Resumo (secundário)
 
 Um meta-provedor registrado como a rota `smart`, atualmente **instalado e habilitado** como modelo padrão. É um roteador inteligente geral (custo / velocidade / capacidade / composto), neutro por padrão no código; priorizar economia é uma configuração opcional do usuário. Verificado: `smart/auto` em sessões reais, primeiro salto gratuito `x-opencode-free` (cost=0, 213+ linhas reais de ledger) com fallback 402→pago, página de configuração com recursos reais do pi-ai e aba de custos com ledger real via `@Remote`, adaptação de recursos P1 e roteamento de duas camadas P2 ativo por padrão (`ranking.routing.enabled=true`, 8 predefinições, byte a byte legacy quando desativado). A configuração completa e os comandos de verificação estão no README do pacote.
+
+---
+
+## Apoie este projeto
+
+Se este projeto for útil para você, deixe uma estrela ⭐ no repositório para que mais pessoas o encontrem.
+
+[https://github.com/pengtang1024/dsh-smart-provider](https://github.com/pengtang1024/dsh-smart-provider)
