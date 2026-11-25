@@ -1122,12 +1122,247 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ---- T3b: 账号健康 / 冷却面板 ------------------------------------------
+    // 数据源 = Host 实时注册表 smartProvider/accountHealth（服务对象就是已有的
+    // costService，不新建注入通道，也绝不把 smartProvider 写进 inject）。
+    // 诚实性纪律（本面板的验收核心）：
+    //   · 零样本 / 未知状态一律「暂无数据」+ 中性色，绝不显示「不可用」、绝不伪造绿；
+    //   · 健康层被配置关闭时明说关闭，不假装正常；
+    //   · 不做 setInterval 倒计时（泄漏风险），只显示快照时间 + 手动「重新读取」。
+    const HEALTH_SUCCESS_COLOR = 'var(--dsw-alias-state-success-primary)'
+    // 冷却/降级用警告色，**绝不用 error 红**。按卡上写法优先 --dsw-alias-state-warning-primary；
+    // 实测本构建（DSH NEXT app.asar）里该名定义数为 0，真正存在的是
+    // --dsw-alias-state-warn-primary（4 处定义），故链式兜底：
+    // warning-primary → warn-primary → label-secondary。任一级缺失都不会落红，
+    // 最差也只是退成中性灰，符合「不存在就用 label-secondary」的纪律。
+    const HEALTH_WARN_COLOR = 'var(--dsw-alias-state-warning-primary, var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-secondary)))'
+    const HEALTH_NEUTRAL_COLOR = 'var(--dsw-alias-label-tertiary)'
+
+    const fmtClock = ms => {
+      const n = Number(ms)
+      if (!Number.isFinite(n) || n <= 0) return '—'
+      const d = new Date(n)
+      const pad = v => String(v).padStart(2, '0')
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    }
+    // 剩余冷却格式化：<1s「即将到期」；<1h「29 分 12 秒」/「12 秒」；>=1h「1 小时 3 分」。
+    const fmtDuration = (t, ms) => {
+      const n = Number(ms)
+      if (!Number.isFinite(n) || n < 1000) return t('health.soon')
+      const total = Math.ceil(n / 1000)
+      const hours = Math.floor(total / 3600)
+      const mins = Math.floor((total % 3600) / 60)
+      const secs = total % 60
+      if (hours > 0) return fmt(t, 'health.durationHour', { h: hours, m: mins })
+      if (mins > 0) return fmt(t, 'health.durationMinute', { m: mins, s: secs })
+      return fmt(t, 'health.durationSecond', { s: secs })
+    }
+    // 账号状态文案：UNKNOWN / 缺失 / 畸形 一律「暂无数据」，绝不落到「不可用」。
+    const accountStateText = (t, state) => {
+      const k = str(state).toUpperCase()
+      if (k === 'ACTIVE') return t('health.stateActive')
+      if (k === 'COOLING') return t('health.stateCooling')
+      if (k === 'HALF_OPEN') return t('health.stateHalfOpen')
+      return t('health.stateUnknown')
+    }
+    // 只有 ACTIVE 用绿；COOLING / HALF_OPEN 用警告；UNKNOWN 及一切未知值用中性。
+    const accountStateColor = state => {
+      const k = str(state).toUpperCase()
+      if (k === 'ACTIVE') return HEALTH_SUCCESS_COLOR
+      if (k === 'COOLING' || k === 'HALF_OPEN') return HEALTH_WARN_COLOR
+      return HEALTH_NEUTRAL_COLOR
+    }
+    const routeHealthText = (t, health) => {
+      const k = str(health).toUpperCase()
+      if (k === 'HEALTHY') return t('health.healthHealthy')
+      if (k === 'DEGRADED') return t('health.healthDegraded')
+      if (k === 'DEPRECATED') return t('health.healthDeprecated')
+      return t('health.healthUnknown')
+    }
+    // 只有 HEALTHY 用绿；DEGRADED / DEPRECATED 用警告；UNKNOWN 及未知值用中性。
+    const routeHealthColor = health => {
+      const k = str(health).toUpperCase()
+      if (k === 'HEALTHY') return HEALTH_SUCCESS_COLOR
+      if (k === 'DEGRADED' || k === 'DEPRECATED') return HEALTH_WARN_COLOR
+      return HEALTH_NEUTRAL_COLOR
+    }
+    const tierText = (t, tier) => {
+      const k = str(tier).toLowerCase()
+      if (k === 'free') return t('health.tierFree')
+      if (k === 'metered') return t('health.tierMetered')
+      return t('health.tierUnknown')
+    }
+    const samplesText = samples => {
+      const s = obj(samples)
+      return `${Number(s.success) || 0} / ${Number(s.failure) || 0}`
+    }
+    // 诊断行沿用成本页的样式（11px 等宽，可断行），失败原因不隐藏。
+    const diagStyle = { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' }
+
+    function AccountHealthPanel({ t, snapshot, diag, loading, onRefresh }) {
+      const snap = obj(snapshot)
+      const accounts = arr(snap.accounts)
+      const routes = arr(snap.routes)
+      const snapAt = Number(snap.generatedAt)
+
+      // 分支顺序即优先级：loading → 无通道 → 健康层关闭 → 无数据 → 两张表。
+      let body
+      if (loading) {
+        body = h('div', { style: S.muted }, t('health.loading'))
+      } else if (!snapshot) {
+        body = h('div', null,
+          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('health.noChannel')),
+          h('div', { style: diagStyle }, `${t('health.diag')}${diag ? str(diag) : '—'}`),
+        )
+      } else if (snap.enabled === false) {
+        // 明说被关闭，不假装正常；中性色，不吓人也不冒充健康。
+        body = h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('health.disabledExplain'))
+      } else if (accounts.length === 0 && routes.length === 0) {
+        // 健康层开着但确实没有数据 —— 绝不写成「不可用」。
+        body = h('div', { style: S.muted }, t('health.empty'))
+      } else {
+        body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+          h('div', null,
+            h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.accountsTitle')),
+            accounts.length === 0
+              ? h('div', { style: S.muted }, t('health.empty'))
+              : h('table', { style: S.table },
+                h('thead', null, h('tr', null,
+                  h('th', { style: S.th }, t('health.id')),
+                  h('th', { style: S.th }, t('health.provider')),
+                  h('th', { style: S.th }, t('health.state')),
+                  h('th', { style: S.th }, t('health.coolRemain')),
+                  h('th', { style: S.th }, t('health.streak')),
+                  h('th', { style: S.th }, t('health.usage')),
+                  h('th', { style: S.th }, t('health.samples')),
+                )),
+                h('tbody', null, accounts.map((a, i) => {
+                  const row = obj(a)
+                  const models = arr(row.models).filter(m => typeof m === 'string' && m)
+                  const state = str(row.state).toUpperCase()
+                  const reason = row.reason === null || row.reason === undefined ? '' : str(row.reason)
+                  const cooling = state === 'COOLING' || state === 'HALF_OPEN'
+                  const remain = Number(row.remainingMs) || 0
+                  return h('tr', { key: `a:${str(row.id) || i}` },
+                    h('td', { style: S.td },
+                      h('div', null,
+                        str(row.id) || '—',
+                        row.implicit === true ? h('span', { style: { ...S.muted, marginLeft: 6 } }, t('health.implicit')) : null,
+                      ),
+                      h('div', { style: S.muted }, fmt(t, 'health.lastSeen', {
+                        ok: row.lastSuccessAt === null || row.lastSuccessAt === undefined ? t('health.never') : fmtClock(row.lastSuccessAt),
+                        fail: row.lastFailureAt === null || row.lastFailureAt === undefined ? t('health.never') : fmtClock(row.lastFailureAt),
+                      })),
+                    ),
+                    h('td', { style: S.td },
+                      h('div', null, str(row.provider) || '—'),
+                      models.length ? h('div', { style: S.muted }, models.join(' · ')) : null,
+                    ),
+                    h('td', { style: S.td },
+                      h('span', { style: { color: accountStateColor(row.state), fontWeight: 500 } }, accountStateText(t, row.state)),
+                      reason ? h('div', { style: S.muted }, `${t('health.coolReason')}: ${reason}`) : null,
+                    ),
+                    h('td', { style: S.td }, cooling && remain > 0 ? fmtDuration(t, remain) : '—'),
+                    h('td', { style: S.td }, String(Number(row.streak) || 0)),
+                    h('td', { style: S.td }, String(Number(row.usage) || 0)),
+                    h('td', { style: S.td }, samplesText(row.samples)),
+                  )
+                })),
+              ),
+          ),
+          h('div', null,
+            h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.routesTitle')),
+            routes.length === 0
+              ? h('div', { style: S.muted }, t('health.empty'))
+              : h('table', { style: S.table },
+                h('thead', null, h('tr', null,
+                  h('th', { style: S.th }, t('health.provider')),
+                  h('th', { style: S.th }, t('health.model')),
+                  h('th', { style: S.th }, t('health.health')),
+                  h('th', { style: S.th }, t('health.tier')),
+                  h('th', { style: S.th }, t('health.confidence')),
+                  h('th', { style: S.th }, t('health.samples')),
+                )),
+                h('tbody', null, routes.map((r, i) => {
+                  const row = obj(r)
+                  const conf = Number(row.confidence)
+                  return h('tr', { key: `r:${str(row.provider)}::${str(row.modelId)}:${i}` },
+                    h('td', { style: S.td }, str(row.provider) || '—'),
+                    h('td', { style: S.td }, str(row.modelId) || '—'),
+                    h('td', { style: S.td },
+                      h('span', { style: { color: routeHealthColor(row.health), fontWeight: 500 } }, routeHealthText(t, row.health)),
+                    ),
+                    h('td', { style: S.td }, tierText(t, row.tier)),
+                    h('td', { style: S.td }, Number.isFinite(conf) ? conf.toFixed(2) : '—'),
+                    h('td', { style: S.td }, samplesText(row.samples)),
+                  )
+                })),
+              ),
+          ),
+        )
+      }
+
+      return h('div', { style: S.card },
+        h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', marginBottom: 8 } },
+          h('div', { style: { flex: 1, minWidth: 160 } },
+            h('div', { style: { fontWeight: 500 } }, t('health.title')),
+            h('div', { style: { ...S.muted, marginTop: 2 } }, t('health.plainExplain')),
+          ),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+            h('span', { style: S.muted }, fmt(t, 'health.snapshotAt', { time: snapshot && Number.isFinite(snapAt) && snapAt > 0 ? fmtClock(snapAt) : '—' })),
+            h('button', {
+              type: 'button',
+              style: S.btn,
+              onClick: () => { try { void onRefresh?.() } catch { /* 刷新失败由 diag 行自曝 */ } },
+            }, t('health.refresh')),
+          ),
+        ),
+        body,
+      )
+    }
+
     function CostHealthTab({ t, localConfig, remote, costService, costDiag }) {
       const cfg = obj(localConfig)
       const [live, setLive] = useState(null)
       const [detail, setDetail] = useState(null)
       const [page, setPage] = useState(0)
       const [diag, setDiag] = useState('')
+      // T3b: 账号健康快照三态。loading 初值 true —— 首屏必须先显示「正在读取」，
+      // 绝不能在拿到数据前就渲染成空表（那会被误读成「没有账号 / 一切正常」）。
+      const [healthSnap, setHealthSnap] = useState(null)
+      const [healthDiag, setHealthDiag] = useState('')
+      const [healthLoading, setHealthLoading] = useState(true)
+      // 重新读取按钮复用同一个 loader；不做 setInterval（避免定时器泄漏）。
+      // isAlive 由调用方传入：卸载后不再 setState（避免卸载后写状态）。
+      const loadHealth = useCallback(async (isAlive) => {
+        const live = typeof isAlive === 'function' ? isAlive : () => true
+        if (!live()) return
+        setHealthLoading(true)
+        let d = `accountHealth.callable=${typeof costService?.accountHealth === 'function'}`
+        let next = null
+        try {
+          const res = await costService?.accountHealth?.()
+          d += ` accountHealth.ok=${res?.ok === true}`
+          if (res && res.ok) {
+            next = res.value ?? null
+            d += ` enabled=${res.value?.enabled === true}`
+          } else {
+            // 拿不到就诚实清空，绝不保留上一次的旧快照冒充当前状态。
+            d += ` accountHealth.err=${String(res?.error?.code ?? res?.error?.message ?? '?')}`
+          }
+        } catch (error) {
+          d += ` accountHealth.throw=${String(error?.message ?? error)}`
+        }
+        if (!live()) return
+        setHealthSnap(next)
+        setHealthDiag(d)
+        setHealthLoading(false)
+      }, [costService])
+      useEffect(() => {
+        let alive = true
+        void loadHealth(() => alive)
+        return () => { alive = false }
+      }, [loadHealth])
       useEffect(() => {
         let alive = true
         const load = async () => {
@@ -1176,10 +1411,13 @@ window.__ModuleLoader__.load({
             h('div', { style: { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `诊断：${diag}`),
           ),
         h(CostDetailBlocks, { t, detail, page, setPage }),
-        h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('health.title')),
-          h('div', { style: S.muted }, t('health.simpleExplain')),
-        ),
+        h(AccountHealthPanel, {
+          t,
+          snapshot: healthSnap,
+          diag: healthDiag,
+          loading: healthLoading,
+          onRefresh: loadHealth,
+        }),
       )
     }
 
@@ -1614,8 +1852,26 @@ window.__ModuleLoader__.load({
       'cost.noComparable': '无可比价',
       'health.title': '账号健康 / 冷却', 'health.id': '账号', 'health.provider': '路由',
       'health.health': '健康', 'health.coolReason': '冷却原因', 'health.usage': '尝试次数',
-      'health.ok': '健康', 'health.cooling': '冷却中', 'health.empty': '无账号数据。',
-      'health.simpleExplain': '账号健康与冷却属于运行时信息，当前设置页不读取，也不会假装它正常。',
+      'health.ok': '健康', 'health.cooling': '冷却中', 'health.empty': '暂无数据。',
+      'health.plainExplain': '数据来自后台实时注册表：只用真实发生过的情况说话。没有样本的一律显示「暂无数据」，不会显示成「不可用」，也不会假装它是健康的。',
+      'health.loading': '正在读取账号健康…',
+      'health.noChannel': '当前设置页还没拿到账号健康数据通道，暂时无法显示真实状态（后台可能已有记录）。下面的诊断信息可帮助定位。',
+      'health.disabledExplain': '健康层当前是关闭的：配置里 health:false、health.enabled:false 或 ranking.health.enabled:false 任意一处关掉都会停用。关闭期间不做健康判断，这里如实说明，不会假装一切正常。',
+      'health.state': '状态', 'health.stateUnknown': '暂无数据', 'health.stateActive': '健康',
+      'health.stateCooling': '冷却中', 'health.stateHalfOpen': '半开待验证',
+      'health.coolRemain': '剩余冷却', 'health.streak': '连续失败', 'health.samples': '成功 / 失败',
+      'health.implicit': '（自动派生）', 'health.model': '模型', 'health.tier': '计费档',
+      'health.confidence': '可信度', 'health.routesTitle': '各模型路由健康',
+      'health.accountsTitle': '账号池状态',
+      'health.snapshotAt': '快照时间 {time}', 'health.refresh': '重新读取',
+      'health.diag': '诊断：',
+      'health.lastSeen': '最近成功 {ok} · 最近失败 {fail}', 'health.never': '无',
+      'health.soon': '即将到期',
+      'health.durationHour': '{h} 小时 {m} 分', 'health.durationMinute': '{m} 分 {s} 秒',
+      'health.durationSecond': '{s} 秒',
+      'health.tierFree': '免费', 'health.tierMetered': '计费', 'health.tierUnknown': '未知',
+      'health.healthHealthy': '健康', 'health.healthDegraded': '降级',
+      'health.healthDeprecated': '已弃用', 'health.healthUnknown': '暂无数据',
       'error.jsonObject': '请输入合法的 JSON 对象。', 'error.jsonArray': '请输入合法的 JSON 数组。',
       'error.saveFailed': '保存失败，请重试。',
     }
@@ -1713,8 +1969,26 @@ window.__ModuleLoader__.load({
       'cost.noComparable': 'No comparable price',
       'health.title': 'Account health / cooldown', 'health.id': 'Account', 'health.provider': 'Route',
       'health.health': 'Health', 'health.coolReason': 'Cool reason', 'health.usage': 'Attempts',
-      'health.ok': 'Healthy', 'health.cooling': 'Cooling', 'health.empty': 'No account data.',
-      'health.simpleExplain': 'Account health and cooldown are runtime details; this settings page does not read them and will not pretend they are healthy.',
+      'health.ok': 'Healthy', 'health.cooling': 'Cooling', 'health.empty': 'No data yet.',
+      'health.plainExplain': 'Data comes from the Host live registry and speaks only from real observations. Anything with zero samples reads "No data yet" — never "unavailable", and never a fake green.',
+      'health.loading': 'Reading account health…',
+      'health.noChannel': 'The settings page has no account-health channel yet, so real state cannot be shown (the Host may already have records). Diagnostics below help locate it.',
+      'health.disabledExplain': 'The health layer is switched off: any one of health:false, health.enabled:false or ranking.health.enabled:false disables it. While off, no health judgement is made — stated plainly here instead of pretending everything is fine.',
+      'health.state': 'State', 'health.stateUnknown': 'No data yet', 'health.stateActive': 'Healthy',
+      'health.stateCooling': 'Cooling down', 'health.stateHalfOpen': 'Half-open, awaiting check',
+      'health.coolRemain': 'Cooldown left', 'health.streak': 'Fail streak', 'health.samples': 'Success / failure',
+      'health.implicit': '(auto-derived)', 'health.model': 'Model', 'health.tier': 'Billing tier',
+      'health.confidence': 'Confidence', 'health.routesTitle': 'Per-model route health',
+      'health.accountsTitle': 'Account pool state',
+      'health.snapshotAt': 'Snapshot {time}', 'health.refresh': 'Read again',
+      'health.diag': 'Diagnostics:',
+      'health.lastSeen': 'Last success {ok} · last failure {fail}', 'health.never': 'none',
+      'health.soon': 'expiring soon',
+      'health.durationHour': '{h} h {m} min', 'health.durationMinute': '{m} min {s} s',
+      'health.durationSecond': '{s} s',
+      'health.tierFree': 'Free', 'health.tierMetered': 'Metered', 'health.tierUnknown': 'Unknown',
+      'health.healthHealthy': 'Healthy', 'health.healthDegraded': 'Degraded',
+      'health.healthDeprecated': 'Deprecated', 'health.healthUnknown': 'No data yet',
       'error.jsonObject': 'Enter a valid JSON object.', 'error.jsonArray': 'Enter a valid JSON array.',
       'error.saveFailed': 'Save failed, please retry.',
     }
