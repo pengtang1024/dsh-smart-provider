@@ -40,6 +40,12 @@ export const Config = z.object({
    */
   ranking: z.any().default(undefined).volatile(),
   /**
+   * Account/model health controls (see lib/health-setup.js). Volatile so the
+   * settings page can discover and edit it without a restart. Declaration only:
+   * parsing semantics (the four opt-out shapes) stay in health-setup.js.
+   */
+  health: z.any().default(undefined).volatile(),
+  /**
    * P2 two-layer routing (opt-in, advanced only). Nested under ranking by
    * convention: ranking.routing = {enabled, strategy, tierPolicy, weights,
    * positionOverrides, tierLimit}. Kept in the same volatile object so the
