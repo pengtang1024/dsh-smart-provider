@@ -867,6 +867,16 @@ window.__ModuleLoader__.load({
         // 用户文案短而明确；form/state 这类内部串进折叠诊断（item 5）。
         setMsg({ ok, msg: ok ? t('action.saved') : t('error.saveFailed'), detail: ok ? '' : str(r?.detail) })
       }
+      // 恢复默认：Host 契约（lib/chains.js normalizeChains:70-86）—— chains 传
+      // undefined / null / {} 都会归一到 DEFAULT_CHAINS（{auto: []}）并走自动发现。
+      // 所以这里写 {} （不需要、也不去赌 set undefined 的语义），成功才提示已清空。
+      const clearCustom = async () => {
+        setConfirmKey(null)
+        const r = await mutate([{ op: 'set', path: ['chains'], value: {} }], revision)
+        const ok = r?.ok === true
+        setMsg({ ok, msg: ok ? t('chains.cleared') : t('error.saveFailed'), detail: ok ? '' : str(r?.detail) })
+        if (ok) setGroups([])
+      }
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, t('chains.plainTitle')),
@@ -880,9 +890,17 @@ window.__ModuleLoader__.load({
           ),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
             msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
+            // 恢复自动发现：二次确认，只有确认后才真写（写 {} 而不是 undefined）。
+            confirmKey === 'chains-clear'
+              ? h('button', {
+                type: 'button', style: { ...S.btn, color: 'var(--dsw-alias-state-error-primary)' },
+                onClick: clearCustom,
+              }, t('chains.clearConfirm'))
+              : h('button', { type: 'button', style: S.btn, onClick: () => arm('chains-clear') }, t('chains.clearCustom')),
             h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
           ),
         ),
+        h('div', { style: { ...S.muted, fontSize: 11 } }, t('chains.clearHint')),
         msg && msg.detail ? h(DiagDetails, { t, lines: [`save: ${msg.detail}`], failed: true }) : null,
         // 诚实空态：没配链路时显示的是内置默认顺序，绝不冒充"你的配置"。
         usingDefault ? h('div', { style: { ...S.muted, lineHeight: '18px' } }, t('chains.emptyHint')) : null,
@@ -1082,13 +1100,36 @@ window.__ModuleLoader__.load({
       const provOpts = providerOptions(pi)
       const modelOpts = modelOptions(pi)
       const configuredAccounts = arr(config?.accounts)
-      const blankAccount = () => ({ id: '', provider: provOpts[0]?.v, credentialRef: '', models: [modelOpts[0]?.v], tier: 'standard' })
+      const blankAccount = () => ({
+        id: '', provider: provOpts[0]?.v, credentialRef: '', models: [modelOpts[0]?.v],
+        tier: 'standard', speedTier: 'normal', priceTier: 'mid', costModel: 'metered', quotaCost: '', priority: 0,
+      })
       // 初始化 / config 同步 / dirty 基线共用同一归一化，避免"没动过"被判成脏。
-      const rowsFromConfig = cfgAccounts => arr(cfgAccounts).map(a => ({
-        id: str(a?.id), provider: str(a?.provider) || provOpts[0]?.v,
-        credentialRef: str(a?.credentialRef), models: arr(a?.models).length ? arr(a?.models) : [modelOpts[0]?.v],
-        tier: str(a?.tier) || 'standard',
-      }))
+      // 关键：展开原对象再覆盖 UI 编辑的键 —— 账号里未展示的字段
+      // （priceMultiplier / weight / priceOverrides / quotaCost 的历史值…）
+      // 必须原样保留，否则一次保存就把它们静默删掉。
+      const rowsFromConfig = cfgAccounts => arr(cfgAccounts).map(a => {
+        const raw = obj(a)
+        const quota = raw.quotaCost === undefined || raw.quotaCost === null || raw.quotaCost === ''
+          ? ''
+          : (Number.isFinite(Number(raw.quotaCost)) ? Number(raw.quotaCost) : '')
+        return {
+          ...raw,
+          id: str(raw.id),
+          provider: str(raw.provider) || provOpts[0]?.v,
+          credentialRef: str(raw.credentialRef),
+          models: arr(raw.models).length ? arr(raw.models) : [modelOpts[0]?.v],
+          tier: str(raw.tier) || 'standard',
+          speedTier: str(raw.speedTier) || 'normal',
+          priceTier: str(raw.priceTier) || 'mid',
+          costModel: str(raw.costModel) || 'metered',
+          quotaCost: quota,
+          priority: Number.isFinite(Number(raw.priority)) ? Math.trunc(Number(raw.priority)) : 0,
+        }
+      })
+      // 模型多选的搜索 / 只看免费状态（按账号行索引；不进 config）。
+      const [modelQuery, setModelQuery] = useState({})
+      const [freeOnly, setFreeOnly] = useState({})
       const [rows, setRows] = useState(() => rowsFromConfig(configuredAccounts))
       useEffect(() => { setRows(rowsFromConfig(config?.accounts)) }, [config?.accounts])
       // Credential choices come ONLY from the configForms snapshot: the
@@ -1125,6 +1166,34 @@ window.__ModuleLoader__.load({
       const toggleModel = (i, m) => update(i, r => ({
         ...r, models: r.models.includes(m) ? r.models.filter(x => x !== m) : [...r.models, m],
       }))
+      // 模型多选可用性：搜索 / 只看免费 / 已选始终可见 / 默认最多渲染 60 个。
+      const MODEL_RENDER_CAP = 60
+      const pickerState = i => {
+        const selected = new Set(arr(rows[i]?.models).map(str))
+        const q = str(modelQuery[i]).trim().toLowerCase()
+        const wantsFree = freeOnly[i] === true
+        const match = o => {
+          const id = str(o.v)
+          const hay = `${id} ${str(o.l)}`.toLowerCase()
+          if (q && !hay.includes(q)) return false
+          if (wantsFree && !hay.includes('free')) return false
+          return true
+        }
+        const pinned = modelOpts.filter(o => selected.has(str(o.v)))
+        const rest = modelOpts.filter(o => !selected.has(str(o.v)) && match(o))
+        const room = Math.max(0, MODEL_RENDER_CAP - pinned.length)
+        return {
+          shown: [...pinned, ...rest.slice(0, room)],
+          matched: [...pinned, ...rest],
+          hidden: Math.max(0, rest.length - room),
+        }
+      }
+      // 全选 = 选中当前筛选出来的全部模型（不受 60 个渲染上限影响）。
+      const selectAllModels = i => {
+        const { matched } = pickerState(i)
+        update(i, r => ({ ...r, models: [...new Set([...r.models, ...matched.map(o => str(o.v))])] }))
+      }
+      const clearModels = i => update(i, r => ({ ...r, models: [] }))
       // 写 ranking 时必须把默认值为「开」的开关物化：块一旦存在，
       // Host 读的是 enabled === true（lib/ranking.js:163）、
       // adapter 读的是 routing.enabled === true（lib/adapter.js:232）。
@@ -1143,12 +1212,23 @@ window.__ModuleLoader__.load({
           if (id && !provider) { problems[i] = fmt(t, 'accounts.errNoProvider', { name: id }); return }
           if (!id && provider) { problems[i] = fmt(t, 'accounts.errNoName', { n: i + 1 }); return }
           if (!id) return
-          out.push({
-            id, provider,
-            credentialRef: r.credentialRef || undefined,
-            models: r.models,
-            tier: r.tier,
-          })
+          // 只在用户真的填了引用名时才写 credentialRef（留空 = 用 DSH 已登录账号）。
+          const row = { ...obj(r), id, provider, models: r.models, tier: r.tier }
+          if (r.credentialRef) row.credentialRef = r.credentialRef
+          else delete row.credentialRef
+          // 计费与等级细节：都是 Host 已支持的字段（lib/ranking.js
+          // ACCOUNT_RANKING_FIELDS），按 Host 的默认值补全。
+          row.speedTier = str(r.speedTier) || 'normal'
+          row.priceTier = str(r.priceTier) || 'mid'
+          row.costModel = str(r.costModel) || 'metered'
+          // 额度消耗代价只对订阅制有意义；不订阅就不写这个键。
+          if (row.costModel === 'subscription' && r.quotaCost !== '' && Number.isFinite(Number(r.quotaCost))) {
+            row.quotaCost = Math.min(1, Math.max(0, Number(r.quotaCost)))
+          } else {
+            delete row.quotaCost
+          }
+          row.priority = Number.isFinite(Number(r.priority)) ? Math.trunc(Number(r.priority)) : 0
+          out.push(row)
         })
         setRowErrors(problems)
         const bad = Object.keys(problems).length
@@ -1237,21 +1317,50 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: S.row },
               h('span', { style: S.label }, t('field.credential')),
-              select(
-                [{ v: '', l: t('field.credentialDefault') }, ...credentialChoices.filter(Boolean).map(c => ({ v: c, l: c }))],
-                r.credentialRef, v => update(i, x => ({ ...x, credentialRef: v })), t('field.credential'),
+              h('span', { style: S.grow },
+                // 可输入 + datalist 候选（只存引用名，Host 不碰密钥）。
+                h('input', {
+                  type: 'text', list: `cred-refs-${i}`, value: r.credentialRef,
+                  placeholder: t('field.credentialPh'),
+                  onChange: e => update(i, x => ({ ...x, credentialRef: e.target.value })),
+                  style: S.input, 'aria-label': t('field.credential'),
+                }),
+                h('datalist', { id: `cred-refs-${i}` },
+                  credentialChoices.filter(Boolean).map(c => h('option', { key: c, value: c }))),
               ),
             ),
-            h('div', { style: S.row },
+            h('div', { style: { ...S.row, alignItems: 'flex-start' } },
               h('span', { style: S.label }, t('field.models')),
-              h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
-                modelOpts.map(o => h('label', { key: str(o.v), style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+              h('div', { style: { ...S.grow, display: 'flex', flexDirection: 'column', gap: 6 } },
+                h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
                   h('input', {
-                    type: 'checkbox', checked: r.models.includes(str(o.v)),
-                    onChange: () => toggleModel(i, str(o.v)),
+                    type: 'search', value: str(modelQuery[i]), placeholder: t('account.modelSearch'),
+                    onChange: e => setModelQuery(q => ({ ...q, [i]: e.target.value })),
+                    style: { ...S.input, maxWidth: 200 }, 'aria-label': t('account.modelSearch'),
                   }),
-                  str(o.l),
-                )),
+                  h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+                    h('input', {
+                      type: 'checkbox', checked: freeOnly[i] === true,
+                      onChange: e => setFreeOnly(f => ({ ...f, [i]: e.target.checked })),
+                    }),
+                    t('account.freeOnly'),
+                  ),
+                  h('span', { style: S.muted }, fmt(t, 'account.selectedCount', { n: r.models.length })),
+                  h('button', { type: 'button', style: S.btn, onClick: () => selectAllModels(i) }, t('account.selectAll')),
+                  h('button', { type: 'button', style: S.btn, onClick: () => clearModels(i) }, t('account.clear')),
+                ),
+                h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', maxHeight: 180, overflowY: 'auto' } },
+                  pickerState(i).shown.map(o => h('label', { key: str(o.v), style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+                    h('input', {
+                      type: 'checkbox', checked: r.models.includes(str(o.v)),
+                      onChange: () => toggleModel(i, str(o.v)),
+                    }),
+                    str(o.l),
+                  )),
+                ),
+                pickerState(i).hidden > 0
+                  ? h('div', { style: { ...S.muted, fontSize: 11 } }, fmt(t, 'account.moreModels', { n: pickerState(i).hidden }))
+                  : null,
               ),
             ),
             h('div', { style: S.row },
@@ -1259,6 +1368,45 @@ window.__ModuleLoader__.load({
               select(
                 [{ v: 'premium', l: t('tier.premium') }, { v: 'standard', l: t('tier.standard') }, { v: 'backup', l: t('tier.backup') }],
                 r.tier, v => update(i, x => ({ ...x, tier: v })), t('field.tier'),
+              ),
+            ),
+            // 计费与等级细节：默认折叠，字段语义见 lib/ranking.js
+            // ACCOUNT_RANKING_FIELDS；文案用大白话，不暴露原始字段名。
+            h('details', { style: { marginTop: 6 } },
+              h('summary', { style: { cursor: 'pointer', fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
+                t('account.detailsTitle')),
+              h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 } },
+                h(Field, { label: t('account.speedTier'), help: t('account.speedTierHelp') },
+                  select(
+                    [{ v: 'fast', l: t('account.speedFast') }, { v: 'normal', l: t('account.speedNormal') }, { v: 'slow', l: t('account.speedSlow') }],
+                    r.speedTier, v => update(i, x => ({ ...x, speedTier: v })), t('account.speedTier'),
+                  )),
+                h(Field, { label: t('account.priceTier'), help: t('account.priceTierHelp') },
+                  select(
+                    [{ v: 'free', l: t('account.priceFree') }, { v: 'low', l: t('account.priceLow') }, { v: 'mid', l: t('account.priceMid') }, { v: 'high', l: t('account.priceHigh') }],
+                    r.priceTier, v => update(i, x => ({ ...x, priceTier: v })), t('account.priceTier'),
+                  )),
+                h(Field, { label: t('account.costModel'), help: t('account.costModelHelp') },
+                  select(
+                    [{ v: 'metered', l: t('account.costMetered') }, { v: 'subscription', l: t('account.costSubscription') }, { v: 'free', l: t('account.costFree') }],
+                    r.costModel, v => update(i, x => ({ ...x, costModel: v })), t('account.costModel'),
+                  )),
+                r.costModel === 'subscription'
+                  ? h(Field, { label: t('account.quotaCost'), help: t('account.quotaCostHelp') },
+                    h('input', {
+                      type: 'number', min: 0, max: 1, step: 0.05,
+                      value: r.quotaCost === '' ? '' : String(r.quotaCost),
+                      onChange: e => update(i, x => ({ ...x, quotaCost: e.target.value === '' ? '' : Number(e.target.value) })),
+                      style: S.input, 'aria-label': t('account.quotaCost'),
+                    }))
+                  : null,
+                h(Field, { label: t('account.priority'), help: t('account.priorityHelp') },
+                  h('input', {
+                    type: 'number', step: 1,
+                    value: String(r.priority ?? 0),
+                    onChange: e => update(i, x => ({ ...x, priority: e.target.value === '' ? '' : Number(e.target.value) })),
+                    style: S.input, 'aria-label': t('account.priority'),
+                  })),
               ),
             ),
             rowErrors[i] ? h('div', { style: S.err }, rowErrors[i]) : null,
@@ -2191,8 +2339,21 @@ window.__ModuleLoader__.load({
       'chains.modelLabel': '这个模型：',
       'field.accountName': '名字：', 'field.accountNamePh': '给它起个名字，如 主账号',
       'field.provider': '服务商：', 'field.credential': '使用哪个 Key：', 'field.credentialDefault': '使用 DSH 已登录的账号（推荐）',
+      'field.credentialPh': '留空 = 用 DSH 已登录的账号；也可以填一个新的引用名',
       'field.models': '可用模型：', 'field.tier': '重要程度：',
       'tier.premium': '主要（优先用）', 'tier.standard': '普通', 'tier.backup': '备用（最后用）',
+      'account.detailsTitle': '计费与等级细节（不填也能用）',
+      'account.speedTier': '响应速度', 'account.speedTierHelp': '快 = 同样条件下优先挑它；只影响排序，不影响可用性。',
+      'account.speedFast': '快', 'account.speedNormal': '普通', 'account.speedSlow': '慢',
+      'account.priceTier': '价格档（兜底）', 'account.priceTierHelp': '只有定价表里查不到这个渠道、也没填单价时才用它估算。',
+      'account.priceFree': '免费', 'account.priceLow': '便宜', 'account.priceMid': '中等', 'account.priceHigh': '贵',
+      'account.costModel': '怎么计费', 'account.costModelHelp': '按量 = 按 token 计费；订阅 = 用额度折算；免费 = 成本按 0 算。',
+      'account.costMetered': '按量付费', 'account.costSubscription': '订阅制（额度）', 'account.costFree': '免费',
+      'account.quotaCost': '额度消耗代价', 'account.quotaCostHelp': '0~1：一次订阅额度消耗相当于多少份按量成本，越小越优先。',
+      'account.priority': '优先级', 'account.priorityHelp': '数字越小越优先（0 最高）；只影响同等级内部的先后。',
+      'account.modelSearch': '搜索模型…', 'account.freeOnly': '只看免费',
+      'account.selectedCount': '已选 {n} 个', 'account.selectAll': '全选', 'account.clear': '清空',
+      'account.moreModels': '还有 {n} 个没显示，用上面的搜索找',
       'ranking.tierHigh': '优先用高级账号', 'ranking.tierLow': '先消耗备用账号',
       'ranking.priorityHard': '严格按顺序（先高级别）', 'ranking.prioritySoft': '只作为同分时参考',
       'hero.configured': '智能路由正在按你的设置选模型',
@@ -2248,6 +2409,10 @@ window.__ModuleLoader__.load({
       'chains.errNoHop': '第 {n} 组还没有任何一步（服务商 / 模型），保存已取消。',
       'chains.errEmptyHop': '第 {n} 组第 {step} 步还没选全服务商 / 模型，保存已取消。',
       'chains.errBlocked': '有 {n} 组链路没填完整（见下方红字），这次没有保存；补齐后再点保存。',
+      'chains.clearCustom': '清空自定义（恢复自动发现）',
+      'chains.clearConfirm': '确认清空？',
+      'chains.clearHint': '清空后由系统自动发现可用模型，不再使用你手写的顺序。',
+      'chains.cleared': '已清空自定义链路，改回自动发现（无需重启）',
       'accounts.title': '账号池', 'accounts.hint': '密钥只存引用名（credentialRef），不在此显示明文。',
       'accounts.templateHint': '你还没配置账号池，系统会自动使用你在 DSH 里登录的账号直连。想加账号？点下面的"添加一个账号"，从下拉里选就行。',
       'accounts.empty': '尚无账号配置。', 'accounts.raw': '账号 JSON（高级）',
@@ -2340,8 +2505,21 @@ window.__ModuleLoader__.load({
       'chains.modelLabel': 'This model:',
       'field.accountName': 'Name:', 'field.accountNamePh': 'Give it a name, e.g. Main',
       'field.provider': 'Provider:', 'field.credential': 'Which key to use:', 'field.credentialDefault': 'Use DSH signed-in account (recommended)',
+      'field.credentialPh': 'Empty = use your signed-in DSH account; or type a new reference name',
       'field.models': 'Available models:', 'field.tier': 'Importance:',
       'tier.premium': 'Primary (use first)', 'tier.standard': 'Standard', 'tier.backup': 'Backup (use last)',
+      'account.detailsTitle': 'Billing and tier details (optional)',
+      'account.speedTier': 'Response speed', 'account.speedTierHelp': 'Fast = preferred when scores tie. Ranking only — never a capability claim.',
+      'account.speedFast': 'Fast', 'account.speedNormal': 'Normal', 'account.speedSlow': 'Slow',
+      'account.priceTier': 'Price tier (fallback)', 'account.priceTierHelp': 'Used only when the price table has no entry for this route and no unit price is set.',
+      'account.priceFree': 'Free', 'account.priceLow': 'Cheap', 'account.priceMid': 'Medium', 'account.priceHigh': 'Expensive',
+      'account.costModel': 'How it bills', 'account.costModelHelp': 'Metered = per token; Subscription = quota-based cost; Free = cost counted as 0.',
+      'account.costMetered': 'Metered', 'account.costSubscription': 'Subscription (quota)', 'account.costFree': 'Free',
+      'account.quotaCost': 'Quota cost', 'account.quotaCostHelp': '0–1: how much one quota unit costs relative to metered pricing. Lower ranks first.',
+      'account.priority': 'Priority', 'account.priorityHelp': 'Lower number wins (0 highest); only orders accounts inside the same tier.',
+      'account.modelSearch': 'Search models…', 'account.freeOnly': 'Free only',
+      'account.selectedCount': '{n} selected', 'account.selectAll': 'Select all', 'account.clear': 'Clear',
+      'account.moreModels': '{n} more hidden — use the search above',
       'ranking.tierHigh': 'Prefer higher-tier accounts', 'ranking.tierLow': 'Burn backups first',
       'ranking.priorityHard': 'Strict order (higher tier first)', 'ranking.prioritySoft': 'Only as a tie-breaker',
       'hero.configured': 'Smart routing is using your saved setting',
@@ -2397,6 +2575,10 @@ window.__ModuleLoader__.load({
       'chains.errNoHop': 'Model #{n} has no step (provider / model) yet — save cancelled.',
       'chains.errEmptyHop': 'Model #{n} step {step} is missing a provider or model — save cancelled.',
       'chains.errBlocked': '{n} chain(s) are incomplete (see the red notes) — nothing was saved. Fix them and save again.',
+      'chains.clearCustom': 'Clear custom chains (back to auto-discovery)',
+      'chains.clearConfirm': 'Clear for sure?',
+      'chains.clearHint': 'Clearing hands routing back to automatic discovery of your configured models.',
+      'chains.cleared': 'Custom chains cleared — automatic discovery is active again (no restart)',
       'accounts.title': 'Account pool', 'accounts.hint': 'Secrets stay as references (credentialRef); no plaintext is shown.',
       'accounts.templateHint': 'No account pool configured — the system uses your signed-in DSH accounts directly. To add one, tap "Add an account" and choose from the dropdown.',
       'accounts.empty': 'No accounts configured.', 'accounts.raw': 'Accounts JSON (advanced)',
