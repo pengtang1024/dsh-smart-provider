@@ -61,10 +61,20 @@ window.__ModuleLoader__.load({
       try { zod = require('zod') } catch { return null }
       if (!zod?.object) return null
       const z = zod.z ?? zod
+      // Every Host row field must be declared or the strict codec strips it —
+      // the latency columns were invisible because ttftMs / tokensPerSecond were
+      // missing here. Host shape: lib/cost-stats.js readCostDetail() (P2 latency
+      // metrics; old rows carry null, never a fabricated 0).
       const rowSchema = z.object({
         timestamp: z.string(), provider: z.string(), model: z.string(),
         inputTokens: z.number(), outputTokens: z.number(), costUsd: z.number(),
         failed: z.boolean(), requestId: z.string(),
+        ttftMs: z.number().nullable(),
+        durationMs: z.number().nullable(),
+        tokensPerSecond: z.number().nullable(),
+        startedAt: z.string().nullable(),
+        firstTokenAt: z.string().nullable(),
+        finishedAt: z.string().nullable(),
       })
       const timelineSchema = z.object({ day: z.string(), calls: z.number(), costUsd: z.number(), failures: z.number() })
       const byModelSchema = z.object({
@@ -479,6 +489,25 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // 诊断行统一收纳：默认折叠，只有失败时才默认展开。mount/state/code/message
+    // 这类内部串一律进这里，不占首屏。
+    function DiagDetails({ t, lines, failed, title }) {
+      const text = arr(lines).filter(Boolean)
+      if (!text.length) return null
+      return h('details', { style: { marginTop: 8 }, open: failed === true },
+        h('summary', {
+          style: {
+            cursor: 'pointer', fontSize: 11,
+            color: failed === true ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-tertiary)',
+          },
+        }, title || t('diag.title')),
+        ...text.map((line, i) => h('div', {
+          key: i,
+          style: { ...S.muted, marginTop: 4, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' },
+        }, str(line))),
+      )
+    }
+
     // ---- overview ---------------------------------------------------------
     // Honest, runtime-free status: this page reads ONLY the configForms
     // snapshot (always reachable) plus static defaults. It never claims a
@@ -526,7 +555,6 @@ window.__ModuleLoader__.load({
         : health === false
           ? t('overview.healthNoChannel')
           : fmt(t, 'overview.healthLine', { accounts: healthAccounts.length, cooling: coolingCount })
-      const diagLine = { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' }
       // 历史登记 seed（task-105 起已不参与准入过滤、也不参与状态判定）。
       // 真值 100% 来自运行时 pi.models + 双源投影 availProjection；零样本条目
       // 一律 UNKNOWN/资费未确认 —— 静态表绝不冒充"不可用"或"可用"。
@@ -700,13 +728,18 @@ window.__ModuleLoader__.load({
                     h('div', { style: { ...S.muted, marginTop: 2, fontSize: 11 } }, t('pi.otherProvidersHint')),
                   ),
                 ),
-            // ⑦ 诊断行收进默认折叠的「诊断」details（pi 自检 + 探测反馈 + 开关状态）。
-            h('details', { style: { marginTop: 8 } },
-              h('summary', { style: { cursor: 'pointer', fontSize: 11 } }, t('pi.diagnostics')),
-              h('div', { style: diagLine }, `pi: ${str(pi?.detail) || '—'}`),
-              probeDiag ? h('div', { style: diagLine }, `probe: ${probeDiag}`) : null,
-              h('div', { style: diagLine }, `probeEnabled=${probeEnabled === true} verdicts=${Object.keys(obj(probeVerdicts)).length} samples=${Object.keys(obj(availProjection)).length}`),
-            ),
+            // ⑦ 诊断行收进折叠的「诊断」details（pi 自检 + 探测反馈 + 开关状态）；
+            //    只有真失败时才默认展开，成功时收起来不占首屏。
+            h(DiagDetails, {
+              t,
+              title: t('pi.diagnostics'),
+              failed: /ok=false|异常|未挂载|失败|err=/.test(str(probeDiag)),
+              lines: [
+                `pi: ${str(pi?.detail) || '—'}`,
+                probeDiag ? `probe: ${probeDiag}` : '',
+                `probeEnabled=${probeEnabled === true} verdicts=${Object.keys(obj(probeVerdicts)).length} samples=${Object.keys(obj(availProjection)).length}`,
+              ],
+            }),
           ),
         ),
       )
@@ -768,25 +801,36 @@ window.__ModuleLoader__.load({
     }, opts.map(o => h('option', { key: str(o.v ?? o), value: str(o.v ?? o) }, str(o.l ?? o))))
 
     // Structured chain editor: every hop is a pair of dropdowns, never JSON.
-    function ChainsTab({ t, form, revision, mutate, config, pi }) {
+    function ChainsTab({ t, form, revision, mutate, config, pi, onDirty }) {
       const provOpts = providerOptions(pi)
       const modelOpts = modelOptions(pi)
       const configured = obj(config?.chains)
       const usingDefault = Object.keys(configured).length === 0
       const initial = usingDefault ? STATIC_DEFAULT_CHAINS : configured
-      const [groups, setGroups] = useState(() => Object.entries(initial).map(([model, hops]) => ({
+      // 一处归一化：初值、config 同步与 dirty 基线必须同形状，否则"没动过"
+      // 会被判成脏（或改动被判成没动）。
+      const normalize = src => Object.entries(obj(src)).map(([model, hops]) => ({
         model, hops: arr(hops).map(x => ({ provider: str(x?.provider), model: str(x?.model) })),
-      })))
-      useEffect(() => {
-        const src = Object.keys(obj(config?.chains)).length ? config.chains : STATIC_DEFAULT_CHAINS
-        setGroups(Object.entries(src).map(([model, hops]) => ({
-          model, hops: arr(hops).map(x => ({ provider: str(x?.provider), model: str(x?.model) })),
-        })))
-      }, [config?.chains])
+      }))
+      const [groups, setGroups] = useState(() => normalize(initial))
+      useEffect(() => { setGroups(normalize(Object.keys(obj(config?.chains)).length ? config.chains : STATIC_DEFAULT_CHAINS)) }, [config?.chains])
       // 提示状态是显式 {ok,msg}：早先用正则 /error|失败/i 猜颜色，英文失败
       // 文案（Save failed）匹配不到就显示成绿色"成功"。
       const [msg, setMsg] = useState(null)
       const [rowErrors, setRowErrors] = useState({})
+      // dirty = 当前草稿 vs 打开时快照（顺序无关指纹，键序抖动不算脏）。
+      const baseline = stableSig(normalize(Object.keys(configured).length ? configured : STATIC_DEFAULT_CHAINS))
+      const dirty = stableSig(groups) !== baseline
+      useEffect(() => { onDirty?.(dirty) }, [dirty, onDirty])
+      // 删除两步确认：第一次点变成红字「确认删除？」，3 秒后自动还原（不单击即消失）。
+      const [confirmKey, setConfirmKey] = useState(null)
+      const confirmTimer = useRef(null)
+      const arm = useCallback(key => {
+        setConfirmKey(key)
+        if (confirmTimer.current) clearTimeout(confirmTimer.current)
+        confirmTimer.current = setTimeout(() => setConfirmKey(null), 3000)
+      }, [])
+      useEffect(() => () => { if (confirmTimer.current) clearTimeout(confirmTimer.current) }, [])
       const update = (gi, fn) => setGroups(prev => prev.map((g, i) => i === gi ? fn(g) : g))
       const moveHop = (gi, hi, dir) => update(gi, g => {
         const hops = [...g.hops], j = hi + dir
@@ -794,6 +838,8 @@ window.__ModuleLoader__.load({
         ;[hops[hi], hops[j]] = [hops[j], hops[hi]]
         return { ...g, hops }
       })
+      const deleteGroup = gi => setGroups(p => p.filter((_, i) => i !== gi))
+      const deleteHop = (gi, hi) => update(gi, g => ({ ...g, hops: g.hops.filter((_, i) => i !== hi) }))
       // 保存前校验：过去空 hop / 空模型的行被 filter 掉还提示"已保存"，
       // 用户的输入静默消失。现在逐行报出原因并阻止保存。
       const validate = () => {
@@ -818,19 +864,39 @@ window.__ModuleLoader__.load({
         for (const g of groups) out[g.model] = g.hops.map(h => ({ provider: h.provider, model: h.model }))
         const r = await mutate([{ op: 'set', path: ['chains'], value: out }], revision)
         const ok = r?.ok === true
-        setMsg({ ok, msg: ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}` })
+        // 用户文案短而明确；form/state 这类内部串进折叠诊断（item 5）。
+        setMsg({ ok, msg: ok ? t('action.saved') : t('error.saveFailed'), detail: ok ? '' : str(r?.detail) })
       }
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, t('chains.plainTitle')),
           h('div', { style: S.heroText }, t('chains.plainExplain')),
         ),
+        // 卡片头：保存入口 + 未保存标记。不展开任何 <details> 也能看到。
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('span', { style: { fontWeight: 600 } }, t('chains.cardTitle')),
+            dirty ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-state-warn-label)' } }, t('card.unsaved')) : null,
+          ),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
+            h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
+          ),
+        ),
+        msg && msg.detail ? h(DiagDetails, { t, lines: [`save: ${msg.detail}`], failed: true }) : null,
+        // 诚实空态：没配链路时显示的是内置默认顺序，绝不冒充"你的配置"。
+        usingDefault ? h('div', { style: { ...S.muted, lineHeight: '18px' } }, t('chains.emptyHint')) : null,
         ...groups.map((g, gi) => h('div', { key: gi, style: S.card },
           h('div', { style: S.row },
             h('span', { style: S.label }, t('chains.modelLabel')),
             select(modelOpts, g.model,
               v => update(gi, x => ({ ...x, model: v })), t('chains.modelLabel')),
-            h('button', { type: 'button', style: S.btn, onClick: () => setGroups(p => p.filter((_, i) => i !== gi)) }, t('action.delete')),
+            confirmKey === `g${gi}`
+              ? h('button', {
+                type: 'button', style: { ...S.btn, color: 'var(--dsw-alias-state-error-primary)' },
+                onClick: () => { setConfirmKey(null); deleteGroup(gi) },
+              }, t('action.confirmDelete'))
+              : h('button', { type: 'button', style: S.btn, onClick: () => arm(`g${gi}`) }, t('action.delete')),
           ),
           ...g.hops.map((hop, hi) => h('div', { key: hi, style: { ...S.step, borderBottom: '1px solid var(--dsw-alias-border-l2)' } },
             h('span', { style: S.stepNum }, String(hi + 1)),
@@ -838,7 +904,12 @@ window.__ModuleLoader__.load({
             select(modelOpts, hop.model, v => update(gi, x => ({ ...x, hops: x.hops.map((h, i) => i === hi ? { ...h, model: v } : h) })), t('field.model')),
             h('button', { type: 'button', style: S.btn, onClick: () => moveHop(gi, hi, -1) }, '↑'),
             h('button', { type: 'button', style: S.btn, onClick: () => moveHop(gi, hi, 1) }, '↓'),
-            h('button', { type: 'button', style: S.btn, onClick: () => update(gi, x => ({ ...x, hops: x.hops.filter((_, i) => i !== hi) })) }, '×'),
+            confirmKey === `h${gi}-${hi}`
+              ? h('button', {
+                type: 'button', style: { ...S.btn, color: 'var(--dsw-alias-state-error-primary)' },
+                onClick: () => { setConfirmKey(null); deleteHop(gi, hi) },
+              }, t('action.confirmDelete'))
+              : h('button', { type: 'button', style: S.btn, onClick: () => arm(`h${gi}-${hi}`) }, '×'),
           )),
           h('button', {
             type: 'button', style: S.btn,
@@ -851,8 +922,6 @@ window.__ModuleLoader__.load({
             type: 'button', style: S.btn,
             onClick: () => setGroups(p => [...p, { model: modelOpts[0]?.v, hops: [{ provider: provOpts[0]?.v, model: modelOpts[1]?.v ?? modelOpts[0]?.v }] }]),
           }, t('action.addChain')),
-          h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
-          msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
         ),
       )
     }
@@ -987,39 +1056,41 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi, costService }) {
-      // Hero 数字 = DSH 运行时账号池的真实账号数（含自动派生），数据源与
-      // 成本 Tab 的健康面板同一个 smartProvider/accountHealth() 快照，避免两处
-      // 数字打架。config.accounts 只代表用户手动写入，未配置时恒为 0，不能冒充
-      // 运行时真实账号数；快照尚未读到时显示「正在读取」，不显示误导性的 0。
-      const [accountCount, setAccountCount] = useState(null)
+    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi, costService, onDirty }) {
+      // 账号数三态（loading / ok / error）：不能永远停在「正在读取」，也不能
+      // 把读失败说成 0 个账号。数据源与成本页健康面板同一个 accountHealth()。
+      const [accountState, setAccountState] = useState({ status: 'loading' })
+      const aliveRef = useRef(true)
       useEffect(() => {
-        let alive = true
-        const load = async () => {
+        aliveRef.current = true
+        return () => { aliveRef.current = false }
+      }, [])
+      const loadAccounts = useCallback(async () => {
+        setAccountState(prev => (prev.status === 'ok' ? prev : { status: 'loading' }))
+        let next
+        try {
           const res = await costService?.accountHealth?.()
-          const value = res && res.ok ? res.value : null
-          if (!alive) return
-          setAccountCount(Array.isArray(value?.accounts) ? value.accounts.length : null)
+          next = res && res.ok
+            ? { status: 'ok', count: Array.isArray(res.value?.accounts) ? res.value.accounts.length : 0 }
+            : { status: 'error', reason: String(res?.error?.code ?? res?.error?.message ?? 'no-channel') }
+        } catch (error) {
+          next = { status: 'error', reason: String(error?.message ?? error) }
         }
-        void load()
-        return () => { alive = false }
+        if (aliveRef.current) setAccountState(next)
       }, [costService])
+      useEffect(() => { void loadAccounts() }, [loadAccounts])
       const provOpts = providerOptions(pi)
       const modelOpts = modelOptions(pi)
       const configuredAccounts = arr(config?.accounts)
       const blankAccount = () => ({ id: '', provider: provOpts[0]?.v, credentialRef: '', models: [modelOpts[0]?.v], tier: 'standard' })
-      const [rows, setRows] = useState(() => configuredAccounts.map(a => ({
+      // 初始化 / config 同步 / dirty 基线共用同一归一化，避免"没动过"被判成脏。
+      const rowsFromConfig = cfgAccounts => arr(cfgAccounts).map(a => ({
         id: str(a?.id), provider: str(a?.provider) || provOpts[0]?.v,
         credentialRef: str(a?.credentialRef), models: arr(a?.models).length ? arr(a?.models) : [modelOpts[0]?.v],
         tier: str(a?.tier) || 'standard',
-      })))
-      useEffect(() => {
-        setRows(arr(config?.accounts).map(a => ({
-          id: str(a?.id), provider: str(a?.provider) || provOpts[0]?.v,
-          credentialRef: str(a?.credentialRef), models: arr(a?.models).length ? arr(a?.models) : [modelOpts[0]?.v],
-          tier: str(a?.tier) || 'standard',
-        })))
-      }, [config?.accounts])
+      }))
+      const [rows, setRows] = useState(() => rowsFromConfig(configuredAccounts))
+      useEffect(() => { setRows(rowsFromConfig(config?.accounts)) }, [config?.accounts])
       // Credential choices come ONLY from the configForms snapshot: the
       // reference names already stored on accounts (never secret values), plus
       // the human "use signed-in account" default. No command channel needed.
@@ -1037,6 +1108,19 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = useState(null)
       const [rowErrors, setRowErrors] = useState({})
       useEffect(() => { setRankingDraft(clone(obj(config?.ranking)) || {}) }, [config?.ranking])
+      // dirty = 账号草稿 + 择优/路由草稿 vs 打开时快照。
+      const accountsBaseline = stableSig({ rows: rowsFromConfig(config?.accounts), ranking: configuredRanking })
+      const dirty = stableSig({ rows, ranking: rankingDraft }) !== accountsBaseline
+      useEffect(() => { onDirty?.(dirty) }, [dirty, onDirty])
+      // 删除两步确认：第一次点变红字「确认删除？」，3 秒后自动还原。
+      const [confirmKey, setConfirmKey] = useState(null)
+      const confirmTimer = useRef(null)
+      const arm = useCallback(key => {
+        setConfirmKey(key)
+        if (confirmTimer.current) clearTimeout(confirmTimer.current)
+        confirmTimer.current = setTimeout(() => setConfirmKey(null), 3000)
+      }, [])
+      useEffect(() => () => { if (confirmTimer.current) clearTimeout(confirmTimer.current) }, [])
       const update = (i, fn) => setRows(prev => prev.map((r, j) => j === i ? fn(r) : r))
       const toggleModel = (i, m) => update(i, r => ({
         ...r, models: r.models.includes(m) ? r.models.filter(x => x !== m) : [...r.models, m],
@@ -1080,7 +1164,7 @@ window.__ModuleLoader__.load({
         }
         const r = await mutate(ops, revision)
         const ok = r?.ok === true
-        setMsg({ ok, msg: ok ? t('action.saved') : `${t('error.saveFailed')}${r?.detail ? '（' + r.detail + '）' : ''}` })
+        setMsg({ ok, msg: ok ? t('action.saved') : t('error.saveFailed'), detail: ok ? '' : str(r?.detail) })
       }
 
       // 只有用户真的写入过 ranking 才高亮某个预设；缺省不高亮，
@@ -1091,16 +1175,22 @@ window.__ModuleLoader__.load({
         { id: 'cost-first', title: t('preset.cost'), sub: t('preset.costSub') },
         { id: 'speed-first', title: t('preset.speed'), sub: t('preset.speedSub') },
       ]
+      const accountCountLine = accountState.status === 'loading'
+        ? h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, t('accounts.countLoading'))
+        : accountState.status === 'error'
+          ? h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-state-error-primary)' } },
+            fmt(t, 'accounts.countError', { reason: accountState.reason }),
+            h('button', { type: 'button', style: { ...S.btn, marginLeft: 8 }, onClick: () => { void loadAccounts() } }, t('action.retry')))
+          : accountState.count === 0
+            ? h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } },
+              t('accounts.countEmpty'), ' ', t('accounts.addGuide'))
+            : h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } },
+              fmt(t, 'accounts.plainCount', { n: accountState.count }))
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, t('accounts.plainTitle')),
           h('div', { style: S.heroText }, t('accounts.plainExplain')),
-          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } },
-            accountCount === null
-              ? t('accounts.countLoading')
-              : accountCount === 0
-                ? t('accounts.countEmpty')
-                : fmt(t, 'accounts.plainCount', { n: accountCount })),
+          accountCountLine,
         ),
         h('div', null,
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
@@ -1114,6 +1204,18 @@ window.__ModuleLoader__.load({
             )),
           ),
         ),
+        // 卡片头：保存入口 + 未保存标记（Advanced 默认折叠也看得见）。
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('span', { style: { fontWeight: 600 } }, t('accounts.cardTitle')),
+            dirty ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-state-warn-label)' } }, t('card.unsaved')) : null,
+          ),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
+            h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
+          ),
+        ),
+        msg && msg.detail ? h(DiagDetails, { t, lines: [`save: ${msg.detail}`], failed: true }) : null,
         h(Advanced, { t },
           ...rows.map((r, i) => h('div', { key: i, style: S.card },
             h('div', { style: S.row },
@@ -1122,7 +1224,12 @@ window.__ModuleLoader__.load({
                 type: 'text', value: r.id, placeholder: t('field.accountNamePh'),
                 onChange: e => update(i, x => ({ ...x, id: e.target.value })), style: S.input,
               }),
-              h('button', { type: 'button', style: S.btn, onClick: () => setRows(p => p.filter((_, j) => j !== i)) }, t('action.delete')),
+              confirmKey === `a${i}`
+                ? h('button', {
+                  type: 'button', style: { ...S.btn, color: 'var(--dsw-alias-state-error-primary)' },
+                  onClick: () => { setConfirmKey(null); setRows(p => p.filter((_, j) => j !== i)) },
+                }, t('action.confirmDelete'))
+                : h('button', { type: 'button', style: S.btn, onClick: () => arm(`a${i}`) }, t('action.delete')),
             ),
             h('div', { style: S.row },
               h('span', { style: S.label }, t('field.provider')),
@@ -1167,10 +1274,6 @@ window.__ModuleLoader__.load({
             h('div', { style: { ...S.muted, marginBottom: 8 } }, t('routing.intro')),
             h(RoutingForm, { t, cfg: obj(rankingDraft?.routing), onChange: v => setRankingDraft(d => ({ ...d, routing: v })) }),
           ),
-          h('div', { style: S.row },
-            h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
-            msg ? h('span', { style: msg.ok ? S.ok : S.err }, msg.msg) : null,
-          ),
         ),
       )
     }
@@ -1182,8 +1285,21 @@ window.__ModuleLoader__.load({
     // no client-side parsing, no invented numbers, no fake empty state.
     // Four-dimension detail rendering — all values come from the Host's
     // costDetail() aggregation; never invented. Only --dsw-alias-* tokens.
-    function CostDetailBlocks({ t, detail, page, setPage }) {
-      if (!detail) return h('div', { style: S.muted }, t('cost.detailLoading'))
+    function CostDetailBlocks({ t, state, page, setPage, onRetry }) {
+      const status = str(state?.status) || 'loading'
+      if (status === 'loading') return h('div', { style: S.muted }, t('cost.detailLoading'))
+      // 明细读失败 ≠ 没有记录：显示真实原因 + 重试，不把错误说成空。
+      if (status === 'error') {
+        return h('div', null,
+          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-state-error-primary)' } },
+            fmt(t, 'cost.detailFailed', { reason: str(state?.reason) || '?' })),
+          h('div', { style: { ...S.row, marginTop: 8 } },
+            h('button', { type: 'button', style: S.btn, onClick: () => onRetry?.() }, t('action.retry')),
+          ),
+          h(DiagDetails, { t, lines: [`costDetail: ${str(state?.reason) || '?'}`], failed: true }),
+        )
+      }
+      const detail = obj(state?.detail)
       const rows = arr(detail.rows)
       const timeline = arr(detail.timeline)
       const byModel = arr(detail.byModel)
@@ -1191,22 +1307,34 @@ window.__ModuleLoader__.load({
       const savingModels = arr(savings.models)
       const maxCalls = Math.max(1, ...timeline.map(x => Number(x.calls) || 0))
       const pages = Math.max(1, Math.ceil(Number(detail.total || 0) / Math.max(1, Number(detail.limit) || 50)))
+      // 缺值显示「—」，绝不把 null / 缺失显示成 0（老账本行本来就没有延迟字段）。
+      const numOrDash = (v, digits) => {
+        if (v === null || v === undefined || v === '') return '—'
+        const n = Number(v)
+        if (!Number.isFinite(n)) return '—'
+        return digits ? n.toFixed(digits) : String(Math.round(n))
+      }
+      const columns = ['time', 'model', 'tokens', 'ttft', 'tps', 'cost', 'status']
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
         // ① 逐笔明细
         h('div', { style: S.card },
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, fmt(t, 'cost.detailTitle', { n: Number(detail.total || 0) })),
           rows.length === 0
-            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
-            : h('table', { style: S.table },
-              h('thead', null, h('tr', null, ['time', 'model', 'tokens', 'cost', 'status'].map(k =>
-                h('th', { key: k, style: S.th }, t(`cost.col.${k}`))))),
-              h('tbody', null, rows.map((r, i) => h('tr', { key: `${str(r?.requestId)}-${i}` },
-                [str(r?.timestamp).replace('T', ' ').slice(0, 19),
-                 `${str(r?.provider)}/${str(r?.model)}`,
-                 `${Number(r?.inputTokens || 0)}+${Number(r?.outputTokens || 0)}`,
-                 `$${Number(r?.costUsd || 0).toFixed(6)}`,
-                 r?.failed ? t('cost.failed') : t('cost.ok'),
-                ].map((v, j) => h('td', { key: j, style: S.td }, v)))),
+            ? h('div', { style: S.muted }, t('cost.detailNone'))
+            : h('div', { style: { overflowX: 'auto' } },
+              h('table', { style: { ...S.table, minWidth: 720 } },
+                h('thead', null, h('tr', null, columns.map(k =>
+                  h('th', { key: k, style: S.th }, t(`cost.col.${k}`))))),
+                h('tbody', null, rows.map((r, i) => h('tr', { key: `${str(r?.requestId)}-${i}` },
+                  [str(r?.timestamp).replace('T', ' ').slice(0, 19),
+                   `${str(r?.provider)}/${str(r?.model)}`,
+                   `${Number(r?.inputTokens || 0)}+${Number(r?.outputTokens || 0)}`,
+                   numOrDash(r?.ttftMs),
+                   numOrDash(r?.tokensPerSecond, 1),
+                   `$${Number(r?.costUsd || 0).toFixed(6)}`,
+                   r?.failed ? t('cost.failed') : t('cost.ok'),
+                  ].map((v, j) => h('td', { key: j, style: S.td }, v)))),
+                ),
               ),
             ),
           h('div', { style: { ...S.row, marginTop: 8 } },
@@ -1219,7 +1347,7 @@ window.__ModuleLoader__.load({
         h('div', { style: S.card },
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.timelineTitle')),
           timeline.length === 0
-            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
+            ? h('div', { style: S.muted }, t('cost.detailNone'))
             : h('div', { style: { display: 'flex', alignItems: 'flex-end', gap: 10, minHeight: 90 } },
               timeline.map(b => h('div', { key: str(b?.day), style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 } },
                 h('div', { style: { ...S.muted, fontSize: 11 } }, String(Number(b?.calls) || 0)),
@@ -1232,7 +1360,7 @@ window.__ModuleLoader__.load({
         h('div', { style: S.card },
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.byModelTitle')),
           byModel.length === 0
-            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
+            ? h('div', { style: S.muted }, t('cost.detailNone'))
             : byModel.map(g => h('div', { key: `${str(g?.provider)}/${str(g?.model)}`, style: { padding: '4px 0', borderBottom: '1px solid var(--dsw-alias-border-l2)' } },
               h(KV, { k: `${str(g?.provider)}/${str(g?.model)}`, v: fmt(t, 'cost.byModelValue', { calls: Number(g?.calls) || 0, cost: Number(g?.costUsd || 0).toFixed(6) }) })),
             ),
@@ -1242,10 +1370,10 @@ window.__ModuleLoader__.load({
           h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.savingsTitle')),
           h('div', { style: { ...S.muted, marginBottom: 8, color: 'var(--dsw-alias-state-warn-label)' } }, t('cost.savingsNotice')),
           savingModels.length === 0
-            ? h('div', { style: S.muted }, t('cost.detailEmpty'))
+            ? h('div', { style: S.muted }, t('cost.noComparable'))
             : savingModels.map(m => h('div', { key: str(m?.model), style: { padding: '4px 0' } },
               h(KV, { k: fmt(t, 'cost.savingsModel', { model: str(m?.model) }), v: m?.known && Number.isFinite(Number(m?.estimatedUsd))
-                ? fmt(t, 'cost.savingsValue', { usd: `$${Number(m.estimatedUsd).toFixed(6)}` })
+                ? fmt(t, 'cost.savingsValue', { usd: `$${Number(m.estimatedUsd).toFixed(2)}` })
                 : t('cost.noComparable') })),
             ),
         ),
@@ -1354,8 +1482,6 @@ window.__ModuleLoader__.load({
       if (Number.isFinite(until) && until > 0) return Math.max(0, until - Date.now())
       return Number(row.remainingMs) || 0
     }
-    // 诊断行沿用成本页的样式（11px 等宽，可断行），失败原因不隐藏。
-    const diagStyle = { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' }
     const implicitBadge = { ...S.muted, marginLeft: 6, fontSize: 10, padding: '1px 6px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)' }
     const idCell = { ...S.td, overflowWrap: 'anywhere' }
 
@@ -1403,7 +1529,8 @@ window.__ModuleLoader__.load({
       } else if (!snapshot) {
         body = h('div', null,
           h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('health.noChannel')),
-          h('div', { style: diagStyle }, `${t('health.diag')}${diag ? str(diag) : '—'}`),
+          // 内部串（accountHealth.callable/ok/err）收进折叠诊断，失败时默认展开。
+          h(DiagDetails, { t, lines: [`health: ${str(diag) || '—'}`], failed: true }),
         )
       } else if (snap.enabled === false) {
         // 明说被关闭，不假装正常；中性色，不吓人也不冒充健康。
@@ -1521,10 +1648,12 @@ window.__ModuleLoader__.load({
 
     function CostHealthTab({ t, localConfig, remote, costService, costDiag }) {
       const cfg = obj(localConfig)
-      const [live, setLive] = useState(null)
-      const [detail, setDetail] = useState(null)
+      // 三个数据源各自三态（loading / ok / error）。绝不把"读失败"说成
+      // "没有数据通道"，也绝不把 0 条记录说成"读不到"（item 4 状态分家）。
+      const [costState, setCostState] = useState({ status: 'loading' })
+      const [detailState, setDetailState] = useState({ status: 'loading' })
       const [page, setPage] = useState(0)
-      const [diag, setDiag] = useState('')
+      const [reloadKey, setReloadKey] = useState(0)
       // T3b: 账号健康快照三态。loading 初值 true —— 首屏必须先显示「正在读取」，
       // 绝不能在拿到数据前就渲染成空表（那会被误读成「没有账号 / 一切正常」）。
       const [healthSnap, setHealthSnap] = useState(null)
@@ -1560,62 +1689,111 @@ window.__ModuleLoader__.load({
         let alive = true
         void loadHealth(() => alive)
         return () => { alive = false }
-      }, [loadHealth])
+      }, [loadHealth, reloadKey])
+      // 总花费 + 节省账本（成本服务）
       useEffect(() => {
         let alive = true
         const load = async () => {
-          let d = `costService=${!!costService}${costDiag ? ' ' + costDiag : ''}`
+          setCostState({ status: 'loading' })
           try {
             const res = await costService?.cost?.()
-            d += ` cost.ok=${res?.ok === true}`
-            if (res && res.ok && res.value && alive) setLive(res.value)
-            else d += ` cost.err=${String(res?.error?.code ?? res?.error?.message ?? '?')}`
+            if (!alive) return
+            if (res && res.ok) setCostState({ status: 'ok', value: res.value ?? {} })
+            else setCostState({ status: 'error', reason: String(res?.error?.code ?? res?.error?.message ?? 'no-channel') })
           } catch (error) {
-            d += ` cost.throw=${String(error?.message ?? error)}`
+            if (alive) setCostState({ status: 'error', reason: String(error?.message ?? error) })
           }
-          try {
-            const dr = await costService?.costDetail?.({ offset: page * 50, limit: 50 })
-            d += ` detail.ok=${dr?.ok === true}`
-            if (dr && dr.ok && dr.value && alive) setDetail(dr.value)
-            else d += ` detail.err=${String(dr?.error?.code ?? dr?.error?.message ?? '?')}`
-          } catch (error) {
-            d += ` detail.throw=${String(error?.message ?? error)}`
-          }
-          if (alive) setDiag(d)
         }
         void load()
         return () => { alive = false }
-      }, [costService, page])
+      }, [costService, reloadKey])
+      // 逐笔明细（分页）
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          setDetailState({ status: 'loading' })
+          try {
+            const res = await costService?.costDetail?.({ offset: page * 50, limit: 50 })
+            if (!alive) return
+            if (res && res.ok && res.value) setDetailState({ status: 'ok', detail: res.value })
+            else setDetailState({ status: 'error', reason: String(res?.error?.code ?? res?.error?.message ?? 'no-channel') })
+          } catch (error) {
+            if (alive) setDetailState({ status: 'error', reason: String(error?.message ?? error) })
+          }
+        }
+        void load()
+        return () => { alive = false }
+      }, [costService, page, reloadKey])
+      const refresh = () => { setReloadKey(k => k + 1) }
       // Fallback: a snapshot-provided cost (if any) only when the remote failed.
       const snapCost = obj(cfg.cost)
-      const cost = live ?? (Object.keys(snapCost).length ? snapCost : null)
+      const hasSnapCost = Object.keys(snapCost).length > 0
+      const cost = costState.status === 'ok' ? obj(costState.value) : (hasSnapCost ? snapCost : null)
       const records = Number(cost?.records ?? 0)
-      const freeCount = Number(cost?.freeCount ?? 0)
-      const paidCount = Number(cost?.paidCount ?? 0)
-      const hasRecords = records > 0
+      const totalUsd = Number(cost?.estimatedCostUsd ?? 0)
+      const savingsModels = arr(obj(detailState.detail?.savings).models)
+      const knownSavings = savingsModels.filter(m => m?.known === true && Number.isFinite(Number(m?.estimatedUsd)))
+      const savingsValue = knownSavings.length
+        ? `$${knownSavings.reduce((sum, m) => sum + Number(m.estimatedUsd), 0).toFixed(2)}`
+        : t('cost.noComparable')
+      const failed = costState.status === 'error' || detailState.status === 'error'
+      const diagLines = [
+        `costService mount: ${str(costDiag) || '—'}`,
+        costState.status === 'error' ? `cost: ${str(costState.reason)}` : '',
+        detailState.status === 'error' ? `costDetail: ${str(detailState.reason)}` : '',
+        `healthDiag: ${str(healthDiag) || '—'}`,
+      ]
+      const overview = costState.status === 'loading' && !hasSnapCost
+        ? h('div', { style: S.muted }, t('cost.loading'))
+        : costState.status === 'error' && !hasSnapCost
+          ? h('div', null,
+            h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-state-error-primary)' } },
+              fmt(t, 'cost.loadFailed', { reason: str(costState.reason) || '?' })),
+            h('div', { style: { ...S.row, marginTop: 8 } },
+              h('button', { type: 'button', style: S.btn, onClick: refresh }, t('action.retry')),
+            ),
+          )
+          : h('div', null,
+            h(KV, { k: t('cost.estimated'), v: `$${totalUsd.toFixed(2)}` }),
+            h(KV, { k: t('cost.records'), v: records }),
+            h(KV, { k: t('cost.savings'), v: savingsValue }),
+            costState.status === 'error'
+              ? h('div', { style: { ...S.muted, marginTop: 6, color: 'var(--dsw-alias-state-error-primary)' } },
+                fmt(t, 'cost.loadFailed', { reason: str(costState.reason) || '?' }))
+              : null,
+            records === 0 ? h('div', { style: { ...S.muted, marginTop: 6 } }, t('cost.detailNone')) : null,
+          )
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, t('cost.title')),
           h('div', { style: S.heroText }, t('cost.plainExplain')),
         ),
-        hasRecords
-          ? h('div', { style: S.card },
-            h(KV, { k: t('cost.estimated'), v: `$${Number(cost.estimatedCostUsd ?? 0).toFixed(6)}` }),
-            h(KV, { k: t('cost.records'), v: records }),
-            h(KV, { k: t('cost.freePaid'), v: fmt(t, 'cost.freePaidValue', { free: freeCount, paid: paidCount }) }),
-          )
-          : h('div', { style: S.card },
-            h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-secondary)' } }, t('cost.noChannel')),
-            h('div', { style: { ...S.muted, marginTop: 6, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11, overflowWrap: 'anywhere' } }, `诊断：${diag}`),
+        // 概览卡：2 位小数总花费 / 调用总数 / 节省金额 + 刷新
+        h('div', { style: S.card },
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 } },
+            h('span', { style: { fontWeight: 600 } }, t('cost.overviewTitle')),
+            h('button', { type: 'button', style: S.btn, onClick: refresh }, t('action.refresh')),
           ),
-        h(CostDetailBlocks, { t, detail, page, setPage }),
+          overview,
+        ),
+        // 逐笔明细 / 趋势 / 按模型 / 节省账本 全部收进「详细数据」折叠；
+        // 失败时默认展开，让错误当场可见。
+        h('details', { style: S.card, open: failed },
+          h('summary', { style: { cursor: 'pointer', fontWeight: 600 } },
+            fmt(t, 'cost.detailBlock', { n: records })),
+          h('div', { style: { marginTop: 10 } },
+            h(CostDetailBlocks, { t, state: detailState, page, setPage, onRetry: refresh }),
+          ),
+        ),
         h(AccountHealthPanel, {
           t,
           snapshot: healthSnap,
           diag: healthDiag,
           loading: healthLoading,
-          onRefresh: loadHealth,
+          onRefresh: () => { void loadHealth(() => true) },
         }),
+        // mount / state 这类内部串统一进折叠诊断，失败才默认展开。
+        h(DiagDetails, { t, lines: diagLines, failed }),
       )
     }
 
@@ -1632,6 +1810,23 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('overview')
       const [working, setWorking] = useState(false)
       const [presetNotice, setPresetNotice] = useState(null)
+      // 路由设置里有未保存草稿时，切 Tab 先确认，绝不静默丢改动。
+      const [dirtyParts, setDirtyParts] = useState({ chains: false, accounts: false })
+      const [pendingTab, setPendingTab] = useState(null)
+      const reportDirty = useCallback((key, value) => {
+        setDirtyParts(prev => (prev[key] === value ? prev : { ...prev, [key]: value }))
+      }, [])
+      const routingDirty = dirtyParts.chains === true || dirtyParts.accounts === true
+      const switchTab = useCallback(id => {
+        setPendingTab(null)
+        setDirtyParts({ chains: false, accounts: false })
+        setTab(id)
+      }, [])
+      const requestTab = useCallback(id => {
+        if (id === tab) return
+        if (tab === 'routing' && routingDirty) { setPendingTab(id); return }
+        switchTab(id)
+      }, [tab, routingDirty, switchTab])
       // @Remote 成本服务：由 injected() 软探测（ctx.get，非 inject）透传。
       // 绝不把它加进模块 inject —— 那是本模块 $mount 产出的，会死锁。
       const costService = smartProvider ?? propCostService
@@ -1938,20 +2133,27 @@ window.__ModuleLoader__.load({
         h('div', { style: S.tabs },
           TABS.map(item => h('button', {
             key: item.id, type: 'button', style: S.tab(tab === item.id),
-            onClick: () => setTab(item.id),
+            onClick: () => requestTab(item.id),
           }, t(item.labelKey))),
         ),
+        // 未保存确认条：只有点「切换」才真走，点「留在本页」草稿原样保留。
+        pendingTab ? h('div', { style: { ...S.card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+          h('span', null, t('tab.unsavedGuard')),
+          h('button', { type: 'button', style: S.btn, onClick: () => switchTab(pendingTab) }, t('tab.switchAnyway')),
+          h('button', { type: 'button', style: S.primary, onClick: () => setPendingTab(null) }, t('tab.stayHere')),
+        ) : null,
         // 总览把预设反馈画在按钮下方（首屏就近可见），其它 Tab 仍走顶部提示行。
         presetNotice && tab !== 'overview' ? h('div', { style: presetNotice.ok ? S.ok : S.err }, presetNotice.msg) : null,
         tab === 'overview' ? h(Overview, {
           t, localConfig: config, pi, availProjection, probeVerdicts, probeEnabled, probeDiag,
           onProbe: runProbe, applyPreset, working, presetNotice, costService: activeCostService,
-          onOpenCost: () => setTab('cost'),
+          onOpenCost: () => requestTab('cost'),
         }) : null,
         // 路由设置 = 先链路卡、后账号/择优卡，两张卡各自的保存按钮与语义不变。
+        // 两张卡都上报 dirty，供切 Tab 前的确认条使用。
         tab === 'routing' ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
-          h(ChainsTab, { t, form, revision, mutate, config, pi }),
-          h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService }),
+          h(ChainsTab, { t, form, revision, mutate, config, pi, onDirty: v => reportDirty('chains', v) }),
+          h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService, onDirty: v => reportDirty('accounts', v) }),
         ) : null,
         tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}` }) : null,
       )
@@ -1974,7 +2176,12 @@ window.__ModuleLoader__.load({
       nav: 'Smart 智能路由',
       'tab.overview': '总览', 'tab.routing': '路由设置', 'tab.cost': '花费与健康',
       'action.save': '保存', 'action.saved': '已保存，立即生效（无需重启）', 'action.saveFailed': '保存失败',
-      'action.refresh': '刷新',
+      'action.refresh': '刷新', 'action.retry': '重试', 'action.confirmDelete': '确认删除？',
+      'card.unsaved': '● 未保存',
+      'diag.title': '诊断信息（默认折叠，出错时才展开）',
+      'tab.unsavedGuard': '有未保存的修改，仍要切换？',
+      'tab.switchAnyway': '切换（丢弃修改）',
+      'tab.stayHere': '留在本页',
       'status.registered': '已注册', 'status.yes': '是', 'status.no': '否', 'status.chains': '链路数',
       'status.accounts': '账号数', 'status.cooldowns': '冷却中', 'status.strategyEnabled': '择优配置（用户设置）',
       'status.loading': '正在读取配置…',
@@ -2020,10 +2227,15 @@ window.__ModuleLoader__.load({
       'preset.speed': '⚡ 更快', 'preset.speedSub': '优先用响应快的模型',
       'preset.applying': '正在保存你的选择…',
       'preset.applied': '已切换为「{name}」，立即生效',
+      'chains.cardTitle': '链路（模型的备用顺序）',
+      'chains.emptyHint': '还没有配置链路，正在使用自动发现（下面显示的是内置默认顺序，编辑后保存即成为你的配置）。',
       'chains.plainTitle': '模型的备用顺序',
       'chains.plainExplain': '智能路由会按下面的顺序尝试：从上到下，不行就自动换下一个。这些都是你已经在 DSH 里配置好的模型，不用另外设置。',
       'chains.forModel': '当你选择「{model}」时：',
       'chains.step': '{name}',
+      'accounts.cardTitle': '账号池 + 择优',
+      'accounts.countError': '读取账号数失败：{reason}',
+      'accounts.addGuide': '点下面的「＋ 添加一个账号」手动加一个。',
       'accounts.plainTitle': '账号（一般不用管）',
       'accounts.plainExplain': '会自动使用你已经在 DSH 里配置好的 API Key（比如 OpenCode Go、小米等），你不用在这里填任何密钥。',
       'accounts.plainCount': '当前有 {n} 个账号（DSH 已配置的路由 + 路由链自动派生）。',
@@ -2064,6 +2276,12 @@ window.__ModuleLoader__.load({
       'cost.detailLoading': '正在读取明细…',
       'cost.detailTitle': '逐笔调用明细（共 {n} 笔，最近的在前）',
       'cost.detailEmpty': '暂无明细数据',
+      'cost.overviewTitle': '概览', 'cost.savings': '节省金额',
+      'cost.loading': '正在读取花费…', 'cost.loadFailed': '读取花费失败：{reason}',
+      'cost.detailBlock': '详细数据（逐笔明细 / 趋势 / 按模型 / 节省账本，共 {n} 条记录）',
+      'cost.detailNone': '还没有调用记录',
+      'cost.detailFailed': '读取明细失败：{reason}',
+      'cost.col.ttft': '首字(ms)', 'cost.col.tps': '速度(tok/s)',
       'cost.col.time': '时间', 'cost.col.model': '模型', 'cost.col.tokens': '输入+输出',
       'cost.col.cost': '成本', 'cost.col.status': '结果',
       'cost.ok': '成功', 'cost.failed': '失败',
@@ -2107,7 +2325,12 @@ window.__ModuleLoader__.load({
       nav: 'Smart provider',
       'tab.overview': 'Overview', 'tab.routing': 'Routing', 'tab.cost': 'Cost & health',
       'action.save': 'Save', 'action.saved': 'Saved — live without restart', 'action.saveFailed': 'Save failed',
-      'action.refresh': 'Refresh',
+      'action.refresh': 'Refresh', 'action.retry': 'Retry', 'action.confirmDelete': 'Confirm delete?',
+      'card.unsaved': '● Unsaved',
+      'diag.title': 'Diagnostics (collapsed unless something failed)',
+      'tab.unsavedGuard': 'You have unsaved changes — switch anyway?',
+      'tab.switchAnyway': 'Switch (discard changes)',
+      'tab.stayHere': 'Stay on this page',
       'status.registered': 'Registered', 'status.yes': 'Yes', 'status.no': 'No', 'status.chains': 'Chains',
       'status.accounts': 'Accounts', 'status.cooldowns': 'Cooling down', 'status.strategyEnabled': 'Ranking config (user setting)',
       'status.loading': 'Loading configuration…',
@@ -2153,10 +2376,15 @@ window.__ModuleLoader__.load({
       'preset.speed': '⚡ Be fast', 'preset.speedSub': 'Prefer the quickest models',
       'preset.applying': 'Saving your choice…',
       'preset.applied': 'Switched to "{name}" — live now',
+      'chains.cardTitle': 'Chains (model fallback order)',
+      'chains.emptyHint': 'No chains configured yet — automatic discovery is in use (what you see below is the built-in default order; edit and save to make it yours).',
       'chains.plainTitle': 'Model fallback order',
       'chains.plainExplain': 'Smart routing tries these in order: top to bottom, switching automatically if one fails. These are models you already configured in DSH — nothing extra to set.',
       'chains.forModel': 'When you pick "{model}":',
       'chains.step': '{name}',
+      'accounts.cardTitle': 'Accounts + ranking',
+      'accounts.countError': 'Could not read the account count: {reason}',
+      'accounts.addGuide': 'Use “+ Add an account” below to add one manually.',
       'accounts.plainTitle': 'Accounts (usually nothing to do)',
       'accounts.plainExplain': 'It automatically uses the API keys you already configured in DSH (e.g. OpenCode Go, Xiaomi). You don\'t need to enter any key here.',
       'accounts.plainCount': '{n} account(s) in the live pool (DSH-configured routes + chain-derived accounts).',
@@ -2197,6 +2425,12 @@ window.__ModuleLoader__.load({
       'cost.detailLoading': 'Loading detail…',
       'cost.detailTitle': 'Per-call detail ({n} records, newest first)',
       'cost.detailEmpty': 'No detail data',
+      'cost.overviewTitle': 'Overview', 'cost.savings': 'Savings',
+      'cost.loading': 'Reading spend…', 'cost.loadFailed': 'Could not read spend: {reason}',
+      'cost.detailBlock': 'Detailed data (per-call rows / trend / by model / savings ledger — {n} records)',
+      'cost.detailNone': 'No calls recorded yet',
+      'cost.detailFailed': 'Could not read detail rows: {reason}',
+      'cost.col.ttft': 'TTFT (ms)', 'cost.col.tps': 'Speed (tok/s)',
       'cost.col.time': 'Time', 'cost.col.model': 'Model', 'cost.col.tokens': 'In+Out',
       'cost.col.cost': 'Cost', 'cost.col.status': 'Result',
       'cost.ok': 'OK', 'cost.failed': 'Failed',
