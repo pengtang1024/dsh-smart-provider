@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "title": "Provedor inteligente",
+    "description": "Meta-provedor: alterna entre rotas de provedores baratos com failover, recua apenas na fase de estabelecimento da conexão, com resfriamento por salto, registro de sessão por salto, estimativa de custo offline e classificação de contas. A área de configurações oferece uma página dedicada (visão geral / cadeias / pool de contas+classificação / custo+saúde).",
+    "detail": "docs/DETAIL.pt.md"
+  },
+  "nav": "Roteamento inteligente",
+  "setting": {
+    "title": "Roteamento inteligente",
+    "description": "Configurar cadeias de failover, pool de contas, estratégia de classificação e custo/saúde; todas as alterações são aplicadas ao vivo, sem reiniciar."
+  }
+}

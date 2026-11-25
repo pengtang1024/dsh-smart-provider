@@ -1,7 +1,7 @@
 {
   "name": "@local/dsh-smart-provider",
   "displayName": "DSH 智能模型路由（Smart Provider）",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "一个 DSH 元提供商，智能调度已配置的模型路由，支持额度自动切换、多账号池与离线成本统计。",

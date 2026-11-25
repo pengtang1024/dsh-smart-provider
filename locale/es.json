@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "title": "Proveedor inteligente",
+    "description": "Meta-proveedor que conmuta por error entre rutas de proveedor económicas, con retroceso solo en la fase de establecimiento, enfriamiento por salto, registros de sesión por salto, estimación de coste sin conexión y selección de cuentas por rango. Una sección de ajustes dedicada ofrece una página de configuración (resumen / cadenas / grupo de cuentas+selección / coste+salud).",
+    "detail": "docs/DETAIL.es.md"
+  },
+  "nav": "Proveedor inteligente",
+  "setting": {
+    "title": "Proveedor inteligente",
+    "description": "Configura las cadenas, el grupo de cuentas, la estrategia de selección y el coste/salud; todos los cambios se aplican en caliente, sin reiniciar."
+  }
+}
