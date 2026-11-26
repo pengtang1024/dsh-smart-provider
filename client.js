@@ -125,6 +125,23 @@ window.__ModuleLoader__.load({
         ? { free: v.free, level: str(v.level), source: str(v.source) }
         : null
     }
+    // HB2: availabilityStatus stays keyed by bare modelId (health display), but
+    // each row also carries `providers: { [provider]: freeSignal|null }` with one
+    // exact (provider, model) tag per provider. This adapts a projection row to
+    // the legacy freeTagOf(row) shape by promoting that provider's exact tag to
+    // the top-level key. When the map has no entry, the row's own freeSignal (the
+    // Host's exact-evidence fallback) is returned unchanged — old Profiles without
+    // a map keep working.
+    const tupleScope = (projection, id, provider) => {
+      const rows = obj(projection)
+      const row = rows[id]
+      const map = row?.providers
+      if (!provider || !map || typeof map !== 'object' || Array.isArray(map)) return rows
+      const key = str(provider)
+      if (!key || !Object.prototype.hasOwnProperty.call(map, key)) return rows
+      const exact = map[key]
+      return { ...rows, [id]: { ...row, freeSignal: exact && typeof exact === 'object' ? exact : null } }
+    }
 
     // ---- typed @Remote contribution for real cost data ---------------------
     // The Host registers a `smartProvider/cost` @Remote service (see lib/remote.js).
@@ -211,6 +228,9 @@ window.__ModuleLoader__.load({
         // required nullable field — strict zod strips undeclared keys, which
         // would silently erase the whole availability projection on the wire.
         freeSignal: freeSignalCodec,
+        // HB2: per-(provider,model) tags. Strict codec would strip this map
+        // unless declared; optional keeps old Profiles (no map) parseable.
+        providers: z.record(z.string(), freeSignalCodec).optional(),
       }))
     })()
     // task-107: minimal probe result/candidates schema. strict codec 三件套
@@ -716,7 +736,8 @@ window.__ModuleLoader__.load({
         // NF3: one contract for all three free checks. Host freeSignal tag
         // (measured/declared/weak) wins; otherwise classify locally from the
         // probe verdict + available weak signals. Unknown never blocks weak.
-        const tagged = freeTagOf(obj(availProjection)[id])
+        // Host tuple tag first; legacy top-level tag is the fallback.
+        const tagged = freeTagOf(obj(tupleScope(availProjection, id, provider))[id])
         if (tagged && tagged.level !== 'none') return tagged.free
         return freeSignal({
           provider, model: id, name: str(m?.name), group: provider,
@@ -829,7 +850,7 @@ window.__ModuleLoader__.load({
                         maybeFreeModels.map(m => {
                           const id = str(m?.id ?? m)
                           const st = statusOf(id)
-                          const tagged = freeTagOf(obj(availProjection)[id])
+                          const tagged = freeTagOf(obj(tupleScope(availProjection, id, str(m?.group)))[id])
                           const probe = str(obj(probeVerdicts)[`${str(m?.group)}/${id}`])
                           // NF3 wording: only measured evidence (Host tag or probe
                           // verdict) says "已确认免费"; weak/declaration stays
@@ -1321,7 +1342,8 @@ window.__ModuleLoader__.load({
       // A metered verdict or paid billing excludes the model; unknown does not.
       const modelFreeSignal = (id, label) => {
         const group = (arr(pi?.models).find(m => str(m?.id ?? m) === id)?.group) ?? ''
-        const tagged = freeTagOf(obj(availProjection)[id])
+        // Host tuple tag first; legacy top-level tag is the fallback.
+        const tagged = freeTagOf(obj(tupleScope(availProjection, id, group))[id])
         if (tagged && tagged.level !== 'none') return tagged
         return freeSignal({
           provider: str(group), model: id, name: str(label), group: str(group),
@@ -1799,12 +1821,18 @@ window.__ModuleLoader__.load({
       return t('health.freeNone')
     }
     // 投影按 modelId 索引；同一账号可对应多个模型，取证据最强的一档展示。
+    // HB2: each lookup is (provider, modelId) → prefer that provider's exact tag
+    // in the row's `providers` map; bare-modelId and legacy tuple keys stay as
+    // fallbacks for old Profiles. Never mix a different provider's tag here.
     const FREE_LEVEL_RANK = { measured: 3, declared: 2, weak: 1 }
     const strongestFreeTag = (projection, keys) => {
       let best = null
       for (const key of keys) {
         if (!key) continue
-        const tag = freeTagOf(obj(projection)[key])
+        const slash = key.indexOf('/')
+        const provider = slash > 0 ? key.slice(0, slash) : ''
+        const modelId = slash > 0 ? key.slice(slash + 1) : key
+        const tag = freeTagOf(obj(tupleScope(projection, modelId, provider))[modelId])
         if (!tag || tag.free !== true) continue
         if (!best || (FREE_LEVEL_RANK[str(tag.level)] ?? 0) > (FREE_LEVEL_RANK[str(best.level)] ?? 0)) best = tag
       }
@@ -2263,6 +2291,13 @@ window.__ModuleLoader__.load({
               tier: str(tier) || str(prev.tier) || undefined,
               // freeSignal: Host tag first; ledger rows only carry samples.
               freeSignal: freeTagOf(hostRow) ?? freeTagOf(prev),
+              // HB2: keep the exact (provider,model) tags. Consumers prefer
+              // these over the legacy top-level tag; the ledger source has no
+              // map and must never erase the Host one.
+              providers: (hostRow && typeof hostRow.providers === 'object'
+                && !Array.isArray(hostRow.providers) ? hostRow.providers : null)
+                ?? (prev && typeof prev.providers === 'object'
+                  && !Array.isArray(prev.providers) ? prev.providers : undefined),
             }
           }
           // 源 1：live registry 投影 {modelId:{health,tier,confidence,freeSignal}}（含会话信号）。
@@ -2347,7 +2382,8 @@ window.__ModuleLoader__.load({
           if (Number(obj(availProjection)[id]?.samples ?? 0) > 0) continue
           // NF3: same weak-signal contract — name free / multiplier 0 /
           // costModel free / tier free. Unknown verdict never blocks a probe.
-          const tagged = freeTagOf(obj(availProjection)[id])
+          // Host tuple tag first; legacy top-level tag is the fallback.
+          const tagged = freeTagOf(obj(tupleScope(availProjection, id, provider))[id])
           const sig = tagged && tagged.level !== 'none' ? tagged : freeSignal({
             provider, model: id, name: str(m?.name), group: provider,
             probeVerdict: str(obj(probeVerdicts)[`${provider}/${id}`]),
