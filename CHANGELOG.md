@@ -2,6 +2,22 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.6.1
+
+文档版本（`2.6.0` → `2.6.1`）：只补兼容性声明与文档分类口径，代码路径、配置语义与计费判据零改动；按语义化版本 patch 递增。
+
+### 变更
+
+- **补充 `engines.dsh/node` 兼容性声明**：`package.json` 新增 `engines`：`node ">=20"`、`dsh ">=0.2.0-rc.2 <0.4.0-0"`（含 rc 预发布，覆盖当前运行时 `0.2.2-rc.5`）。不改 `peerDependencies`，不臆造 `dsh.compatibility` / `dsh.category` 等宿主不读的字段。
+- **文档分类口径**：README 新增「兼容性与分类」小节，说明支持版本范围；分类归属由外部注册表（如 `awesome-dsh-plugin`）的 YAML 决定，建议 `category: model`（模型与账号接入），本包 `keywords` 已承载中英文关键词。
+
+### 验证
+
+- 回归：unit ≥262、full ≥320 全绿，fail 0、退出码 0；`node --check client.js` 退出码 0。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.6.1`（`test/free-ui-chain.test.mjs` 的 FX3-5 同步更新）。
+
+---
+
 ## 2.6.0
 
 功能版本（`2.5.1` → `2.6.0`）：本轮补齐设置页文案的本地化内容，让界面**自动跟随当前 DSH 语言**，无需用户选择。机制层零改动——沿用 `ctx.locale.register(NS, { zh, en, de, es, fr, pt, ru })` + `ctx.locale.bind(NS)` + slot 的 `useSyncExternalStore`：切换 DSH 语言时 `t()` 实时读当前 active locale，缺译文或缺失语言（如 ja）自动回退 en，绝不显示裸 key，不提供、也不需要任何语言选择器。按语义化版本 minor 递增。

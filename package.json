@@ -1,12 +1,16 @@
 {
   "name": "@local/dsh-smart-provider",
   "displayName": "DSH 智能模型路由（Smart Provider）",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node scripts/run-tests.mjs",
     "test:unit": "node scripts/run-tests.mjs --unit"
+  },
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.0-rc.2 <0.4.0-0"
   },
   "description": "一个 DSH 元提供商，智能调度已配置的模型路由，支持额度自动切换、多账号池与离线成本统计。",
   "license": "MIT",

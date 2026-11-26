@@ -25,6 +25,11 @@ Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 
 ---
 
+### 兼容性与分类
+
+- **支持的 DSH 版本**：本包在 `package.json` 的 `engines` 里声明 `dsh: ">=0.2.0-rc.2 <0.4.0-0"` —— 大白话说，从 `0.2.0-rc.2`（含）到 `0.4.0` 正式版之前（不含）的 DSH 都支持，包含 `0.2.2-rc.5` 这类 rc 预发布版本；`node: ">=20"` 表示需要 Node 20 或更新。这只是给安装器 / 使用者看的兼容性声明，不改变 `peerDependencies`（它仍逐项声明实际用到的 DSH 包），也没有所谓的 `dsh.compatibility` / `dsh.category` 字段。
+- **分类由外部注册表决定**：插件的分类不在本包里声明。若要收录到 `awesome-dsh-plugin` 之类的插件注册表，分类写在那份注册表的 YAML 里，建议归为 `category: model`（模型与账号接入）；本仓库只是被收录的插件源码，不代注册表做分类。本包的 `keywords` 已同时带有英文关键词（`model-router` / `meta-provider` / `failover` 等）与中文关键词（模型路由 / 智能调度 / 成本统计），便于注册表与搜索收录时识别。
+
 ## 一、已落地能力（有验收证据）
 
 - **智能路由默认生效。** `smart/auto` 是默认模型，已在真实会话中验证选路、回退、成本记录与会话记录。
