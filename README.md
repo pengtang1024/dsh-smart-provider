@@ -10,6 +10,8 @@ Deutsch → [docs/DETAIL.de.md](docs/DETAIL.de.md)
 Русский → [docs/DETAIL.ru.md](docs/DETAIL.ru.md)
 Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 
+**本地化：自动跟随当前 DSH 语言（无需选择）。** 设置页文案随 DSH 当前语言实时切换，不提供语言选择器：zh / en / de / es / fr / pt / ru 七语设置文案内联同一 248 活跃 key 键集；缺译文或尚未支持的语言（如 ja）自动回退 en，绝不显示裸 key。机制沿用 `ctx.locale.register(NS, { zh, en, de, es, fr, pt, ru })` + `ctx.locale.bind(NS)` + slot 的 `useSyncExternalStore`，切换语言即时生效。
+
 实现依据父工作区的设计文档：
 
 - `meta-provider-设计方案.md` —— 核心骨架、错误分类、仅在响应建立前回退

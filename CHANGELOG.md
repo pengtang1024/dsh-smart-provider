@@ -2,6 +2,25 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.6.0
+
+功能版本（`2.5.1` → `2.6.0`）：本轮补齐设置页文案的本地化内容，让界面**自动跟随当前 DSH 语言**，无需用户选择。机制层零改动——沿用 `ctx.locale.register(NS, { zh, en, de, es, fr, pt, ru })` + `ctx.locale.bind(NS)` + slot 的 `useSyncExternalStore`：切换 DSH 语言时 `t()` 实时读当前 active locale，缺译文或缺失语言（如 ja）自动回退 en，绝不显示裸 key，不提供、也不需要任何语言选择器。按语义化版本 minor 递增。
+
+### 新增
+
+- **七语设置文案**：zh / en / de / es / fr / pt / ru 内联同一 248 活跃 key 键集，逐个对应；此前只有 zh / en 有真实设置文案，de / es / fr / pt / ru 全量补齐。43 个死 key 全语种删除，只保留源码实际使用的活跃键。
+- **四个原裸显 key 已本地化**：`cost.estimated` / `cost.records` / `cost.savings` / `field.model` 七语齐全，不再直接显示英文原文。
+- **costPill 文案保留**：`test/free-ui-chain.test.mjs` 读取的 costPill 键（22 个）全语种齐全，位置/刷新/清理说明同步本地化。
+- **日语回退 en**：ja 不注册字典，走 Host 的 en 回退链，符合「自动跟随、缺语回退」边界。
+
+### 验证
+
+- 独立复验（运行时求值为准）：七语字典 `Object.keys` 均 248、键集一一对应（miss=0 / extra=0）、4 个新 key 与 costPill 22 键全语齐全。`node --check client.js` 退出码 0。
+- 回归：unit ≥262、full ≥320 全绿，fail 0、退出码 0。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.6.0`（`test/free-ui-chain.test.mjs` 的 FX3-5 同步更新）。
+
+---
+
 ## 2.5.1
 
 修复版本（`2.5.0` → `2.5.1`）：用户升级 2.5.0 后反馈的 checked 状态与连续写入三处缺陷全部修复。只修这三点，不引入新功能，也不改变任何既有配置语义、读写通道或计费判据；按语义化版本 patch 递增。
