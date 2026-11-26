@@ -333,6 +333,24 @@ window.__ModuleLoader__.load({
     })()
     // $mount 的真实失败原因会写进这里，随成本页诊断文案一起显示，避免 err=? 静默。
     let mountDiag = 'unmounted'
+    // CF-3: config keys/defaults mirror schema.js (volatile, off by default).
+    const COST_PILL_ENABLED_KEY = 'costPillEnabled'
+    const COST_PILL_POSITION_KEY = 'costPillPosition'
+    const COST_PILL_REFRESH_KEY = 'costPillRefreshMs'
+    const COST_PILL_DEFAULT_POSITION = 'input.right'
+    const COST_PILL_REFRESH_DEFAULT_MS = 60000
+    const COST_PILL_SLOTS = ['conversation.input.right', 'conversation.session.header.utilities', 'conversation.input.dock']
+    const costPillPositionOf = value => {
+      const pos = str(value)
+      return COST_PILL_SLOTS.includes(pos) ? pos : COST_PILL_DEFAULT_POSITION
+    }
+    const costPillRefreshMsOf = value => {
+      const ms = Number(value)
+      return Number.isFinite(ms) && ms >= 1000 ? ms : COST_PILL_REFRESH_DEFAULT_MS
+    }
+    // Volatile config may be absent before the first describe; only an explicit
+    // true enables the pill. An absent/0 refresh interval means no monitoring.
+    const costPillEnabledOf = config => obj(config)[COST_PILL_ENABLED_KEY] === true
     const makeCostContribution = () => ({
       package: '@local/dsh-smart-provider',
       descriptors: [{
@@ -652,6 +670,21 @@ window.__ModuleLoader__.load({
         color: extra ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)',
         background: 'var(--dsw-alias-bg-layer-1)',
       }),
+      // CF-3: conversation cost pill — colors are --dsw-alias-* only.
+      costPill: {
+        bar: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', color: 'var(--dsw-alias-label-primary)', fontSize: 12 },
+        dock: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: '100%', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)', padding: '6px 10px', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', fontSize: 12 },
+        label: { color: 'var(--dsw-alias-label-secondary)' },
+        amount: { fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--ds-font-family-code, monospace)', color: 'var(--dsw-alias-brand-primary-new-colorprimary-new-color)', fontWeight: 600 },
+        muted: { color: 'var(--dsw-alias-label-tertiary)' },
+        err: { color: 'var(--dsw-alias-state-error-primary)', fontSize: 11 },
+        btn: (active, danger) => ({
+          cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
+          color: danger ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-primary)',
+          background: active ? 'var(--dsw-alias-interactive-bg-hover)' : 'var(--dsw-alias-bg-layer-2)',
+          border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)', padding: '2px 7px',
+        }),
+      },
       hero: {
         border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-md)',
         padding: '16px', background: 'var(--dsw-alias-bg-layer-1)',
@@ -2322,6 +2355,164 @@ window.__ModuleLoader__.load({
       { id: 'cost', labelKey: 'tab.cost' },
     ]
 
+    // ---- CF-3: conversation cost pill ---------------------------------------
+    // Contribution into the three conversation slots. The service never enters
+    // module inject: it is soft-probed per inject() call like other settings
+    // components. t comes from the slot's locale seat (NS dictionaries below).
+    function CostPill({ t, form, smartProvider, costService: propCostService }) {
+      const costService = smartProvider ?? propCostService
+      const readConfig = useCallback(() => {
+        let config = {}
+        try { config = obj(obj(form?.getSnapshot?.()).value) } catch { config = {} }
+        return {
+          enabled: costPillEnabledOf(config),
+          position: costPillPositionOf(config[COST_PILL_POSITION_KEY]),
+          refreshMs: costPillRefreshMsOf(config[COST_PILL_REFRESH_KEY]),
+        }
+      }, [form])
+      const initial = readConfig()
+      const [cfg, setCfg] = useState(initial)
+      const [summary, setSummary] = useState(null)
+      const [state, setState] = useState('idle') // idle | loading | ok | error
+      const [notice, setNotice] = useState(null)
+      // Two-step clear confirmation with a 3 s undo window (client.js:989-997).
+      const [confirmClear, setConfirmClear] = useState(false)
+      const confirmTimer = useRef(null)
+      const armClear = useCallback(() => {
+        setConfirmClear(true)
+        if (confirmTimer.current) clearTimeout(confirmTimer.current)
+        confirmTimer.current = setTimeout(() => setConfirmClear(false), 3000)
+      }, [])
+      useEffect(() => () => { if (confirmTimer.current) clearTimeout(confirmTimer.current) }, [])
+      // The Host service is installed by async $mount. Retry a few short
+      // probes, then re-render when it appears (client.js:2601-2616 pattern).
+      const [mountTick, setMountTick] = useState(0)
+      useEffect(() => {
+        if (costService) return
+        let alive = true
+        const timers = [50, 250, 800, 2000].map(ms => setTimeout(() => {
+          if (!alive) return
+          let svc
+          try { svc = smartProvider ?? form?.remote?.smartProvider } catch { svc = undefined }
+          if (svc) setMountTick(v => v + 1)
+        }, ms))
+        return () => { alive = false; timers.forEach(clearTimeout) }
+      }, [costService, smartProvider, mountTick, form])
+      // Config changes (enable / position / interval) land without remount.
+      useEffect(() => {
+        let alive = true
+        const sync = () => { if (alive) setCfg(readConfig()) }
+        sync()
+        let off
+        try { off = form?.subscribe?.(sync) } catch { off = undefined }
+        return () => { alive = false; try { off?.() } catch {} }
+      }, [form, readConfig])
+      const refresh = useCallback(async signal => {
+        if (!costService?.statsSince) return
+        setState('loading')
+        try {
+          // Host reads the stats-state.json marker when since is absent.
+          const res = await costService.statsSince({}, signal)
+          if (signal?.aborted) return
+          if (res && res.ok) { setSummary(obj(res.value)); setState('ok') }
+          else { setSummary(null); setState('error') }
+        } catch (error) {
+          if (!signal?.aborted) { setSummary(null); setState('error') }
+        }
+      }, [costService])
+      // Single setTimeout recursion + visibilitychange pause + AbortController:
+      // stale in-flight responses are ignored; unmount and config changes do a
+      // triple cleanup (alive flag, clearTimeout, listener removal).
+      const refreshRef = useRef(refresh)
+      refreshRef.current = refresh
+      useEffect(() => {
+        if (!cfg.enabled || !costService?.statsSince || cfg.refreshMs <= 0) return
+        let alive = true
+        let timer = null
+        let controller = null
+        const schedule = () => {
+          if (!alive || (typeof document !== 'undefined' && document.hidden)) return
+          timer = setTimeout(async () => {
+            timer = null
+            if (!alive) return
+            controller?.abort()
+            controller = new AbortController()
+            await refreshRef.current(controller.signal)
+            if (alive) schedule()
+          }, cfg.refreshMs)
+        }
+        const onVis = () => {
+          if (!alive || typeof document === 'undefined') return
+          if (document.hidden) {
+            if (timer) { clearTimeout(timer); timer = null }
+            if (controller) { controller.abort(); controller = null }
+          } else if (!timer) schedule()
+        }
+        schedule()
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis)
+        return () => {
+          alive = false
+          if (timer) clearTimeout(timer)
+          if (controller) controller.abort()
+          if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis)
+        }
+      }, [cfg.enabled, cfg.refreshMs, costService])
+      useEffect(() => {
+        if (!cfg.enabled || !costService?.statsSince) return
+        let alive = true
+        const controller = new AbortController()
+        void (async () => {
+          await refresh(controller.signal)
+          if (!alive) controller.abort()
+        })()
+        return () => { alive = false; controller.abort() }
+      }, [cfg.enabled, costService, refresh])
+      const doClear = useCallback(async () => {
+        setConfirmClear(false)
+        if (confirmTimer.current) { clearTimeout(confirmTimer.current); confirmTimer.current = null }
+        if (!costService?.clearStats) { setNotice(t('costPill.error')); return }
+        const controller = new AbortController()
+        try {
+          const res = await costService.clearStats(controller.signal)
+          if (controller.signal.aborted) return
+          const cleared = res && res.ok === true && obj(res.value).ok === true
+          setNotice(cleared ? fmt(t, 'costPill.cleared', { since: str(obj(res.value).since) || '—' }) : t('costPill.error'))
+          if (cleared) await refresh(controller.signal)
+        } catch {
+          if (!controller.signal.aborted) setNotice(t('costPill.error'))
+        }
+      }, [costService, refresh, t])
+      // t may be the raw-key fallback when the slot locale seat is absent;
+      // fmt() already degrades to the key so no component throws.
+      const wide = cfg.position === 'input.dock'
+      const amount = Number(summary?.estimatedCostUsd)
+      const amountText = Number.isFinite(amount) ? amount.toFixed(2) : '—'
+      const sinceText = str(summary?.since)
+        ? fmt(t, 'costPill.since', { since: str(summary.since) })
+        : t('costPill.noSince')
+      const noticeTimer = useRef(null)
+      useEffect(() => {
+        if (!notice) return
+        if (noticeTimer.current) clearTimeout(noticeTimer.current)
+        noticeTimer.current = setTimeout(() => setNotice(null), 3000)
+        return () => { if (noticeTimer.current) clearTimeout(noticeTimer.current) }
+      }, [notice])
+      return h(wide ? S.costPill.dock : S.costPill.bar, { 'data-slot': 'smart-provider.cost-pill' },
+        h('span', { style: S.costPill.label }, t('costPill.monitor')),
+        h('span', { style: S.costPill.amount, title: sinceText },
+          state === 'loading' ? '…' : amountText, ' USD'),
+        h('span', { style: S.costPill.muted }, sinceText),
+        h('button', { type: 'button', style: S.costPill.btn(false, false), onClick: () => { void refresh() } }, t('costPill.refreshNow')),
+        h('button', {
+          type: 'button', style: S.costPill.btn(confirmClear, true), title: t('costPill.clearNote'),
+          onClick: () => { if (confirmClear) void doClear(); else armClear() },
+        }, confirmClear ? t('costPill.clearConfirm') : t('costPill.clear')),
+        confirmClear ? h('span', { style: S.costPill.err }, t('costPill.clearNote')) : null,
+        state === 'error' ? h('span', { style: S.costPill.err }, t('costPill.error')) : null,
+        notice ? h('span', { style: S.costPill.muted }, notice) : null,
+      )
+    }
+
     function SmartSettingsSection({ t, form, remote, llm: injectedLlm, session: injectedSession, settings: injectedSettings, smartProvider, costService: propCostService, mountDiag, close }) {
       const [tab, setTab] = useState('overview')
       const [working, setWorking] = useState(false)
@@ -2898,6 +3089,8 @@ window.__ModuleLoader__.load({
       'costPill.since': '统计起点：{since}', 'costPill.noSince': '统计起点：全部历史',
       'costPill.clear': '从现在重新统计', 'costPill.clearConfirm': '只设置新统计起点，不删除成本账本。确定继续？',
       'costPill.cleared': '新的统计起点：{since}',
+      'costPill.clearNote': '只重置显示起点，历史账本保留，健康证据不受影响。',
+      'costPill.error': '暂无法读取或更新统计数据，请稍后重试。',
     }
     const en = {
       nav: 'Smart provider',
@@ -3082,6 +3275,8 @@ window.__ModuleLoader__.load({
       'costPill.since': 'Statistics start: {since}', 'costPill.noSince': 'Statistics start: all history',
       'costPill.clear': 'Restart statistics from now', 'costPill.clearConfirm': 'This only sets a new start marker; the cost ledger is never deleted. Continue?',
       'costPill.cleared': 'New statistics start: {since}',
+      'costPill.clearNote': 'This only resets the display start marker. The full ledger is kept and health evidence is unaffected.',
+      'costPill.error': 'Statistics could not be read or updated. Please retry shortly.',
     }
 
     return {
@@ -3152,6 +3347,47 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
           name: 'settings.section.icon', id: 'smart-provider', locale: NS,
         }, SmartSectionIcon))
+
+        // CF-3: register the pill into exactly one configured conversation slot.
+        // The callback re-runs on slot declaration changes; a form subscription
+        // tears down the old registration when enabled/position/monitor changes.
+        for (const slotName of COST_PILL_SLOTS) {
+          ctx.slots.inject(slotName, () => {
+            const form = (() => { try { return ctx.configForms.get(ENTRY) } catch { return undefined } })()
+            const readCfg = () => {
+              let config = {}
+              try { config = obj(obj(form?.getSnapshot?.()).value) } catch { config = {} }
+              return {
+                enabled: costPillEnabledOf(config),
+                position: costPillPositionOf(config[COST_PILL_POSITION_KEY]),
+                refreshMs: costPillRefreshMsOf(config[COST_PILL_REFRESH_KEY]),
+              }
+            }
+            let off = undefined // disposer returned by slots.register()
+            let previous = readCfg()
+            const apply = () => {
+              const next = readCfg()
+              const wanted = next.enabled ? next.position : null
+              const current = previous.enabled ? previous.position : null
+              if (wanted === current && next.refreshMs === previous.refreshMs) return
+              try { off?.() } catch {}
+              off = undefined
+              if (wanted === slotName) {
+                off = ctx.slots.register({
+                  name: slotName, id: 'smart-provider.cost-pill', order: 100, locale: NS, inject: injected,
+                }, CostPill)
+              }
+              previous = next
+            }
+            apply()
+            let unsubscribe
+            try { unsubscribe = form?.subscribe?.(apply) } catch { unsubscribe = undefined }
+            return () => {
+              try { unsubscribe?.() } catch {}
+              try { off?.() } catch {}
+            }
+          })
+        }
       },
     }
   },

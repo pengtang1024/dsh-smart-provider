@@ -28,6 +28,8 @@
     "noSince": "Statistics start: all history",
     "clear": "Restart statistics from now",
     "clearConfirm": "This only sets a new start marker; the cost ledger is never deleted. Continue?",
-    "cleared": "New statistics start: {since}"
+    "clearNote": "This only resets the display start marker. The full ledger is kept and health evidence is unaffected.",
+    "cleared": "New statistics start: {since}",
+    "error": "Statistics could not be read or updated. Please retry shortly."
   }
 }
