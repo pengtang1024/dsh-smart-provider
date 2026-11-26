@@ -1816,9 +1816,18 @@ window.__ModuleLoader__.load({
     }
     // 免费标签白话文案：只认 freeSignal.level，不按模型名/档位猜。
     // none 或没有标签一律「暂无数据」，弱信号绝不写成「已确认免费」。
+    // measured 再按证据来源加短后缀：价格表声明（不是调用实测）/ 探测 / 账单。
+    // 未知来源退回基础文案；weak / declared / none 三档文案保持不变。
+    const FREE_MEASURED_SOURCE_KEY = {
+      price: 'health.freeMeasuredPrice',
+      probe: 'health.freeMeasuredProbe',
+      billing: 'health.freeMeasuredBilling',
+    }
     const freeTagText = (t, tag) => {
       if (!tag || tag.free !== true) return t('health.freeNone')
-      if (str(tag.level) === 'measured') return t('health.freeMeasured')
+      if (str(tag.level) === 'measured') {
+        return t(FREE_MEASURED_SOURCE_KEY[str(tag.source)] || 'health.freeMeasured')
+      }
       if (str(tag.level) === 'declared') return t('health.freeDeclared')
       if (str(tag.level) === 'weak') return t('health.freeWeak')
       return t('health.freeNone')
@@ -2768,7 +2777,9 @@ window.__ModuleLoader__.load({
       'health.coolRemain': '剩余冷却', 'health.streak': '连续失败', 'health.samples': '成功 / 失败',
       'health.implicit': '（自动派生）', 'health.model': '模型', 'health.tier': '计费档',
       'health.billing': '资费', 'health.billingHint': '免费标签分实测 / 声明 / 未实测；零样本显示「暂无数据」，不会把弱信号说成已确认。',
-      'health.freeMeasured': '已确认免费', 'health.freeDeclared': '声明免费（倍率 0）',
+      'health.freeMeasured': '已确认免费', 'health.freeMeasuredPrice': '已确认免费·价格表',
+      'health.freeMeasuredProbe': '已确认免费·探测', 'health.freeMeasuredBilling': '已确认免费·账单',
+      'health.freeDeclared': '声明免费（倍率 0）',
       'health.freeWeak': '可能免费（未实测）', 'health.freeNone': '暂无数据',
       'health.confidence': '可信度', 'health.routesTitle': '各模型路由健康',
       'health.accountsTitle': '账号池状态',
@@ -2941,7 +2952,9 @@ window.__ModuleLoader__.load({
       'health.coolRemain': 'Cooldown left', 'health.streak': 'Fail streak', 'health.samples': 'Success / failure',
       'health.implicit': '(auto-derived)', 'health.model': 'Model', 'health.tier': 'Billing tier',
       'health.billing': 'Pricing', 'health.billingHint': 'Free labels are measured / declared / untested; zero samples read \"No data yet\" and weak signals are never called confirmed.',
-      'health.freeMeasured': 'Confirmed free', 'health.freeDeclared': 'Declared free (multiplier 0)',
+      'health.freeMeasured': 'Confirmed free', 'health.freeMeasuredPrice': 'Confirmed free (price table)',
+      'health.freeMeasuredProbe': 'Confirmed free (probe)', 'health.freeMeasuredBilling': 'Confirmed free (billing)',
+      'health.freeDeclared': 'Declared free (multiplier 0)',
       'health.freeWeak': 'Possibly free (untested)', 'health.freeNone': 'No data yet',
       'health.confidence': 'Confidence', 'health.routesTitle': 'Per-model route health',
       'health.accountsTitle': 'Account pool state',
