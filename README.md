@@ -90,7 +90,7 @@ dsh-smart-provider/
 │   ├── ranking.test.mjs      路由排序回归测试（纯逻辑，--unit 白名单）
 │   ├── remote-surface.test.mjs @Remote 路由面契约回归测试（9 条纯逻辑，--unit 白名单）
 │   └── routing-tier.test.mjs tier 选择 / relax 诊断 / 手填标签回归测试（task-7，14 条纯逻辑，--unit 白名单）
-│                             共 20 个测试文件 / 291 条断言（全量）；--unit 白名单 15 个测试文件 / 244 条（纯逻辑）
+│                             共 24 个测试文件 / 318 条断言（全量）；--unit 白名单 17 个测试文件 / 260 条（纯逻辑）
 ├── locale/{en,zh}.json       插件显示元数据
 ├── docs/DETAIL.md            插件管理器详情页
 ├── icon.svg                  原创图标
@@ -230,7 +230,7 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 ### L1 —— 免费/付费的证据等级
 
-不靠模型名猜。**用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」已实现为弱信号 / 用户声明默认值（free-signal-v1，未实测）**：名字含 `free`、`priceMultiplier=0`（或 `costModel=free` / `priceTier=free`）即「默认免费（未实测）」：只用于候选收录 / 筛选 / 排序代理与显示「可能免费（未实测）」，等级为 `weak` / `declared`，**不写 L1 billingTier=FREE**；可被真实付费证据（probe `metered`、账本正成本、付费 billingSource、真实正价）推翻。`probeVerdict=unknown` 不阻断弱信号；估算零价（`estimated:true`）不是证据；只有有限数值 `0` 算倍率零。真凭实据的强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。设置页账号行的「价格倍率」可直接修改（留空 / 非法值按 1，`0` = 声明免费）；当前部分路由 probe 多为 `unknown` 的根因尚在验证，不据此宣称任何模型一定免费。免费标签分实测 / 声明 / 未实测三档；账号倍率 0 属声明级，可被实测付费证据推翻。
+不靠模型名猜。**用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」已实现为弱信号 / 用户声明默认值（free-signal-v1，未实测）**：名字含 `free`、`priceMultiplier=0`（或 `costModel=free` / `priceTier=free`）即「默认免费（未实测）」：只用于候选收录 / 筛选 / 排序代理与显示「可能免费（未实测）」，等级为 `weak` / `declared`，**不写 L1 billingTier=FREE**；可被真实付费证据（probe `metered`、账本正成本、付费 billingSource、真实正价）推翻。`probeVerdict=unknown` 不阻断弱信号；估算零价（`estimated:true`）不是证据；只有有限数值 `0` 算倍率零。真凭实据的强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。设置页账号行的「价格倍率」可直接修改（留空 / 非法值按 1，`0` = 声明免费）；当前部分路由 probe 多为 `unknown` 的根因尚在验证，不据此宣称任何模型一定免费。免费标签分实测 / 声明 / 未实测三档；实测档按来源显示「已确认免费·价格表 / ·探测 / ·账单」后缀，且按 `(provider, modelId)` 元组取证据（同名模型不跨 provider 串标）；账号倍率 0 属声明级，可被实测付费证据推翻。
 
 ### L2 —— 半开恢复，而不是时间到点自动复活
 
@@ -318,6 +318,7 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 - **删除二次确认**：删链路组 / 跳次 / 账号，第一次点击变成确认按钮，3 秒不确认自动回退。
 - **加载 / 空 / 错三态分家**：加载中、真的没有数据、通道出错各有各的文案与颜色，不拿空表冒充「没有数据」。
 - **诊断折叠**：`form` / `state` / 错误码这类内部串收进默认折叠的「诊断」，只有失败时默认展开。
+- **对话页预估总额 pill（2.4.0）**：三个 volatile 配置项 `costPillEnabled`（默认 `false`，只有显式 `true` 才显示）、`costPillPosition`（默认 `input.right`；可选 `conversation.session.header.utilities` 会话标题栏工具区 / `conversation.input.dock` 输入框上方条目；非法值回落默认）、`costPillRefreshMs`（默认 60000 毫秒，最小 1000 毫秒）。显示的是 `@Remote` 真账 `statsSince()` 的两位小数美元累计值与当前统计起点；「立即刷新」按钮常驻，定时刷新只在配置了间隔后运行且页面不可见时暂停。详见 §六末「对话页预估总额 pill」。
 - **账号字段可编辑且不丢未知字段**：`speedTier` / `priceTier` / `costModel` / `quotaCost` / `priority` 直接在账号行里改（取值来自 `lib/ranking.js` 的 `ACCOUNT_RANKING_FIELDS`，与 Host 同源）；`quotaCost` 只在 `costModel=subscription` 时写入；整行按「展开原对象再覆盖」重建，用户手写的其他键原样保留。
 - **`credentialRef` 可输入**（只写引用名，绝不写明文 key；留空表示用 DSH 已登录账号），模型选择器支持关键字搜索 / 只看免费 / 全选。
 - **不完整行不再静默丢弃**：账号行缺 `id` 或缺 `provider` 会被标红并拦住整次保存，而不是被 `filter` 掉还提示「已保存」。
@@ -336,6 +337,18 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 | 半开待验证 | 冷却到期，等一次真实请求证明自己 | 警告色（**不是红**）|
 
 **诚实约定**：零样本一律显示「暂无数据」，绝不显示「不可用」，也绝不因为"没有坏消息"就涂成绿色；未知值一律退中性灰。健康层被关闭时（`health: false` / `health.enabled: false` / `ranking.health.enabled: false`）面板直接说「健康层当前是关闭的」，不假装正常、不拿空表冒充健康；通道本身不可用时显示诊断行，把失败原因摊开而不是静默留白。刷新方式是**快照时间 + 手动「重新读取」按钮**，刻意不用 `setInterval` 倒计时 —— 定时器在设置页反复挂载/卸载时会泄漏。
+
+### 对话页预估总额 pill（2.4.0）
+
+设置页（`costPillEnabled` 等字段）配置的是对话页的累计估算成本显示，默认关闭：只有显式 `"costPillEnabled": true` 才挂载，读的是 `@Remote` 的 `smartProvider.statsSince()` 真账汇总（`cost.jsonl`，按统计起点过滤），显示两位小数美元金额与当前起点；读取失败显示错误行，不拿估算占位冒充真账。
+
+| 配置字段 | 默认值 | 取值 / 说明 |
+|---|---|---|
+| `costPillEnabled` | `false` | 显式 `true` 才显示；volatile，即时生效 |
+| `costPillPosition` | `input.right` | 挂载点三档：`input.right`（输入框右侧紧凑位）、`conversation.session.header.utilities`（会话标题栏工具区）、`conversation.input.dock`（输入框上方条目）；非法值回落默认档 |
+| `costPillRefreshMs` | `60000` | 定时刷新间隔，最小 1000 毫秒；**定时监控默认关**（初装不轮询），手动「立即刷新」按钮常驻；页面不可见时暂停并中止在途请求，回到前台再续 |
+
+**「从现在重新统计」的清理语义**：先二次确认（「只设置新统计起点，不删除成本账本。确定继续？」），确认后 `smartProvider.clearStats()` 只在 `cost.jsonl` 旁的 `stats-state.json` 写入新的 `since` / `clearedAt`，**账本文件逐字节不变**，健康证据也不受影响；pill 与「花费与健康」页的累计数从新起点重新计数，历史行仍在磁盘上。它不删除、不回滚任何账本数据。
 
 ## 七、两层智能路由 routing（P2，默认启用 + 中立等权）
 
@@ -529,16 +542,16 @@ FAIL: 1 file(s) under test/ are never executed by the full gate:
 Rename it to <name>.test.mjs (or move it out of test/) so it actually runs.
 ```
 
-`--unit` 是一个**纯逻辑白名单**（当前 15 个测试文件：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config` / `free-policy`），其余需要 DSH runtime 的测试文件会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
+`--unit` 是一个**纯逻辑白名单**（当前 17 个测试文件：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config` / `free-policy` / `free-ui-chain` / `stats-host`），其余需要 DSH runtime 的测试文件会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
 
 ```bash
 # 1) 一条命令跑完整验证门槛（语法检查 + 全部自动发现的测试，自动选运行时）
 npm test
-# => 发现 20 个测试文件；语法检查逐文件 ok；tests 291 / pass 291 / fail 0（2026-11-26 实测，退出码 0）
+# => 发现 24 个测试文件；语法检查逐文件 ok；tests 318 / pass 318 / fail 0（2026-11-26 实测，退出码 0）
 
 # 2) 只跑纯逻辑子集（15 个测试文件，任何 Node 都行，无需 DSH；会打印未覆盖的文件）
 npm run test:unit
-# => 15 个测试文件，tests 244 / pass 244 / fail 0（2026-11-26 实测，退出码 0）
+# => 17 个测试文件，tests 260 / pass 260 / fail 0（2026-11-26 实测，退出码 0）
 
 # 3) 不带 npm 时等价写法（全量就是发现出来的那批文件）
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/*.test.mjs
@@ -551,17 +564,21 @@ node -e 'const p=require("./lib/pricing.json"); if(p._rows!==p.entries.length)th
 #    退出码：0 —— 完整冒烟 PASS
 ```
 
-**2.3.0 的两套门禁口径（2026-11-26 实测，两条命令退出码均为 0）**：
+**2.4.0 的两套门禁口径（2026-11-26 实测）**：
 
 ```bash
 # 纯逻辑子集：任何 Node 都行，不需要 DSH runtime
 env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit
-# => 15 个测试文件 / tests 244 / pass 244 / fail 0
+# => 17 个测试文件 / tests 260 / pass 260 / fail 0，退出码 0
+#    （补 CHANGELOG 标题前为 259/1，唯一 fail 是 FX3-5 版本号一致性）
 
 # 全量：必须用 Electron 的 Node（@deepseek-ai/* 在 app.asar 内部）
 DSH_NODE_EXECUTABLE="/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT" node scripts/run-tests.mjs
-# => 20 个测试文件 / tests 291 / pass 291 / fail 0
+# => 24 个测试文件 / tests 318 / pass 318 / fail 0，退出码 0
+#    （补 CHANGELOG 标题前为 317/1，同一条 FX3-5）
 ```
+
+FX3-5 是 `test/free-ui-chain.test.mjs` 的三处版本一致性门禁（package.json / `client.js` 的 `PLUGIN_VERSION` / CHANGELOG 标题），不是功能回归；收口文档落盘前红、落盘后绿，两轮均已实测。相对 2.3.x，本次新增注册了 `free-ui-chain` 与 `stats-host` 两套纯逻辑测试，另有 `free-signal-tuple` / `free-exact-price` 等套件随全量发现执行；准确清单以运行时输出为准。
 
 此前两套门禁并发跑会出现偶发假红：`--unit` 里的探针 TTL 用例用 5ms TTL 卡「刚写完还算新鲜」的边界，与 `appendFile` 的落盘排队竞速（verifier 复现 25 次跑 2 次红）。该用例已改为**注入时钟**推进 —— TTL 判定是纯 `probedAt + ttl > Date.now()` 比较，用例内把 `Date.now` 换成可控值并在 `finally` 还原，过期靠推进时钟而不是睡眠，语义不变、不再依赖真实时序。并发跑也不会再假红；仍建议串行，便于读数对账。
 
@@ -608,6 +625,9 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 - HMR 的监听列表可能为空（日志 `watching []`）：此时**源码改动不会自动重载**，需要触发一次 profile 重组合（改配置 / 重装）或重启，宿主才会跑新代码。安装新组合包本身会立即触发重组合，不需要重启。
 - 最小 profile 里没有 `sessions` 服务，因此没有 `hop-selected` 会话记录；该记录依赖 `sessions`，属可选降级（账本中的 `account_id` 仍然完整）。
 - 配置页显示的 provider / model 数量随用户 DSH 实时注册表变化，文档不写死。
+- **对话页 pill 默认不显示（2.4.0）**：`costPillEnabled` 默认 `false`，定时监控默认关；只有显式开启并配置 `costPillRefreshMs` 才轮询。它显示的是按统计起点过滤的**估算**累计成本（公开标价口径，不是 provider 真实账单），金额两位小数；`input.right` 之外的挂载点依赖宿主提供的对话页插槽，插槽不可用时不要假设 pill 一定出现。
+- **「从现在重新统计」不是清账（2.4.0）**：`clearStats()` 只写 `stats-state.json` 的统计起点，`cost.jsonl` 与既有健康证据都不动；历史花费仍在磁盘上，只是不再计入显示金额。不要把它当作隐私清除或账单删除功能。
+- **免费标签的「已确认免费」现在带来源后缀（2.4.0）**：价格表声明显示 `已确认免费·价格表`，探测显示 `已确认免费·探测`，账本显示 `已确认免费·账单`；弱信号仍是「可能免费（未实测）」。免费标签按 `(provider, modelId)` 元组取证据，不再让同名模型跨 provider 串标；probe 多为 `unknown` 的根因仍未定论。
 - **`yaml` 依赖的探测链（无写死家目录）**：`registry/registry-lib.mjs` 只在 DSH profile 里找 `yaml`，按 `DSH_HOME` → `HOME` → `os.homedir()` 的优先级组候选锚点（三者都指向**当前用户**，重复项去重后逐个尝试）。全部失败时抛错并列出试过的每个锚点，提示用 `DSH_HOME` 指安装根；**不再**回退到任何写死的他人家目录。该文件没有独立测试文件，因此这条改动靠全量门禁的语法检查 + 本机三种环境（普通 `HOME`、`env -u HOME -u DSH_HOME`、显式 `DSH_HOME`）的加载冒烟来守。
 - **仓库目录移动后插件不加载（link 指向旧路径）**：profile 里用 `link:` 装本包时记录的是安装当时的绝对路径，仓库被移动 / 改名 / 重新克隆后这条 link 仍指向旧目录 —— 表现为设置页分区消失、插件状态不是 ACTIVE、日志里找不到 `plugin:dsh-smart-provider` 而是加载失败。修法：在 profile 上重新 link 到新路径（`dsh plugin --profile <p> add link:<新路径>`，或编辑 profile 清单里那条 link 指向），然后**重启 App**（或触发一次 profile 重组合）让宿主重新解析。注意 HMR 也救不了这种情况：监听的是旧路径。
 
@@ -615,7 +635,7 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 ## English summary (secondary)
 
-`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources, visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (291 full-suite / 244 pure-logic assertions across 20 / 15 suites, measured 2026-11-26, exit 0), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
+`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources, visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (318 full-suite / 260 pure-logic assertions across 24 / 17 suites, measured 2026-11-26, exit 0; 1 expected FX3-5 version-consistency failure in each before the CHANGELOG heading landed, green after the doc fix), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
 
 ---
 

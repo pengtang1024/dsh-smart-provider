@@ -2,6 +2,30 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.4.0
+
+本轮为 RC1 收口版本，由 `2.3.1` 升级到 `2.4.0`（含新功能，按语义化版本 minor 递增）：一部分是 2.3.x 免费判据遗留的三处串标 / 假免费修复，另一部分是新增的对话页可配置预估总额 pill。未实现的能力（例如让 probe 在所有路由上都能给出确定结论）不在本版承诺内。
+
+### 修复（免费标签链路）
+
+- **跨 provider 串标：`workbuddy/hy4flash-free` 显示 `已确认免费`**：`availabilityStatus()` 曾按裸 modelId 取「全 provider 最强」的免费标签，于是 `x-opencode-free/hy4-flash-free` 那条真实零价声明被安到了 workbuddy 的同名模型上。现在 Host 侧逐 `(provider, modelId)` 元组投影，顶层仍保留全 provider 最强标签供老客户端读取；客户端 `strongestFreeTag()` 按元组查 `providers[provider]`，只在当前元组内取最强档，老 Profile 没有 providers 映射时仍走顶层标签的兼容分支。弱信号不会被别人的实测证据抬成「已确认免费」。
+- **`unavailable` 声明模型的零价行进入免费证据**：注册表中标为 `status: unavailable` 的条目（促销 badge id `hy4-flash-free-trial-202611`、顶层搜索插件 `web-search-free` 等，不是可调用的模型）此前会被生成成零价声明行，让判据误报 `measured` 免费。现在默认价格表 `lib/pricing.json` 只保留确有可用调用的声明免费模型（`hy4-flash-free` / `hy4flash-free`），生成侧与回归测试共同拦截 `unavailable` 重新入库；这些名字仍可保留「可能免费（未实测）」的弱信号，但不算价格表实测声明。
+- **「已确认免费」不说明证据来源**：实测档标签现在按 `freeSignal.source` 加一句短后缀 —— 价格表声明 `已确认免费·价格表`、探测 `已确认免费·探测`、账本 `已确认免费·账单`；未知来源回落到基础文案 `已确认免费`。`weak` / `declared` / `none` 三档文案不变，不把价格表声明伪装成调用实测。
+
+### 新增（对话页预估总额 pill）
+
+- **可配置挂载点**：`costPillEnabled: false`（默认关闭，只有显式 `true` 才显示）、`costPillPosition: 'input.right'`（默认；另可选 `conversation.session.header.utilities` 会话标题栏工具区、`conversation.input.dock` 输入框上方条目；非法值回落默认档）、`costPillRefreshMs: 60000`（默认 60 秒，最小 1000 毫秒）。三个键都是 volatile，设置页改完即时生效、无需重启。pill 读 `@Remote` 的 `statsSince()` 真账汇总，显示两位小数美元金额与当前统计起点；`clearStats()` 用于「从现在重新统计」。
+- **手动刷新常驻，定时监控默认关**：「立即刷新」按钮一直在；定时刷新只在显式配置了刷新间隔后运行，页面不可见时暂停（`visibilitychange` 清掉定时器并中止在途请求，回到前台再续），卸载时清理，避免后台空转与定时器泄漏。读取失败显示错误行，不拿估算占位冒充真账。
+- **清理只写统计起点，不删账本**：「从现在重新统计」先二次确认，确认后 `clearStats()` 只在 `stats-state.json` 写新的 `since` / `clearedAt`，`cost.jsonl` 逐字节不变；随之显示的累计金额从新起点重新计数，历史账本与健康证据不受影响。这不是「清空账本」，也没有回滚或删除能力。
+
+### 验证（2026-11-26 实测，含文档收口前的一次预期红）
+
+写本段之前两套门禁各有一条 **预期失败**：`FX3-5` 校验版本号三处一致，而本文档尚无 `## 2.4.0` 标题（`package.json` / `client.js` 已是 2.4.0）。文档补齐后复跑已全绿：
+
+- `env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit`：**17 个测试文件 / 260 条，pass 260 / fail 0，退出码 0**（补文档前 259/1，唯一 fail 是 FX3-5）。
+- `DSH_NODE_EXECUTABLE='/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT' node scripts/run-tests.mjs`：**24 个测试文件 / 318 条，pass 318 / fail 0，退出码 0**（补文档前 317/1，同一条 FX3-5）。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.4.0`。
+
 ## 2.3.1
 
 修复版本（`2.3.0` → `2.3.1`）。用户反馈「重启没变化 / UI 没改完」：2.3.0 已承诺的免费链路只接了一半 —— Host 的实测/声明免费标签在 UI 合并时被丢掉、账号倍率没进入三处判据、健康面板没有资费列、价格倍率输入框埋在两层折叠里。本版把这些已承诺但未接通的链路补完，不是新能力、没有新增配置字段；健康面板「资费」列只是接通既有声明，属修复非 feat。
