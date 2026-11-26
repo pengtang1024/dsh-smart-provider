@@ -1906,64 +1906,77 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         if (!Number.isFinite(n)) return '—'
         return digits ? n.toFixed(digits) : String(Math.round(n))
       }
-      const columns = ['time', 'model', 'tokens', 'ttft', 'tps', 'cost', 'status']
-      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
-        // ① 逐笔明细
-        h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, fmt(t, 'cost.detailTitle', { n: Number(detail.total || 0) })),
-          rows.length === 0
-            ? h('div', { style: S.muted }, t('cost.detailNone'))
-            : h('div', { style: { overflowX: 'auto' } },
-              h('table', { style: { ...S.table, minWidth: 720 } },
-                h('thead', null, h('tr', null, columns.map(k =>
-                  h('th', { key: k, style: S.th }, t(`cost.col.${k}`))))),
-                h('tbody', null, rows.map((r, i) => h('tr', { key: `${str(r?.requestId)}-${i}` },
-                  [str(r?.timestamp).replace('T', ' ').slice(0, 19),
-                   `${str(r?.provider)}/${str(r?.model)}`,
-                   `${Number(r?.inputTokens || 0)}+${Number(r?.outputTokens || 0)}`,
-                   numOrDash(r?.ttftMs),
-                   numOrDash(r?.tokensPerSecond, 1),
-                   `$${Number(r?.costUsd || 0).toFixed(6)}`,
-                   r?.failed ? t('cost.failed') : t('cost.ok'),
-                  ].map((v, j) => h('td', { key: j, style: S.td }, v)))),
-                ),
-              ),
-            ),
-          h('div', { style: { ...S.row, marginTop: 8 } },
-            h('button', { type: 'button', style: S.btn, disabled: page <= 0, onClick: () => setPage(p => Math.max(0, p - 1)) }, t('cost.prevPage')),
-            h('span', { style: S.muted }, ` ${page + 1} / ${pages} `),
-            h('button', { type: 'button', style: S.btn, disabled: page + 1 >= pages, onClick: () => setPage(p => p + 1) }, t('cost.nextPage')),
+      // 老账本行没有延迟字段：两列全缺时整组不渲染，避免一排无意义的破折号。
+      const hasLatency = rows.some(r => r?.ttftMs != null || r?.tokensPerSecond != null)
+      const columns = ['time', 'model', 'tokens', ...(hasLatency ? ['ttft', 'tps'] : []), 'cost', 'status']
+      const renderRows = list => h('div', { style: { overflowX: 'auto' } },
+        h('table', { style: { ...S.table, minWidth: hasLatency ? 720 : 540 } },
+          h('thead', null, h('tr', null, columns.map(k =>
+            h('th', { key: k, style: S.th }, t(`cost.col.${k}`))))),
+          h('tbody', null, list.map((r, i) => h('tr', { key: `${str(r?.requestId)}-${i}` },
+            [str(r?.timestamp).replace('T', ' ').slice(0, 19),
+             `${str(r?.provider)}/${str(r?.model)}`,
+             `${Number(r?.inputTokens || 0)}+${Number(r?.outputTokens || 0)}`,
+             ...(hasLatency ? [numOrDash(r?.ttftMs), numOrDash(r?.tokensPerSecond, 1)] : []),
+             `$${Number(r?.costUsd || 0).toFixed(6)}`,
+             r?.failed ? t('cost.failed') : t('cost.ok'),
+            ].map((v, j) => h('td', { key: j, style: S.td }, v)))),
           ),
         ),
-        // ② 时间趋势（纯 CSS 柱状图）
-        h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.timelineTitle')),
+      )
+      const topRows = rows.slice(0, 10)
+      const restRows = rows.slice(10)
+      const canExpand = restRows.length > 0 || pages > 1
+      const pager = h('div', { style: { ...S.row, marginTop: 8 } },
+        h('button', { type: 'button', style: S.btn, disabled: page <= 0, onClick: () => setPage(p => Math.max(0, p - 1)) }, t('cost.prevPage')),
+        h('span', { style: S.muted }, ` ${page + 1} / ${pages} `),
+        h('button', { type: 'button', style: S.btn, disabled: page + 1 >= pages, onClick: () => setPage(p => p + 1) }, t('cost.nextPage')),
+      )
+      const section = { borderTop: '1px solid var(--dsw-alias-border-l2)', paddingTop: 10 }
+      const subTitle = { style: { ...S.muted, fontSize: 12, marginBottom: 4 } }
+      return h('div', { style: { ...S.card, display: 'flex', flexDirection: 'column', gap: 10 } },
+        // ① 逐笔明细：首屏 Top 10，其余与分页一起收进二级折叠。
+        rows.length === 0
+          ? h('div', { style: S.muted }, t('cost.detailNone'))
+          : h('div', null,
+            renderRows(topRows),
+            canExpand
+              ? h('details', { style: { marginTop: 8 } },
+                h('summary', { style: { ...S.muted, cursor: 'pointer' } }, fmt(t, 'cost.expandAll', { n: restRows.length || rows.length })),
+                restRows.length ? h('div', { style: { marginTop: 8 } }, renderRows(restRows)) : null,
+                pager,
+              )
+              : null,
+          ),
+        // ② 时间趋势（纯 CSS 柱状图，压低高度）
+        h('div', { style: section },
+          h('div', subTitle, t('cost.timelineTitle')),
           timeline.length === 0
             ? h('div', { style: S.muted }, t('cost.detailNone'))
-            : h('div', { style: { display: 'flex', alignItems: 'flex-end', gap: 10, minHeight: 90 } },
+            : h('div', { style: { display: 'flex', alignItems: 'flex-end', gap: 10, minHeight: 48 } },
               timeline.map(b => h('div', { key: str(b?.day), style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 } },
                 h('div', { style: { ...S.muted, fontSize: 11 } }, String(Number(b?.calls) || 0)),
-                h('div', { style: { width: '100%', height: `${Math.max(4, Math.round((Number(b?.calls) || 0) / maxCalls * 60))}px`, background: 'var(--dsw-alias-brand-primary-new-colorprimary-new-color)', borderRadius: 'var(--dsw-radius-sm)' } }),
+                h('div', { style: { width: '100%', height: `${Math.max(4, Math.round((Number(b?.calls) || 0) / maxCalls * 36))}px`, background: 'var(--dsw-alias-brand-primary-new-colorprimary-new-color)', borderRadius: 'var(--dsw-radius-sm)' } }),
                 h('div', { style: { ...S.muted, fontSize: 11 } }, str(b?.day).slice(5)),
               )),
             ),
         ),
-        // ③ 按模型/提供商分组
-        h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.byModelTitle')),
+        // ③ 按模型/提供商分组：只列分项，金额不在这里重复汇总。
+        h('div', { style: section },
+          h('div', subTitle, t('cost.byModelTitle')),
           byModel.length === 0
             ? h('div', { style: S.muted }, t('cost.detailNone'))
-            : byModel.map(g => h('div', { key: `${str(g?.provider)}/${str(g?.model)}`, style: { padding: '4px 0', borderBottom: '1px solid var(--dsw-alias-border-l2)' } },
+            : byModel.map(g => h('div', { key: `${str(g?.provider)}/${str(g?.model)}`, style: { padding: '3px 0' } },
               h(KV, { k: `${str(g?.provider)}/${str(g?.model)}`, v: fmt(t, 'cost.byModelValue', { calls: Number(g?.calls) || 0, cost: Number(g?.costUsd || 0).toFixed(6) }) })),
             ),
         ),
         // ④ 节省账本（诚实标注，绝不编数字）
-        h('div', { style: S.card },
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('cost.savingsTitle')),
-          h('div', { style: { ...S.muted, marginBottom: 8, color: 'var(--dsw-alias-state-warn-label)' } }, t('cost.savingsNotice')),
+        h('div', { style: section },
+          h('div', subTitle, t('cost.savingsTitle')),
+          h('div', { style: { ...S.muted, color: 'var(--dsw-alias-state-warn-label)' } }, t('cost.savingsNotice')),
           savingModels.length === 0
             ? h('div', { style: S.muted }, t('cost.noComparable'))
-            : savingModels.map(m => h('div', { key: str(m?.model), style: { padding: '4px 0' } },
+            : savingModels.map(m => h('div', { key: str(m?.model), style: { padding: '3px 0' } },
               h(KV, { k: fmt(t, 'cost.savingsModel', { model: str(m?.model) }), v: m?.known && Number.isFinite(Number(m?.estimatedUsd))
                 ? fmt(t, 'cost.savingsValue', { usd: `$${Number(m.estimatedUsd).toFixed(2)}` })
                 : t('cost.noComparable') })),
@@ -2184,23 +2197,26 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         // 健康层开着但确实没有数据 —— 绝不写成「不可用」。
         body = h('div', { style: S.muted }, t('health.empty'))
       } else {
-        body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
-          h('div', null,
-            h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.accountsTitle')),
-            h('div', { style: { ...S.muted, marginBottom: 6 } }, t('health.billingHint')),
+        // 常显只留摘要行；明细表整体折叠。关闭 / 有异常时默认展开，不让问题藏起来。
+        const coolingCount = accounts.filter(a => ['COOLING', 'HALF_OPEN'].includes(str(a?.state).toUpperCase())).length
+        const degradedCount = routes.filter(r => ['DEGRADED', 'DEPRECATED'].includes(str(r?.health).toUpperCase())).length
+        const abnormal = snap.enabled === false || coolingCount > 0 || degradedCount > 0
+        const summaryStyle = { color: abnormal ? HEALTH_WARN_COLOR : HEALTH_NEUTRAL_COLOR, fontSize: 12 }
+        const tableBlock = { marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--dsw-alias-border-l2)' }
+        body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+          h('div', { style: { ...S.muted, marginBottom: 6 } }, t('health.billingHint')),
+          h('details', { style: S.card, open: abnormal },
+            h('summary', { style: { cursor: 'pointer', fontWeight: 500, color: coolingCount > 0 ? HEALTH_WARN_COLOR : undefined } },
+              fmt(t, 'health.accountSummary', { n: accounts.length, k: coolingCount })),
             accounts.length === 0
-              ? h('div', { style: S.muted }, t('health.empty'))
-              : h('div', { style: { overflowX: 'auto' } },
-                h('table', { style: { ...S.table, minWidth: 640 } },
+              ? h('div', { style: { ...S.muted, marginTop: 8 } }, t('health.empty'))
+              : h('div', { style: tableBlock, overflowX: 'auto' },
+                h('table', { style: { ...S.table, minWidth: 560 } },
                 h('thead', null, h('tr', null,
                   h('th', { style: S.th, scope: 'col' }, t('health.id')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.provider')),
                   h('th', { style: S.th, scope: 'col' }, t('health.state')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.coolRemain')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.streak')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.usage')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
                   h('th', { style: S.th, scope: 'col' }, t('health.billing')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
                 )),
                 h('tbody', null, accounts.map((a, i) => {
                   const row = obj(a)
@@ -2210,64 +2226,67 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                   const cooling = state === 'COOLING' || state === 'HALF_OPEN'
                   const remain = cooling ? remainNow(row) : 0
                   const fullId = str(row.id)
-                  return h('tr', { key: `a:${fullId || i}` },
+                  const detail = [
+                    t('health.provider') + ': ' + (str(row.provider) || '—'),
+                    models.length ? fmt(t, 'health.accountModels', { models: models.join(' · ') }) : null,
+                    cooling && remain > 0 ? fmt(t, 'health.accountRemain', { remain: fmtDuration(t, remain) }) : null,
+                    reason ? `${t('health.coolReason')}: ${reason}` : null,
+                    `${t('health.streak')}: ${Number(row.streak) || 0}`,
+                    `${t('health.usage')}: ${Number(row.usage) || 0}`,
+                    fmt(t, 'health.lastSeen', {
+                      ok: row.lastSuccessAt === null || row.lastSuccessAt === undefined ? t('health.never') : fmtClock(row.lastSuccessAt),
+                      fail: row.lastFailureAt === null || row.lastFailureAt === undefined ? t('health.never') : fmtClock(row.lastFailureAt),
+                    }),
+                  ].filter(Boolean).join(' · ')
+                  return h('tr', { key: `a:${fullId || i}`, title: detail },
                     h('td', { style: idCell },
                       h('div', { title: fullId || undefined },
                         displayId(fullId) || '—',
                         row.implicit === true ? h('span', { style: implicitBadge }, t('health.implicit')) : null,
                       ),
-                      h('div', { style: S.muted }, fmt(t, 'health.lastSeen', {
-                        ok: row.lastSuccessAt === null || row.lastSuccessAt === undefined ? t('health.never') : fmtClock(row.lastSuccessAt),
-                        fail: row.lastFailureAt === null || row.lastFailureAt === undefined ? t('health.never') : fmtClock(row.lastFailureAt),
-                      })),
+                      h('div', { style: S.muted }, str(row.provider) || '—'),
                     ),
                     h('td', { style: S.td },
-                      h('div', null, str(row.provider) || '—'),
-                      models.length ? h('div', { style: S.muted }, models.join(' · ')) : null,
+                      h('div', null,
+                        h('span', { style: { color: accountStateColor(row.state), fontWeight: 500 } }, accountStateText(t, row.state)),
+                        cooling && remain > 0 ? h('span', { style: { ...summaryStyle, marginLeft: 6 } }, fmtDuration(t, remain)) : null,
+                      ),
                     ),
-                    h('td', { style: S.td },
-                      h('span', { style: { color: accountStateColor(row.state), fontWeight: 500 } }, accountStateText(t, row.state)),
-                      reason ? h('div', { style: S.muted }, `${t('health.coolReason')}: ${reason}`) : null,
-                    ),
-                    h('td', { style: S.td }, cooling && remain > 0 ? fmtDuration(t, remain) : '—'),
-                    h('td', { style: S.td }, String(Number(row.streak) || 0)),
-                    h('td', { style: S.td }, String(Number(row.usage) || 0)),
-                    h('td', { style: S.td }, samplesText(t, row.samples)),
                     h('td', { style: S.td }, freeTagText(t, freeForAccount(row))),
+                    h('td', { style: S.td }, samplesText(t, row.samples)),
                   )
                 })),
                 ),
               ),
           ),
-          h('div', null,
-            h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.routesTitle')),
-            h('div', { style: { ...S.muted, marginBottom: 6 } }, t('health.billingHint')),
+          h('details', { style: S.card, open: abnormal },
+            h('summary', { style: { cursor: 'pointer', fontWeight: 500, color: degradedCount > 0 ? HEALTH_WARN_COLOR : undefined } },
+              fmt(t, 'health.routeSummary', { m: routes.length, j: degradedCount })),
             routes.length === 0
-              ? h('div', { style: S.muted }, t('health.empty'))
-              : h('div', { style: { overflowX: 'auto' } },
-                h('table', { style: { ...S.table, minWidth: 560 } },
+              ? h('div', { style: { ...S.muted, marginTop: 8 } }, t('health.empty'))
+              : h('div', { style: tableBlock, overflowX: 'auto' },
+                h('table', { style: { ...S.table, minWidth: 480 } },
                 h('thead', null, h('tr', null,
                   h('th', { style: S.th, scope: 'col' }, t('health.provider')),
                   h('th', { style: S.th, scope: 'col' }, t('health.model')),
                   h('th', { style: S.th, scope: 'col' }, t('health.health')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.tier')),
                   h('th', { style: S.th, scope: 'col' }, t('health.billing')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.confidence')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
                 )),
                 h('tbody', null, routes.map((r, i) => {
                   const row = obj(r)
                   const conf = Number(row.confidence)
-                  return h('tr', { key: `r:${str(row.provider)}::${str(row.modelId)}:${i}` },
+                  const detail = [
+                    t('health.tier') + ': ' + tierText(t, row.tier),
+                    `${t('health.confidence')}: ${confText(t, conf)}${Number.isFinite(conf) ? ' (' + conf.toFixed(2) + ')' : ''}`,
+                    `${t('health.samples')}: ${samplesText(t, row.samples)}`,
+                  ].join(' · ')
+                  return h('tr', { key: `r:${str(row.provider)}::${str(row.modelId)}:${i}`, title: detail },
                     h('td', { style: S.td }, str(row.provider) || '—'),
                     h('td', { style: S.td }, str(row.modelId) || '—'),
                     h('td', { style: S.td },
                       h('span', { style: { color: routeHealthColor(row.health), fontWeight: 500 } }, routeHealthText(t, row.health)),
                     ),
-                    h('td', { style: S.td }, tierText(t, row.tier)),
                     h('td', { style: S.td }, freeTagText(t, freeForRoute(row))),
-                    h('td', { style: S.td }, confText(t, conf), Number.isFinite(conf) ? h('div', { style: S.muted, title: `${t('health.confidence')}: ${conf.toFixed(2)}` }, conf.toFixed(2)) : null),
-                    h('td', { style: S.td }, samplesText(t, row.samples)),
                   )
                 })),
                 ),
@@ -2421,11 +2440,16 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         ),
         // 概览卡：2 位小数总花费 / 调用总数 / 节省金额 + 刷新
         h('div', { style: S.card },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 } },
-            h('span', { style: { fontWeight: 600 } }, t('cost.overviewTitle')),
-            h('button', { type: 'button', style: S.btn, onClick: refresh }, t('action.refresh')),
+          h('button', { type: 'button', style: { ...S.muted, cursor: 'pointer', fontFamily: 'inherit', padding: 0, border: 'none', background: 'none', marginBottom: 6 }, onClick: refresh }, t('action.refresh') + ' ↻'),
+          h('div', { style: S.muted },
+            costState.status === 'loading' && !hasSnapCost
+              ? t('cost.loading')
+              : (costState.status === 'error' && !hasSnapCost
+                ? fmt(t, 'cost.loadFailed', { reason: str(costState.reason) || '?' })
+                : fmt(t, 'cost.overviewLine', {
+                  total: `$${totalUsd.toFixed(2)}`, n: records, savings: savingsValue,
+                })),
           ),
-          overview,
         ),
         // 逐笔明细 / 趋势 / 按模型 / 节省账本 全部收进「详细数据」折叠；
         // 失败时默认展开，让错误当场可见。
@@ -3135,16 +3159,15 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'routing.positionExplain': '每台模型的定位由自身能力自动推导（如是否支持推理、图片、长上下文）；个别模型可另外手填。当前页面不读取逐台模型的定位结果。',
       'routing.rulesTitle': '任务怎么识别（只读）',
       'cost.title': '花费与健康',
-      'cost.plainExplain': '这里显示智能路由的累计花费。花费数据由后台记账，设置页只显示它拿到的真实数字，不会编造。',
-      'cost.estimated': '累计估算成本 (USD)', 'cost.records': '成本记录数',
-      'cost.freePaid': '成功调用', 'cost.freePaidValue': '免费 {free} 次 · 付费 {paid} 次',
+      'cost.plainExplain': '花费来自后台真实记账，这里只显示真实数字。',
       'cost.noChannel': '当前设置页还没有拿到成本数据通道，暂时无法显示真实花费（后台可能已有记录）。下面诊断信息可帮助定位。',
       'cost.detailLoading': '正在读取明细…',
-      'cost.detailTitle': '逐笔调用明细（共 {n} 笔，最近的在前）',
+      'cost.detailTitle': '逐笔明细（共 {n} 笔，最近的在前）',
       'cost.detailEmpty': '暂无明细数据',
-      'cost.overviewTitle': '概览', 'cost.savings': '节省金额',
+      'cost.expandAll': '展开全部 {n} 笔',
+      'cost.overviewLine': '${total} · {n} 笔 · 节省 {savings}',
       'cost.loading': '正在读取花费…', 'cost.loadFailed': '读取花费失败：{reason}',
-      'cost.detailBlock': '详细数据（逐笔明细 / 趋势 / 按模型 / 节省账本，共 {n} 条记录）',
+      'cost.detailBlock': '详细数据（共 {n} 条记录）',
       'cost.detailNone': '还没有调用记录',
       'cost.detailFailed': '读取明细失败：{reason}',
       'cost.col.ttft': '首字(ms)', 'cost.col.tps': '速度(tok/s)',
@@ -3161,9 +3184,11 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'cost.savingsValue': '约 {usd}（估算）',
       'cost.noComparable': '无可比价',
       'health.title': '账号健康 / 冷却', 'health.id': '账号', 'health.provider': '路由',
+      'health.accountSummary': '账号池 {n} · 冷却 {k}', 'health.routeSummary': '路由 {m} · 降级 {j}',
+      'health.accountModels': '模型：{models}', 'health.accountRemain': '剩余冷却 {remain}',
       'health.health': '健康', 'health.coolReason': '冷却原因', 'health.usage': '尝试次数',
       'health.ok': '健康', 'health.cooling': '冷却中', 'health.empty': '暂无数据。',
-      'health.plainExplain': '数据来自后台实时注册表：只用真实发生过的情况说话。没有样本的一律显示「暂无数据」，不会显示成「不可用」，也不会假装它是健康的。',
+      'health.plainExplain': '数据来自后台实时注册表；无样本显示「暂无数据」，不假装健康。',
       'health.loading': '正在读取账号健康…',
       'health.noChannel': '当前设置页还没拿到账号健康数据通道，暂时无法显示真实状态（后台可能已有记录）。下面的诊断信息可帮助定位。',
       'health.disabledExplain': '健康层当前是关闭的：配置里 health:false、health.enabled:false 或 ranking.health.enabled:false 任意一处关掉都会停用。关闭期间不做健康判断，这里如实说明，不会假装一切正常。',
@@ -3328,16 +3353,15 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'routing.positionExplain': 'Each model position is derived from its own capabilities (reasoning, vision, long context); some can be declared manually. This page does not read per-model derived results.',
       'routing.rulesTitle': 'How tasks are recognized (read-only)',
       'cost.title': 'Cost & health',
-      'cost.plainExplain': 'Accumulated smart-routing cost is shown here. The settings page shows only real numbers from the Host ledger — never invented ones.',
-      'cost.estimated': 'Estimated cost (USD)', 'cost.records': 'Cost records',
-      'cost.freePaid': 'Successful calls', 'cost.freePaidValue': 'Free {free} · Paid {paid}',
+      'cost.plainExplain': 'Spend comes from the real Host ledger — no invented numbers.',
       'cost.noChannel': 'The settings page has no cost-data channel yet, so real spending cannot be shown (the Host may already have records). Diagnostics below help locate it.',
       'cost.detailLoading': 'Loading detail…',
       'cost.detailTitle': 'Per-call detail ({n} records, newest first)',
       'cost.detailEmpty': 'No detail data',
-      'cost.overviewTitle': 'Overview', 'cost.savings': 'Savings',
+      'cost.expandAll': 'Show all {n} calls',
+      'cost.overviewLine': '{total} · {n} calls · saved {savings}',
       'cost.loading': 'Reading spend…', 'cost.loadFailed': 'Could not read spend: {reason}',
-      'cost.detailBlock': 'Detailed data (per-call rows / trend / by model / savings ledger — {n} records)',
+      'cost.detailBlock': 'Detailed data ({n} records)',
       'cost.detailNone': 'No calls recorded yet',
       'cost.detailFailed': 'Could not read detail rows: {reason}',
       'cost.col.ttft': 'TTFT (ms)', 'cost.col.tps': 'Speed (tok/s)',
@@ -3354,9 +3378,11 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'cost.savingsValue': '~{usd} (estimated)',
       'cost.noComparable': 'No comparable price',
       'health.title': 'Account health / cooldown', 'health.id': 'Account', 'health.provider': 'Route',
+      'health.accountSummary': 'Accounts {n} · cooling {k}', 'health.routeSummary': 'Routes {m} · degraded {j}',
+      'health.accountModels': 'Models: {models}', 'health.accountRemain': 'Cooldown left {remain}',
       'health.health': 'Health', 'health.coolReason': 'Cool reason', 'health.usage': 'Attempts',
       'health.ok': 'Healthy', 'health.cooling': 'Cooling', 'health.empty': 'No data yet.',
-      'health.plainExplain': 'Data comes from the Host live registry and speaks only from real observations. Anything with zero samples reads "No data yet" — never "unavailable", and never a fake green.',
+      'health.plainExplain': 'From the live registry; zero samples read "No data yet" — never a fake green.',
       'health.loading': 'Reading account health…',
       'health.noChannel': 'The settings page has no account-health channel yet, so real state cannot be shown (the Host may already have records). Diagnostics below help locate it.',
       'health.disabledExplain': 'The health layer is switched off: any one of health:false, health.enabled:false or ranking.health.enabled:false disables it. While off, no health judgement is made — stated plainly here instead of pretending everything is fine.',
