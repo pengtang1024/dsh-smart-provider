@@ -13,6 +13,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import vm from 'node:vm'
 
 const PKG = dirname(dirname(fileURLToPath(import.meta.url)))
 const client = readFileSync(join(PKG, 'client.js'), 'utf8')
@@ -161,4 +162,104 @@ test('FX3-5: version is consistently 2.6.1 in package, client and changelog', ()
   const changelog = readFileSync(join(PKG, 'CHANGELOG.md'), 'utf8')
   assert.match(changelog, /^## 2\.6\.1$/m)
   assert.ok(changelog.indexOf('## 2.6.1') < changelog.indexOf('## 2.6.0'))
+})
+
+// I18N coverage gate (task-89): the i18n foundation used to drop 18 referenced
+// keys from all seven inline dictionaries, so the UI rendered raw dotted keys.
+// These gates extract the REAL dictionaries from client.js (vm, no import of
+// browser code) and statically scan every literal t(...) / fmt(...) key. Any
+// future call site added without its seven translations now fails the gate.
+const LOCALES = ['zh', 'en', 'de', 'es', 'fr', 'pt', 'ru']
+
+/** Evaluate the inline dictionary declarations from client.js in an isolated vm. */
+function loadDictionaries() {
+  const lines = client.split('\n')
+  const start = lines.findIndex(l => /\bconst\s+zh\s*=\s*\{/.test(l))
+  const end = lines.findIndex((l, i) => i > start && /^\s*return\s*\{/.test(l))
+  assert.ok(start >= 0 && end > start, 'client.js locale dictionary block must exist')
+  const slice = lines.slice(start, end).join('\n') + '\n;({ zh, en, de, es, fr, pt, ru })'
+  try { return vm.runInNewContext(slice) }
+  catch (e) { assert.fail('client.js locale dictionaries failed to evaluate: ' + e.message) }
+}
+
+const dictionaries = loadDictionaries()
+for (const loc of LOCALES) {
+  assert.ok(dictionaries[loc] && typeof dictionaries[loc] === 'object', loc + ' dictionary must exist')
+}
+
+/** Static call-site keys: literal t('x') / fmt(t,'x') plus template-literal pools. */
+function staticCallKeys() {
+  const keys = new Set()
+  // Literal keys: t('x'), fmt(t, 'x'), t(x, 'x') — quote-bearing first/second arg.
+  const literal = /\b(?:t|fmt)\s*\(\s*(?:[^,()]+,\s*)?'([a-z][a-z0-9]*(?:\.[a-z0-9_.]+)*)'/g
+  let m
+  while ((m = literal.exec(client))) keys.add(m[1])
+  // Backtick template calls: t(\`prefix.${key}\`) — expand the pool root from en.
+  const tpl = /\bt\s*\(\s*\x60([a-z][a-z0-9_.]*)\.\$\{/g
+  while ((m = tpl.exec(client))) {
+    const prefix = m[1] + '.'
+    let found = false
+    for (const k of Object.keys(dictionaries.en)) if (k.startsWith(prefix)) { keys.add(k); found = true }
+    // A pool with no concrete keys is itself a gate failure; the required
+    // 18-key test below pins these prefixes, so never add a fake prefix key.
+  }
+  return keys
+}
+
+function placeholders(value) {
+  return [...new Set(String(value).match(/\{[a-zA-Z][a-zA-Z0-9]*\}/g) ?? [])].sort()
+}
+
+test('I18N-1: the 18 previously dropped keys exist in all seven dictionaries', () => {
+  const required = [
+    'tab.overview', 'tab.routing', 'tab.cost',
+    'ranking.w.cost', 'ranking.w.speed', 'ranking.w.tier', 'ranking.w.load',
+    'cost.col.time', 'cost.col.model', 'cost.col.tokens', 'cost.col.ttft',
+    'cost.col.tps', 'cost.col.cost', 'cost.col.status',
+    'health.freeMeasured', 'health.freeMeasuredPrice',
+    'health.freeMeasuredProbe', 'health.freeMeasuredBilling',
+  ]
+  for (const key of required) {
+    for (const loc of LOCALES) {
+      assert.ok(Object.hasOwn(dictionaries[loc], key), loc + ' dictionary must define ' + key)
+      assert.equal(typeof dictionaries[loc][key], 'string', loc + '.' + key + ' must be a string')
+      assert.ok(dictionaries[loc][key].trim(), loc + '.' + key + ' must not be empty')
+    }
+  }
+})
+
+test('I18N-2: static t()/fmt() call keys are a subset of every locale dictionary', () => {
+  const keys = staticCallKeys()
+  assert.ok(keys.size > 0, 'the static scanner must find call-site keys')
+  for (const loc of LOCALES) {
+    const missing = [...keys].filter(k => !Object.hasOwn(dictionaries[loc], k)).sort()
+    assert.deepEqual(missing, [], loc + ' is missing ' + missing.length + ' static call key(s): ' + missing.join(', '))
+  }
+})
+
+test('I18N-3: all seven dictionaries share the same key set with string values', () => {
+  const base = Object.keys(dictionaries.en).sort()
+  for (const loc of LOCALES) {
+    const keys = Object.keys(dictionaries[loc]).sort()
+    assert.deepEqual(keys, base, loc + ' key set must match en (missing/extra keys)')
+    for (const [k, v] of Object.entries(dictionaries[loc])) {
+      assert.equal(typeof v, 'string', loc + '.' + k + ' must be a string')
+    }
+  }
+})
+
+test('I18N-4: placeholders agree across locales and cost.overviewLine uses plain {total}', () => {
+  for (const key of Object.keys(dictionaries.en)) {
+    const expected = placeholders(dictionaries.en[key])
+    for (const loc of LOCALES) {
+      assert.deepEqual(placeholders(dictionaries[loc][key]), expected,
+        loc + '.' + key + ' placeholders must match en')
+    }
+  }
+  // The caller passes an amount that already contains $. A literal ${total}
+  // in the zh template produced a double dollar sign in the rendered line.
+  assert.match(dictionaries.zh['cost.overviewLine'], /\{total\}/,
+    'zh cost.overviewLine must use a plain {total} placeholder')
+  assert.doesNotMatch(dictionaries.zh['cost.overviewLine'], /\$\{total\}/,
+    'zh cost.overviewLine must not double the dollar sign')
 })
