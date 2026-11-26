@@ -930,8 +930,23 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         h('div', { style: S.hero },
           h('div', { style: S.heroTitle }, heroTitle),
           h('div', { style: S.heroText }, heroExplain),
-          h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, t('hero.configuredHint')),
-          h('div', { style: { ...S.muted, color: 'var(--dsw-alias-label-tertiary)', marginTop: 2 } }, `v${PLUGIN_VERSION}`),
+          h('div', { style: { ...S.muted, marginTop: 2 } },
+            `v${PLUGIN_VERSION} · `,
+            h('a', {
+              href: 'https://github.com/pengtang1024/dsh-smart-provider',
+              target: '_blank', rel: 'noopener noreferrer',
+              style: { ...S.muted, textDecoration: 'none' },
+            }, '⭐ ' + t('star.link')),
+          ),
+          // 事实与健康摘要并入同一张 hero：一行配置事实 + 一行可点击健康摘要，
+          // 不再让 KV 卡与提示行卡各占一屏。数字仍只来自 configForms/真实快照。
+          h('div', { style: { ...S.heroText, marginTop: 2 } },
+            fmt(t, 'overview.factLine', { chains: Object.keys(chains).length, accounts, strategy: rankingOn ? strategyName : t('status.builtinDefault') }),
+          ),
+          h('button', {
+            type: 'button', onClick: () => onOpenCost?.(),
+            style: { ...S.muted, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0, border: 'none', background: 'none' },
+          }, `${healthText} ›`),
         ),
         // ② 首屏主操作：先让用户"选择怎么选"，紧贴状态条，不再被模型大卡挡在下面。
         h('div', { style: S.card },
@@ -950,27 +965,21 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           // ③ 点击反馈就近可见：{ok,msg} 结构化状态，成功绿、失败红（不靠文案猜颜色）。
           presetNotice ? h('div', { style: { ...(presetNotice.ok ? S.ok : S.err), marginTop: 8 } }, presetNotice.msg) : null,
         ),
-        // ④ 一屏事实卡：链路数 / 账号数 / 择优是否用户自定义。
-        h('div', { style: S.card },
-          h(KV, { k: t('status.chains'), v: Object.keys(chains).length }),
-          h(KV, { k: t('status.accounts'), v: accounts }),
-          h(KV, { k: t('status.strategyEnabled'), v: rankingOn ? t('status.yes') : t('status.no') }),
-        ),
-        // ⑤ 一行健康提示：有真实快照才报数字，读不到就明说读不到；点击去「花费与健康」。
-        h('button', {
-          type: 'button', onClick: () => onOpenCost?.(),
-          style: {
-            ...S.card, cursor: 'pointer', width: '100%', textAlign: 'left',
-            fontFamily: 'inherit', fontSize: 12, color: 'var(--dsw-alias-label-secondary)',
-          },
-        }, healthText),
-        // ⑥ 已识别模型：整卡默认折叠，标题带数量；pill 列表、探测按钮与长说明都留在里面，
-        //    首屏不再出现长 pill 列表和一大段模型说明。
+        // 已识别模型：计数摘要 + 展开。首屏只有数量与可见的探测按钮，
+        //    pill 墙、长说明与诊断都收进 details（信息不丢，但不占首屏）。
         h('details', { style: S.card },
-          h('summary', { style: { cursor: 'pointer', fontWeight: 500 } },
+          h('summary', { style: { cursor: 'pointer', fontWeight: 500, listStyle: 'none', display: 'flex', alignItems: 'center', gap: 8 } },
             piLoaded
               ? fmt(t, 'pi.availableN', { models: modelCount, providers: providerCount })
-              : t('pi.available')),
+              : t('pi.available'),
+            fmt(t, 'pi.freeCount', { n: maybeFreeModels.length }),
+            probeEnabled && maybeFreeModels.length > 0
+              ? h('button', {
+                type: 'button', style: { ...S.btn },
+                onClick: e => { e.preventDefault(); onProbe?.(maybeFreeModels, true) },
+              }, t('pi.probeBtn'))
+              : null,
+          ),
           h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 } },
             !piLoaded
               ? h('div', { style: S.muted }, t('pi.loading'))
@@ -994,11 +1003,11 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                     : null,
                   // task-106 二次分区：① "可能免费"区（宽松判据，零样本也进，
                   // 标资费未确认）；② 其余已登记模型折叠区。不挡任何模型。
-                  h('div', { style: { ...S.muted, marginTop: 6 } },
-                    h('div', { style: { marginBottom: 4 } }, t('pi.maybeFree')),
-                    maybeFreeModels.length > 0
-                      ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-                        maybeFreeModels.map(m => {
+                  h('details', { style: { marginTop: 6 } },
+                    h('summary', { style: { cursor: 'pointer', fontSize: 12 } }, t('pi.maybeFree')),
+                    h('div', { style: { marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                      maybeFreeModels.length > 0
+                        ? maybeFreeModels.map(m => {
                           const id = str(m?.id ?? m)
                           const st = statusOf(id)
                           const tagged = freeTagOf(obj(tupleScope(availProjection, id, str(m?.group)))[id])
@@ -1015,15 +1024,8 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                           return h('span', { key: id, style: S.pill(st.key === 'healthy') },
                             `${str(m?.name) || id} · ${label} · ${dataLabel}`)
                         })
-                      )
-                      : h('div', { style: S.muted }, t('pi.noMaybeFree')),
-                    // task-107: 手动重探入口（自动探测默认已开，此为强制重探 force）。
-                    probeEnabled && maybeFreeModels.length > 0
-                      ? h('button', {
-                        type: 'button', style: { ...S.btn, marginTop: 6 },
-                        onClick: () => onProbe?.(maybeFreeModels, true),
-                      }, t('pi.probeBtn'))
-                      : null,
+                        : h('div', { style: S.muted }, t('pi.noMaybeFree')),
+                    ),
                     h('div', { style: { ...S.muted, marginTop: 4, fontSize: 11 } }, t('pi.freeModelsHint')),
                     // 其余已登记模型：折叠，不丢（"能发现"仍成立）。
                     otherModels.length > 0
@@ -1078,8 +1080,12 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       }, [mutate, revision, t])
       const parsedMs = Number(draftMs)
       const validMs = parsedMs === 0 || (Number.isFinite(parsedMs) && parsedMs >= 1000)
-      return h('div', { style: S.card },
-        h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('costPill.cardTitle')),
+      const refreshLabel = refreshMs === 0 ? t('costPill.autoRefresh') + ': off' : `${refreshMs} ms`
+      return h('details', { style: S.card },
+        h('summary', { style: { cursor: 'pointer', fontWeight: 500 } },
+          `${t('costPill.cardTitle')} · ${enabled ? t('status.yes') : t('status.no')} · ${t('costPill.position')}: ${t('costPill.pos.' + position)} · ${refreshLabel}`,
+        ),
+        h('div', { style: { marginTop: 8 } },
         h('div', { style: { ...S.muted, marginBottom: 8 } }, t('costPill.cardHelp')),
         h(Field, { label: t('costPill.enabled'), help: t('costPill.enabledHelp') },
           h('input', {
@@ -1104,6 +1110,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         ),
         !validMs ? h('div', { style: { ...S.err, marginLeft: 96 } }, t('costPill.refreshInvalid')) : null,
         notice ? h('div', { style: { ...(notice.ok ? S.ok : S.err), marginTop: 6 } }, notice.msg) : null,
+        ),
       )
     }
 
@@ -1262,11 +1269,11 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
             h('button', { type: 'button', style: S.primary, onClick: save }, t('action.save')),
           ),
         ),
-        h('div', { style: { ...S.muted, fontSize: 11 } }, t('chains.clearHint')),
+        // 清空提示与空态合并成一行短句；折叠只改 DOM，不碰 groups/dirty/stableSig。
+        h('div', { style: { ...S.muted, fontSize: 11 } }, usingDefault ? t('chains.hintShort') : t('chains.clearHint')),
         msg && msg.detail ? h(DiagDetails, { t, lines: [`save: ${msg.detail}`], failed: true }) : null,
-        // 诚实空态：没配链路时显示的是内置默认顺序，绝不冒充"你的配置"。
-        usingDefault ? h('div', { style: { ...S.muted, lineHeight: '18px' } }, t('chains.emptyHint')) : null,
-        ...groups.map((g, gi) => h('div', { key: gi, style: S.card },
+        // 默认只展开第一组，其余收进「其他链路（N）」；groups 状态与顺序完全不变。
+        ...groups.slice(0, 1).map((g, gi) => h('div', { key: gi, style: S.card },
           h('div', { style: S.row },
             h('span', { style: S.label }, t('chains.modelLabel')),
             select(modelOpts, g.model,
@@ -1297,6 +1304,48 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           }, t('action.addHop')),
           rowErrors[gi] ? h('div', { style: S.err }, rowErrors[gi]) : null,
         )),
+        groups.length > 1
+          ? h('details', { style: S.card },
+            h('summary', { style: { cursor: 'pointer', fontWeight: 500 } },
+              fmt(t, 'chains.otherGroups', { n: groups.length - 1 })),
+            h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 } },
+              groups.slice(1).map((g, offset) => {
+                const gi = offset + 1
+                return h('div', { key: gi, style: { borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8 } },
+                  h('div', { style: S.row },
+                    h('span', { style: S.label }, t('chains.modelLabel')),
+                    select(modelOpts, g.model,
+                      v => update(gi, x => ({ ...x, model: v })), t('chains.modelLabel')),
+                    confirmKey === `g${gi}`
+                      ? h('button', {
+                        type: 'button', style: { ...S.btn, color: 'var(--dsw-alias-state-error-primary)' },
+                        onClick: () => { setConfirmKey(null); deleteGroup(gi) },
+                      }, t('action.confirmDelete'))
+                      : h('button', { type: 'button', style: S.btn, onClick: () => arm(`g${gi}`) }, t('action.delete')),
+                  ),
+                  ...g.hops.map((hop, hi) => h('div', { key: hi, style: S.step },
+                    h('span', { style: S.stepNum }, String(hi + 1)),
+                    select(provOpts, hop.provider, v => update(gi, x => ({ ...x, hops: x.hops.map((h, i) => i === hi ? { ...h, provider: v } : h) })), t('field.provider')),
+                    select(modelOpts, hop.model, v => update(gi, x => ({ ...x, hops: x.hops.map((h, i) => i === hi ? { ...h, model: v } : h) })), t('field.model')),
+                    h('button', { type: 'button', style: S.btn, onClick: () => moveHop(gi, hi, -1) }, '↑'),
+                    h('button', { type: 'button', style: S.btn, onClick: () => moveHop(gi, hi, 1) }, '↓'),
+                    confirmKey === `h${gi}-${hi}`
+                      ? h('button', {
+                        type: 'button', style: { ...S.btn, color: 'var(--dsw-alias-state-error-primary)' },
+                        onClick: () => { setConfirmKey(null); deleteHop(gi, hi) },
+                      }, t('action.confirmDelete'))
+                      : h('button', { type: 'button', style: S.btn, onClick: () => arm(`h${gi}-${hi}`) }, '×'),
+                  )),
+                  h('button', {
+                    type: 'button', style: S.btn,
+                    onClick: () => update(gi, x => ({ ...x, hops: [...x.hops, { provider: provOpts[0]?.v, model: modelOpts[0]?.v }] })),
+                  }, t('action.addHop')),
+                  rowErrors[gi] ? h('div', { style: S.err }, rowErrors[gi]) : null,
+                )
+              }),
+            ),
+          )
+          : null,
         h('div', { style: S.row },
           h('button', {
             type: 'button', style: S.btn,
@@ -1650,14 +1699,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         setMsg({ ok, msg: ok ? t('action.saved') : t('error.saveFailed'), detail: ok ? '' : str(r?.detail) })
       }
 
-      // 只有用户真的写入过 ranking 才高亮某个预设；缺省不高亮，
-      // 避免"没配却显示均衡已选中"的假象。复用上面的 configuredRanking。
-      const strategy = Object.keys(configuredRanking).length > 0 ? (str(configuredRanking.strategy) || '') : ''
-      const choices = [
-        { id: 'balanced', title: t('preset.balanced'), sub: t('preset.balancedSub') },
-        { id: 'cost-first', title: t('preset.cost'), sub: t('preset.costSub') },
-        { id: 'speed-first', title: t('preset.speed'), sub: t('preset.speedSub') },
-      ]
+      // 预设按钮只在总览保留一份；这里不再重复 t('preset.pick')。
       const accountCountLine = accountState.status === 'loading'
         ? h('div', { style: { ...S.heroText, color: 'var(--dsw-alias-label-tertiary)' } }, t('accounts.countLoading'))
         : accountState.status === 'error'
@@ -1674,18 +1716,6 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           h('div', { style: S.heroTitle }, t('accounts.plainTitle')),
           h('div', { style: S.heroText }, t('accounts.plainExplain')),
           accountCountLine,
-        ),
-        h('div', null,
-          h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('preset.pick')),
-          h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
-            choices.map(c => h('button', {
-              key: c.id, type: 'button', disabled: !!working,
-              style: S.choiceBtn(strategy === c.id), onClick: () => applyPreset?.(c.id),
-            },
-              h('span', { style: S.choiceTitle }, c.title),
-              h('span', { style: S.choiceSub }, c.sub),
-            )),
-          ),
         ),
         // 卡片头：保存入口 + 未保存标记（Advanced 默认折叠也看得见）。
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', paddingBottom: 8 } },
@@ -3032,6 +3062,9 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'overview.healthLoading': '正在读取账号健康…',
       'overview.healthNoChannel': '读不到账号健康（没有数据通道）—— 点这里去「花费与健康」看诊断',
       'overview.healthLine': '账号 {accounts} 个 · 冷却中 {cooling} 个 —— 点这里查看账号健康',
+      'overview.factLine': '链路 {chains} · 账号 {accounts} · {strategy}',
+      'status.builtinDefault': '内置均衡默认',
+      'star.link': 'Star on GitHub',
       'pi.loading': '正在读取你已配置的模型…',
       'pi.empty': '暂时没读到已配置的模型，可在「设置 → 模型」页添加。',
       'pi.providers': '提供商数', 'pi.models': '可用模型数',
@@ -3039,6 +3072,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'pi.smartTag': 'Smart Gateway（智能路由，非独立模型提供商）',
       'pi.freeModels': '已登记模型（可用性如下，新加的会自动出现）：',
       'pi.maybeFree': '可能免费的模型（宽松收录，宁可多列不漏）：',
+      'pi.freeCount': '可能免费 {n} 个',
       'pi.probeBtn': '手动重探这些模型（已自动探过一次，强制刷新结果）',
       'pi.noMaybeFree': '当前未发现可能免费的模型',
       'pi.otherModels': '其他已登记模型 {n} 个（点开查看）',
@@ -3077,6 +3111,8 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'chains.clearCustom': '清空自定义（恢复自动发现）',
       'chains.clearConfirm': '确认清空？',
       'chains.clearHint': '清空后由系统自动发现可用模型，不再使用你手写的顺序。',
+      'chains.hintShort': '未配置链路时使用内置默认顺序；清空后恢复自动发现。',
+      'chains.otherGroups': '其他链路（{n}）',
       'chains.cleared': '已清空自定义链路，改回自动发现（无需重启）',
       'accounts.title': '账号池', 'accounts.hint': '密钥只存引用名（credentialRef），不在此显示明文。',
       'accounts.templateHint': '你还没配置账号池，系统会自动使用你在 DSH 里登录的账号直连。想加账号？点下面的"添加一个账号"，从下拉里选就行。',
@@ -3219,6 +3255,9 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'overview.healthLoading': 'Reading account health…',
       'overview.healthNoChannel': 'Account health unavailable (no data channel) — open Cost & health for diagnostics',
       'overview.healthLine': '{accounts} accounts · {cooling} cooling down — open account health',
+      'overview.factLine': '{chains} chains · {accounts} accounts · {strategy}',
+      'status.builtinDefault': 'built-in balanced default',
+      'star.link': 'Star on GitHub',
       'pi.loading': 'Reading your configured models…',
       'pi.empty': 'No configured models found yet — add one on Settings → Models.',
       'pi.providers': 'Providers', 'pi.models': 'Available models',
@@ -3226,6 +3265,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'pi.smartTag': 'Smart Gateway (smart routing, not a standalone model provider)',
       'pi.freeModels': 'Registered models (availability below; newly added appear automatically):',
       'pi.maybeFree': 'Possibly free models (broad match — better to over-list than miss):',
+      'pi.freeCount': '{n} possibly free',
       'pi.probeBtn': 'Re-probe these models (auto-checked once; force refresh)',
       'pi.noMaybeFree': 'No possibly-free models found',
       'pi.otherModels': 'Other registered models ({n}) — expand to view',
@@ -3264,6 +3304,8 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'chains.clearCustom': 'Clear custom chains (back to auto-discovery)',
       'chains.clearConfirm': 'Clear for sure?',
       'chains.clearHint': 'Clearing hands routing back to automatic discovery of your configured models.',
+      'chains.hintShort': 'No chains configured — built-in default order is used; clearing restores auto-discovery.',
+      'chains.otherGroups': 'Other chains ({n})',
       'chains.cleared': 'Custom chains cleared — automatic discovery is active again (no restart)',
       'accounts.title': 'Account pool', 'accounts.hint': 'Secrets stay as references (credentialRef); no plaintext is shown.',
       'accounts.templateHint': 'No account pool configured — the system uses your signed-in DSH accounts directly. To add one, tap "Add an account" and choose from the dropdown.',
