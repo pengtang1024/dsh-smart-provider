@@ -115,7 +115,8 @@ test('AX3: @Remote marker and method name stay frozen', () => {
   assert.notEqual(markerAt, -1, 'prototype marker must be unchanged')
   const marker = REMOTE_SRC.slice(markerAt)
   assert.match(marker, /method:\s*'availabilityStatus'/, 'availabilityStatus must stay visible on the wire')
-  assert.equal((marker.match(/method:\s*'/g) ?? []).length, 5, 'no extra @Remote method added')
+  // CF-1 adds statsSince/clearStats; the original five must stay visible.
+  assert.equal((marker.match(/method:\s*'/g) ?? []).length, 7, 'the seven declared @Remote methods must stay visible')
 })
 
 test('AX4: projectStatus display projection still merges by bare modelId', () => {

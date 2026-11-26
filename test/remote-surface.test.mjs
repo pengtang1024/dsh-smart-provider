@@ -34,7 +34,7 @@ const INDEX_SRC = readFileSync(join(PKG, 'index.js'), 'utf8')
 const CLIENT_SRC = readFileSync(join(PKG, 'client.js'), 'utf8')
 
 /** The frozen @Remote surface the client contribution declares. */
-const EXPECTED_METHODS = ['cost', 'costDetail', 'availabilityStatus', 'probeModels', 'accountHealth']
+const EXPECTED_METHODS = ['cost', 'costDetail', 'availabilityStatus', 'probeModels', 'accountHealth', 'statsSince', 'clearStats']
 
 // ---------------------------------------------------------------------------
 // Minimal JS-aware scanner. Regex counting is the trap this guard must avoid:
@@ -189,28 +189,37 @@ test('accountHealth() takes no parameters and forwards this.healthReader', () =>
   assert.match(body, /routes:\s*\[\]/)
 })
 
-test('constructor accepts healthReader as the sixth parameter', () => {
+test('constructor accepts all eight readers/writers in order', () => {
   const match = /constructor\s*\(([^)]*)\)\s*\{/.exec(REMOTE_SRC)
   assert.ok(match, 'SmartProviderRemote constructor not found')
-  const params = match[1].split(',').map(param => param.trim()).filter(Boolean)
-  assert.equal(params.length, 6, `expected 6 constructor parameters, got ${params.length}: ${params.join(', ')}`)
-  assert.equal(params[5], 'healthReader')
-  assert.match(REMOTE_SRC, /this\.healthReader\s*=\s*healthReader/, 'the reader must be stored for the method to read')
+  // Comments may precede the JSDoc block; strip them before counting params.
+  const raw = match[1]
+  const params = raw.replace(/\/\*[\s\S]*?\*\//g, '').split(',').map(param => param.trim()).filter(Boolean)
+  assert.deepEqual(params,
+    ['ctx', 'statsReader', 'costDir', 'registryReader', 'probeReader', 'healthReader', 'statsStateReader', 'statsStateWriter'],
+    'constructor must inject the stats-state reader/writer, not read the filesystem itself')
+  assert.match(REMOTE_SRC, /this\.healthReader\s*=\s*healthReader/, 'the health reader must be stored for the method to read')
+  assert.match(REMOTE_SRC, /this\.statsStateReader\s*=\s*statsStateReader/)
+  assert.match(REMOTE_SRC, /this\.statsStateWriter\s*=\s*statsStateWriter/)
 })
 
 // ---------------------------------------------------------------------------
-// The single construction site in index.js must pass all six arguments.
+// The single construction site in index.js must pass all eight arguments.
 // ---------------------------------------------------------------------------
 
-test('index.js constructs SmartProviderRemote exactly once with six arguments', () => {
+test('index.js constructs SmartProviderRemote exactly once with eight arguments', () => {
   const calls = constructionArgs(INDEX_SRC)
   assert.equal(calls.length, 1, `expected exactly one construction site, found ${calls.length}`)
   const args = calls[0]
-  assert.equal(args.length, 6, `expected 6 constructor arguments, got ${args.length}: ${args.join(' | ')}`)
+  assert.equal(args.length, 8, `expected 8 constructor arguments, got ${args.length}: ${args.join(' | ')}`)
   // Position 5 (0-based) is the health reader; it must be an identifier or
   // closure defined in this file, never an eagerly evaluated snapshot.
   assert.equal(args[5], 'healthReader', 'the sixth argument must be the lazy healthReader closure')
+  assert.equal(args[6], 'statsStateReader', 'the seventh argument must be the stats-state reader')
+  assert.equal(args[7], 'statsStateWriter', 'the eighth argument must be the stats-state writer')
   assert.match(INDEX_SRC, /const healthReader\s*=\s*\(\)\s*=>/, 'healthReader must be a lazily-invoked closure')
+  assert.match(INDEX_SRC, /const statsStateReader\s*=\s*\w+\s*=>/, 'statsStateReader must be a lazy closure')
+  assert.match(INDEX_SRC, /const statsStateWriter\s*=\s*\w+\s*=>/, 'statsStateWriter must be a lazy closure')
 })
 
 /** Body of a `const name = (...) => { … }` declaration, bracket-balanced. */

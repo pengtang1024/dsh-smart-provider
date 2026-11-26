@@ -22,6 +22,7 @@ import { hydrateHealthEvidence } from './lib/health-persistence.js' // task-6: c
 import { createProbe } from './lib/probe.js' // task-107: minimal real probe replaces name guessing
 import { buildHealthSnapshot } from './lib/health-snapshot.js' // frozen accountHealth() wire shape (pure)
 import { SmartProviderRemote, readCostStats } from './lib/remote.js'
+import { readStatsState, clearStatsState } from './lib/stats-state.js' // CF-1: statistics start marker (ledger is never truncated)
 import {
   normalizeRankingConfig, DEFAULT_RANKING_CONFIG, RANKING_STRATEGIES, RANKING_CONFIG_SCHEMA,
   ACCOUNT_RANKING_FIELDS, PRICE_FIELD_REGISTRY, PRICE_FALLBACKS, DEFAULT_TOKEN_MIX,
@@ -173,7 +174,9 @@ export function apply(ctx, config = Config({})) {
   // numbers directly — no invented empty state, no client-side JSONL parsing.
   // Read through the LIVE meter, so a hot costDir edit moves the reader with
   // the writer instead of leaving the settings page on the old ledger.
-  const statsReader = () => readCostStats(meter.dir)
+  // CF-1: `since` is an optional ISO/epoch cutoff. Passing undefined keeps the
+  // legacy call shape byte-for-byte; clearStats() stores the marker separately.
+  const statsReader = since => readCostStats(meter.dir, { since })
   // L5b: live availability registry reader — adapter is constructed below, so
   // read it lazily at call time. projectStatus() (L1 availability.js) merges
   // ledger + #recordHop session signals (workbuddy routes don't write cost.jsonl).
@@ -213,7 +216,15 @@ export function apply(ctx, config = Config({})) {
     })
   }
   // Kept as a handle: a cost* hot update repoints its ledger directory too.
-  const remote = new SmartProviderRemote(ctx, statsReader, dir, registryReader, () => adapter?.probe, healthReader)
+  // stats-state readers stay DIRECT here (never config/volatile-update): a
+  // statistics start is a user action, not a setting. They take the live
+  // meter.dir at call time so a costDir hot edit moves marker + ledger together.
+  const statsStateReader = stateDir => readStatsState(stateDir)
+  const statsStateWriter = stateDir => clearStatsState(stateDir)
+  const remote = new SmartProviderRemote(
+    ctx, statsReader, dir, registryReader, () => adapter?.probe, healthReader,
+    statsStateReader, statsStateWriter,
+  )
 
   // ranking is volatile: normalize defensively (Config({}) in tests yields
   // schemastery markers for volatile paths, so never trust the raw type).
