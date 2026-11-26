@@ -2299,6 +2299,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                     h('td', { style: S.td }, cooling && remain > 0 ? fmtDuration(t, remain) : '—'),
                     h('td', { style: S.td }, String(Number(row.streak) || 0)),
                     h('td', { style: S.td }, String(Number(row.usage) || 0)),
+                    h('td', { style: S.td }, freeTagText(t, freeForAccount(row))),
                     h('td', { style: S.td }, samplesText(t, row.samples)),
                   )
                 })),
