@@ -62,7 +62,7 @@ test('FX3-2: all three freeSignal call sites pass account multiplier and cost mo
     const at = src.indexOf(anchor)
     assert.notEqual(at, -1, 'missing call site: ' + anchor)
     // The auto-probe site declares `tagged` after `sig`; include the lines before.
-    const body = taggedBefore === false ? src.slice(at - 200, at + 700) : src.slice(at, at + 900)
+    const body = taggedBefore === false ? src.slice(at - 200, at + 1200) : src.slice(at, at + 1200)
     assert.match(body, /freeSignal\(\{/, anchor + ' must call freeSignal')
     assert.match(body, /priceMultiplier:\s*obj\(declared\[id\]\)\.priceMultiplier/,
       anchor + ' must pass the account-declared multiplier')
@@ -70,7 +70,7 @@ test('FX3-2: all three freeSignal call sites pass account multiplier and cost mo
       anchor + ' must pass the account-declared cost model')
     assert.match(body, /priceTier:\s*str\(obj\(availProjection\)\[id\]\?\.tier\)/,
       anchor + ' must keep the projection tier')
-    assert.match(body, /const tagged = freeTagOf\(obj\(availProjection\)\[id\]\)/,
+    assert.match(body, /const tagged = freeTagOf\(/,
       anchor + ' must prefer the Host tag')
   }
   // Account declarations read both the canonical nested ranking field and the

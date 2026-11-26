@@ -70,9 +70,12 @@ test('pricing table estimate is not a real price declaration', () => {
   assert.deepEqual({ free: r.free, level: r.level }, { free: false, level: 'none' })
 })
 
-test('availabilityStatus projection attaches exactly {free,level,source}|null', () => {
+test('availabilityStatus projection attaches exactly {free,level,source}|null per tuple', () => {
   const src = readFileSync(join(PKG, 'lib', 'remote.js'), 'utf8')
-  assert.match(src, /status\[modelId\]\.freeSignal\s*=\s*projectFreeSignal\(/)
+  assert.match(src, /status\[modelId\]\.freeSignal\s*=\s*best/,
+    'the top-level tag must come from the highest-evidence exact tuple')
+  assert.match(src, /status\[modelId\]\.providers\s*=\s*providers/,
+    'each (provider, modelId) tuple gets an independent providers map')
   assert.match(src, /return \{ free: signal\.free, level: signal\.level, source: signal\.source \}/,
     'the wire shape must not leak evidence to the strict codec'
   )
@@ -250,8 +253,9 @@ test('client strict codec availabilityStatus freeSignal tag matches host project
     }
     pos += 1
   }
-  assert.deepEqual(rowFields.sort(), ['confidence', 'freeSignal', 'health', 'tier'],
-    'the projected row codec must list exactly health/tier/confidence/freeSignal')
+  assert.deepEqual(rowFields.sort(), ['confidence', 'freeSignal', 'health', 'providers', 'tier'],
+    'the projected row codec must list health/tier/confidence/freeSignal/providers')
+  assert.match(rowBody, /providers:\s*z\.record\(z\.string\(\),\s*freeSignalCodec\)/, 'providers map must reuse the same three-field signal codec')
   assert.doesNotMatch(rowBody, /evidence/, 'evidence must NOT appear on the wire')
 
   const projAt = host.indexOf('function projectFreeSignal(')
@@ -273,8 +277,10 @@ test('client strict codec availabilityStatus freeSignal tag matches host project
   const availOpen = host.indexOf('{', availAt)
   const availClose = matchMirrorBracket(host, availOpen)
   const availBody = host.slice(availOpen, availClose + 1)
-  assert.match(availBody, /status\[modelId\]\.freeSignal\s*=\s*projectFreeSignal\(/,
-    'each projected row must carry the Host free signal')
+  assert.match(availBody, /status\[modelId\]\.freeSignal\s*=\s*best/,
+    'the projected row carries the strongest exact-tuple Host free signal')
+  assert.match(availBody, /status\[modelId\]\.providers\s*=\s*providers/,
+    'the projected row carries per-provider tuple free signals')
 })
 
 test('projectFreeSignal unwraps the lazy probeReader before peek (behavioral gate)', () => {
@@ -296,13 +302,13 @@ test('projectFreeSignal unwraps the lazy probeReader before peek (behavioral gat
     },
   }
   const lazyProbeReader = verdict => () => ({ peek: () => ({ verdict }) })
-  const taggedFree = project(registry, 'm1', lazyProbeReader('free'))
+  const taggedFree = project(registry, 'opencode-go', 'm1', lazyProbeReader('free'))
   assert.deepEqual(taggedFree, { free: true, level: 'measured', source: 'probe' },
     'a measured free verdict must reach the wire through the lazy reader')
-  const taggedMetered = project(registry, 'm1', lazyProbeReader('metered'))
+  const taggedMetered = project(registry, 'opencode-go', 'm1', lazyProbeReader('metered'))
   assert.deepEqual(taggedMetered, { free: false, level: 'none', source: 'probe' },
     'a measured metered verdict must beat weak signals on the wire')
-  const noProbe = project(registry, 'm1', undefined)
+  const noProbe = project(registry, 'opencode-go', 'm1', undefined)
   assert.deepEqual(noProbe, { free: false, level: 'none', source: 'none' },
     'without probe evidence nothing may claim free')
 })
