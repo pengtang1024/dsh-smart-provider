@@ -71,7 +71,7 @@ function classifier(input) {
 
 function projectSignal(registry, provider, model, priceLookup, verdict = 'unknown') {
   const body = functionBody('projectFreeSignal')
-  const fn = new Function('registry', 'provider', 'modelId', 'probeReader', 'priceFor', 'freeSignal',
+  const fn = new Function('registry', 'provider', 'modelId', 'probeReader', 'priceForExact', 'freeSignal',
     body + '\nreturn projectFreeSignal(registry, provider, modelId, probeReader)')
   return fn(registry, provider, model,
     () => ({ peek: (p, m) => ({ verdict: p === provider && m === model ? verdict : 'unknown' }) }),

@@ -81,7 +81,7 @@ test('availabilityStatus projection attaches exactly {free,level,source}|null pe
   )
   assert.match(src, /probeReader\?\.\(\)\?\.peek\?\./,
     'probeReader is a lazy closure from index.js; peek must be called on the unwrapped probe')
-  assert.match(src, /priceFor\(provider, modelId\)/)
+  assert.match(src, /priceForExact\(provider, modelId\)/)
   const methods = [...src.matchAll(/method:\s*'([^']+)'/g)].map(m => m[1])
   assert.deepEqual([...new Set(methods)].sort(),
     ['accountHealth', 'availabilityStatus', 'cost', 'costDetail', 'probeModels'])
