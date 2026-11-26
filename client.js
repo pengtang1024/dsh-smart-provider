@@ -31,6 +31,25 @@ window.__ModuleLoader__.load({
     // 故按本项目 STATIC_* 惯例内联）。改版本时两处都要更新。
     const PLUGIN_VERSION = '2.4.0'
 
+    // Generated custom-route candidate lists must live inside the factory:
+    // HMR re-evaluates the module, so top-level consts here would throw
+    // "Identifier 'CUSTOM_PROVIDERS' has already been declared" and take the
+    // whole settings/pill namespace down. The marker-delimited block below is
+    // the generator's canonical slot (see scripts/gen-custom-routes.mjs).
+    // >>> custom-routes:candidates >>>
+const CUSTOM_PROVIDERS = ["x-opencode-free"];
+const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-202611","web-search-free","cat-jam-free","longcat-2.5-preview-free","step-5-preview-free"];
+// BEGIN free-model availability (generated — task-77)
+// hy4-flash-free: available — upstream /models 200 + chat 200 content=2; E2E 3473 cost=0
+// hy4flash-free: available — workbuddy/hy4flash-free: host log request.complete/completed x140 and rising (2026-11-24); ledger does not record workbuddy route; opencode chat 400 was single-context only
+// hy4-flash-free-trial-202611: unavailable — promotion badge id (not a model); opencode chat 400 only; no success in ledger or host logs (no other provider found)
+// web-search-free: unavailable — top-level dsh-free-search plugin, not an LLM; opencode chat 400 only; no success in ledger or host logs
+// cat-jam-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
+// longcat-2.5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only (historical deprecated); no success in ledger or host logs (other providers not observed)
+// step-5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
+// END free-model availability
+// <<< custom-routes:candidates <<<
+
     // ---- NF3: free-signal weak-signal contract (inline mirror of lib/free-policy.js) --------
     // Browser modules cannot import lib/, so this mirror must stay in lockstep with
     // the Host policy. Rule version is shared verbatim; free-verify (task-26)
@@ -3394,16 +3413,3 @@ window.__ModuleLoader__.load({
   },
 })
 
-// >>> custom-routes:candidates >>>
-const CUSTOM_PROVIDERS = ["x-opencode-free"];
-const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-202611","web-search-free","cat-jam-free","longcat-2.5-preview-free","step-5-preview-free"];
-// BEGIN free-model availability (generated — task-77)
-// hy4-flash-free: available — upstream /models 200 + chat 200 content=2; E2E 3473 cost=0
-// hy4flash-free: available — workbuddy/hy4flash-free: host log request.complete/completed x140 and rising (2026-11-24); ledger does not record workbuddy route; opencode chat 400 was single-context only
-// hy4-flash-free-trial-202611: unavailable — promotion badge id (not a model); opencode chat 400 only; no success in ledger or host logs (no other provider found)
-// web-search-free: unavailable — top-level dsh-free-search plugin, not an LLM; opencode chat 400 only; no success in ledger or host logs
-// cat-jam-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
-// longcat-2.5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only (historical deprecated); no success in ledger or host logs (other providers not observed)
-// step-5-preview-free: unavailable — 2026-11-24 opencode chat probe 400 only; no success in ledger or host logs (other providers not observed)
-// END free-model availability
-// <<< custom-routes:candidates <<<
