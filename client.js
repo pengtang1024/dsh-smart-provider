@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const ENTRY = 'smart-provider'
     // 与 package.json 的 version 保持同步（浏览器模块无法 require package.json，
     // 故按本项目 STATIC_* 惯例内联）。改版本时两处都要更新。
-    const PLUGIN_VERSION = '2.2.0'
+    const PLUGIN_VERSION = '2.3.0'
 
     // ---- NF3: free-signal weak-signal contract (inline mirror of lib/free-policy.js) --------
     // Browser modules cannot import lib/, so this mirror must stay in lockstep with

@@ -2,6 +2,33 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.3.0
+
+本轮为免费判据统一版本，由 `2.2.0` 升级到 `2.3.0`（新增设置页价格倍率编辑与 Host/浏览器一致性门禁，按语义化版本 minor 递增）。用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」被裁决为弱信号 / 用户声明默认值，不是硬证据。
+
+### 修复
+
+- **免费判据两份实现会漂移**：Host `lib/free-policy.js` 与 `client.js` 内联镜像共用规则版本 `free-signal-v1` 与 24 条固定向量，但此前没有自动比对。现在 `test/free-policy.test.mjs` 在纯 Node 下抽取浏览器内联 `freeSignal` 与向量表，逐例比对 free + level（evidence / source 文案允许不同），并额外覆盖 NaN / Infinity / 字符串零 / unknown probe / 正价推翻等对抗输入；该套件已加入 `--unit` 白名单。
+- **`probeReader` 是惰性闭包却按实例调用**：`lib/remote.js` 的 `projectFreeSignal` 曾把 `() => adapter?.probe` 当 probe 实例，对闭包直接 `.peek?.()`，导致实测 verdict 永远进不了 `availabilityStatus.freeSignal`。现在先解包 `probeReader?.()?.peek?.()`；行为级门禁从源码抽取该函数、注入惰性闭包验证 free / metered / 无 probe 三种结论（由 free-host 修复并验证）。
+- **client strict codec 与 Host 投影可能静默脱钩**：新增逐字段门禁，确认 `AVAIL_STATUS_SCHEMA` 行只声明 `health/tier/confidence/freeSignal`，`freeSignalCodec` 恰好是 `{free,level,source}.nullable()` 且为必填键；Host `projectFreeSignal` 仅返回三字段，`evidence` 不上线。
+
+### 新增
+
+- **设置页价格倍率可直接编辑**：账号行的「价格倍率」可填 `0`（声明免费）、`0.8`（八折）等，留空 / 非法值回落到 1；中英文文案与 README 已同步说明「默认免费（未实测）」口径。
+- **免费/资费文档口径同步**：README / `docs/DETAIL.md` / `docs/DETAIL.en.md` 写明名字含 free 或倍率 0 只是弱信号（可被真实付费证据推翻），`unknown` 不阻断弱信号、估算零价不算证据；probe 现状只说「根因待验证」，不下定论。
+
+### 迁移与注意
+
+- **弱信号不写 L1 billingTier=FREE**：`weak` / `declared` 只用于候选收录、筛选、排序代理与显示「可能免费（未实测）」；probe `metered`、正成本账本、付费 `billingSource`、真实正价都会推翻它。
+- **`priceMultiplier=0` 只认有限数值 0**：字符串 `'0'` / `null` / 负数 / `NaN` / `Infinity` 都不是零价声明。
+
+### 验证（2026-11-26 实测）
+
+- `env -u DSH_NODE_EXECUTABLE node --test test/free-policy.test.mjs`：**37 条 / pass 37 / fail 0，退出码 0**（含镜像一致性 3 条新增用例）。
+- `env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit`：**15 个测试文件 / 244 条，pass 244 / fail 0，退出码 0**。
+- `DSH_NODE_EXECUTABLE='/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT' node scripts/run-tests.mjs`：**20 个测试文件 / 291 条，pass 291 / fail 0，退出码 0**。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.3.0`。
+
 ## 2.2.0
 
 本轮为设置页重构 + Host 韧性修复版本，由 `2.1.0` 升级到 `2.2.0`（含新增功能，按语义化版本 minor 递增）。九个提交覆盖三个方向：设置页从四 Tab 合并到三 Tab 并修复一批「看起来保存成功了其实没有」的问题，Host 侧自动链路发现 / 热更新 / 自建路由生成的韧性修复，以及探测缓存与成本趋势口径的修正。

@@ -90,7 +90,7 @@ dsh-smart-provider/
 │   ├── ranking.test.mjs      路由排序回归测试（纯逻辑，--unit 白名单）
 │   ├── remote-surface.test.mjs @Remote 路由面契约回归测试（9 条纯逻辑，--unit 白名单）
 │   └── routing-tier.test.mjs tier 选择 / relax 诊断 / 手填标签回归测试（task-7，14 条纯逻辑，--unit 白名单）
-│                             共 19 个测试文件 / 254 条断言（全量）；--unit 白名单 14 个测试文件 / 207 条（纯逻辑）
+│                             共 20 个测试文件 / 291 条断言（全量）；--unit 白名单 15 个测试文件 / 244 条（纯逻辑）
 ├── locale/{en,zh}.json       插件显示元数据
 ├── docs/DETAIL.md            插件管理器详情页
 ├── icon.svg                  原创图标
@@ -230,7 +230,7 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 ### L1 —— 免费/付费的证据等级
 
-不靠模型名猜。证据强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。
+不靠模型名猜。**用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」已实现为弱信号 / 用户声明默认值（free-signal-v1，未实测）**：名字含 `free`、`priceMultiplier=0`（或 `costModel=free` / `priceTier=free`）即「默认免费（未实测）」：只用于候选收录 / 筛选 / 排序代理与显示「可能免费（未实测）」，等级为 `weak` / `declared`，**不写 L1 billingTier=FREE**；可被真实付费证据（probe `metered`、账本正成本、付费 billingSource、真实正价）推翻。`probeVerdict=unknown` 不阻断弱信号；估算零价（`estimated:true`）不是证据；只有有限数值 `0` 算倍率零。真凭实据的强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。设置页账号行的「价格倍率」可直接修改（留空 / 非法值按 1，`0` = 声明免费）；当前部分路由 probe 多为 `unknown` 的根因尚在验证，不据此宣称任何模型一定免费。
 
 ### L2 —— 半开恢复，而不是时间到点自动复活
 
@@ -529,16 +529,16 @@ FAIL: 1 file(s) under test/ are never executed by the full gate:
 Rename it to <name>.test.mjs (or move it out of test/) so it actually runs.
 ```
 
-`--unit` 是一个**纯逻辑白名单**（当前 14 个测试文件：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config`），其余需要 DSH runtime 的测试文件会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
+`--unit` 是一个**纯逻辑白名单**（当前 15 个测试文件：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config` / `free-policy`），其余需要 DSH runtime 的测试文件会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
 
 ```bash
 # 1) 一条命令跑完整验证门槛（语法检查 + 全部自动发现的测试，自动选运行时）
 npm test
-# => 发现 19 个测试文件；语法检查逐文件 ok；tests 254 / pass 254 / fail 0（2026-11-26 实测，退出码 0）
+# => 发现 20 个测试文件；语法检查逐文件 ok；tests 291 / pass 291 / fail 0（2026-11-26 实测，退出码 0）
 
-# 2) 只跑纯逻辑子集（14 个测试文件，任何 Node 都行，无需 DSH；会打印未覆盖的文件）
+# 2) 只跑纯逻辑子集（15 个测试文件，任何 Node 都行，无需 DSH；会打印未覆盖的文件）
 npm run test:unit
-# => 14 个测试文件，tests 207 / pass 207 / fail 0（2026-11-26 实测，退出码 0）
+# => 15 个测试文件，tests 244 / pass 244 / fail 0（2026-11-26 实测，退出码 0）
 
 # 3) 不带 npm 时等价写法（全量就是发现出来的那批文件）
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/*.test.mjs
@@ -551,16 +551,16 @@ node -e 'const p=require("./lib/pricing.json"); if(p._rows!==p.entries.length)th
 #    退出码：0 —— 完整冒烟 PASS
 ```
 
-**2.2.0 的两套门禁口径（2026-11-26 实测，两条命令退出码均为 0）**：
+**2.3.0 的两套门禁口径（2026-11-26 实测，两条命令退出码均为 0）**：
 
 ```bash
 # 纯逻辑子集：任何 Node 都行，不需要 DSH runtime
 env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit
-# => 14 个测试文件 / tests 207 / pass 207 / fail 0
+# => 15 个测试文件 / tests 244 / pass 244 / fail 0
 
 # 全量：必须用 Electron 的 Node（@deepseek-ai/* 在 app.asar 内部）
 DSH_NODE_EXECUTABLE="/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT" node scripts/run-tests.mjs
-# => 19 个测试文件 / tests 254 / pass 254 / fail 0
+# => 20 个测试文件 / tests 291 / pass 291 / fail 0
 ```
 
 此前两套门禁并发跑会出现偶发假红：`--unit` 里的探针 TTL 用例用 5ms TTL 卡「刚写完还算新鲜」的边界，与 `appendFile` 的落盘排队竞速（verifier 复现 25 次跑 2 次红）。该用例已改为**注入时钟**推进 —— TTL 判定是纯 `probedAt + ttl > Date.now()` 比较，用例内把 `Date.now` 换成可控值并在 `finally` 还原，过期靠推进时钟而不是睡眠，语义不变、不再依赖真实时序。并发跑也不会再假红；仍建议串行，便于读数对账。
@@ -615,7 +615,7 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 ## English summary (secondary)
 
-`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources, visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (254 full-suite / 207 pure-logic assertions across 19 / 14 suites, measured 2026-11-26, exit 0), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
+`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources, visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (291 full-suite / 244 pure-logic assertions across 20 / 15 suites, measured 2026-11-26, exit 0), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
 
 ---
 
