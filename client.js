@@ -615,6 +615,29 @@ window.__ModuleLoader__.load({
     // snapshot (always reachable) plus static defaults. It never claims a
     // runtime "on/off" state it cannot prove, and it never shows a permanent
     // "checking…" spinner. It states what is CONFIGURED in plain language.
+    // Account declarations are a client-side overlay only: the Host owns the
+    // real billing evidence, so a declared multiplier/costModel can add a
+    // 'declared' free signal but never override probe/ledger hard evidence.
+    // Multiple accounts may list the same model id — any one declaring free
+    // (multiplier===0 / costModel==='free') wins. Read both the nested ranking
+    // field (canonical, lib/ranking.js) and the legacy flat alias.
+    const accountDeclaredOf = config => {
+      const out = {}
+      for (const a of arr(config?.accounts)) {
+        const mul = obj(a).ranking?.priceMultiplier ?? a?.priceMultiplier
+        const costModel = str(obj(a).costModel ?? a?.costModel)
+        for (const model of arr(a?.models)) {
+          const id = str(model)
+          if (!id) continue
+          const prev = obj(out[id])
+          out[id] = {
+            priceMultiplier: Number.isFinite(mul) ? mul : prev.priceMultiplier,
+            costModel: costModel || prev.costModel,
+          }
+        }
+      }
+      return out
+    }
     function Overview({ t, localConfig, pi, availProjection, probeVerdicts, probeEnabled, probeDiag, onProbe, applyPreset, working, presetNotice, costService, onOpenCost }) {
       const cfg = obj(localConfig)
       const configuredChains = obj(cfg.chains)
@@ -679,6 +702,9 @@ window.__ModuleLoader__.load({
         if (samples > 0) return { key: 'unknown', ok: false, reviewed: false, samples }
         return { key: 'unknown', ok: false, reviewed: false, samples: 0 }
       }
+      // 账号声明覆盖层：用户填的 priceMultiplier=0 / costModel=free 必须进入
+      // 免费判据；declared 只是弱证据，probe metered / 正成本仍由契约函数否决。
+      const declared = accountDeclaredOf(cfg)
       // task-106 "可能免费"宽松判据 —— 宁可多列不可漏，任一弱信号命中即入选。
       // 证据：真实免费模型（账本/registry）名字/id 全含 free（hy4-flash-free /
       // hy4flash-free / web-search-free / cat-jam-free / longcat-2.5-preview-free /
@@ -696,6 +722,8 @@ window.__ModuleLoader__.load({
           provider, model: id, name: str(m?.name), group: provider,
           probeVerdict: str(obj(probeVerdicts)[`${provider}/${id}`]),
           priceTier: str(obj(availProjection)[id]?.tier),
+          priceMultiplier: obj(declared[id]).priceMultiplier,
+          costModel: str(obj(declared[id]).costModel),
         }).free
       }
       // Exclude virtual smart副本: the same free model id appears twice in
@@ -1285,6 +1313,9 @@ window.__ModuleLoader__.load({
       }))
       // 模型多选可用性：搜索 / 只看免费 / 已选始终可见 / 默认最多渲染 60 个。
       const MODEL_RENDER_CAP = 60
+      // Account declarations feed the same contract: a config account that
+      // lists this model with multiplier 0 / costModel free becomes 'declared'.
+      const declared = accountDeclaredOf(config)
       // NF3: "只看免费" uses the same weak-signal contract as the overview and
       // auto-probe: Host tag first, then probe verdict + name/tier/multiplier.
       // A metered verdict or paid billing excludes the model; unknown does not.
@@ -1296,6 +1327,8 @@ window.__ModuleLoader__.load({
           provider: str(group), model: id, name: str(label), group: str(group),
           probeVerdict: str(obj(probeVerdicts)[`${str(group)}/${id}`]),
           priceTier: str(obj(availProjection)[id]?.tier),
+          priceMultiplier: obj(declared[id]).priceMultiplier,
+          costModel: str(obj(declared[id]).costModel),
         })
       }
       const pickerState = i => {
@@ -2148,6 +2181,8 @@ window.__ModuleLoader__.load({
         ? obj(config?.ranking).probeEnabled
         : config?.probeEnabled
       const probeEnabled = probeSetting !== false
+      // Account declarations for the auto-probe path (same overlay as UI checks).
+      const declared = accountDeclaredOf(config)
 
       // pi-ai 真实资源快照（只读）。configForms 快照只有"本插件自己的配置"，
       // 用户在「模型」页配的 provider/model 在 pi-ai 那边，必须单独读。
@@ -2283,6 +2318,8 @@ window.__ModuleLoader__.load({
             provider, model: id, name: str(m?.name), group: provider,
             probeVerdict: str(obj(probeVerdicts)[`${provider}/${id}`]),
             priceTier: str(obj(availProjection)[id]?.tier),
+            priceMultiplier: obj(declared[id]).priceMultiplier,
+            costModel: str(obj(declared[id]).costModel),
           })
           if (!sig.free) continue
           candidates.push(m)
