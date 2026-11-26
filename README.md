@@ -301,9 +301,9 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 
 `health` 里可调 `accountHealth`（`halfOpenPermits` / `backoffFactor` / `maxCooldownMs` / `defaultCooldownMs`）、`topologyOpts`（`declaredFlag` / `observedAccountIds` / `declaration`）、`virtualProviders`（额外虚拟路由；`smart` 永远在内）、`currentIdList`（判定重命名用）。
 
-### 设置页结构（2.2.0：三个 Tab）
+### 设置页结构（2.2.0：三个 Tab；2.5.0 视觉精简）
 
-设置页的 Tab 从四个收敛到三个 —— 普通用户 30 秒内只需要「看状态 / 选怎么选 / 看花费」。原「切换链」与「账号池 + 择优」合并进同一个**路由设置**，但两张卡各自保留自己的保存按钮与保存语义（`chains` 与 `accounts`+`ranking` 是两个独立的写操作，不会一次改动牵连另一块）。
+设置页的 Tab 从四个收敛到三个 —— 普通用户 30 秒内只需要「看状态 / 选怎么选 / 看花费」。原「切换链」与「账号池 + 择优」合并进同一个**路由设置**，但两张卡各自保留自己的保存按钮与保存语义（`chains` 与 `accounts`+`ranking` 是两个独立的写操作，不会一次改动牵连另一块）。2.5.0 起三个 Tab 按 Apple HIG 风格精简信息层级：总览 hero 合并配置事实与健康摘要、预设按钮只在总览一处；花费与健康把明细 / 趋势 / 账本收进「详细数据」折叠、明细首屏只看 Top 10，健康两表改为摘要行 + 可展开明细（异常默认展开）；版本号行新增 GitHub star 入口。所有折叠只改变信息层级，字段与读写语义不变。
 
 | Tab | 内容 | 写什么 |
 |---|---|---|
@@ -642,4 +642,4 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 
 ## 支持本项目
 
-如果这个插件帮你省了心、省了钱，或者单纯觉得它做得还行，欢迎给仓库点个 star ⭐ —— 你的一个星是对我们最大的鼓励，也让更多人能发现它。感谢！
+如果这个插件帮你省了心、省了钱，或者单纯觉得它做得还行，欢迎给仓库点个 star ⭐ —— 2.5.0 起设置页总览的版本号行也直接提供了 GitHub star 链接，点一下就能直达仓库；你的一个星是对我们最大的鼓励，也让更多人能发现它。感谢！

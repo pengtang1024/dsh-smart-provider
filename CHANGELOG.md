@@ -2,6 +2,21 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.5.0
+
+功能版本（`2.4.1` → `2.5.0`）：设置页三个 Tab 的视觉精简，以及版本号行的 GitHub star 入口。按语义化版本 minor 递增。只调整信息层级与入口，不改变任何既有配置语义、读写通道或计费判据；没有实测依据的结论仍不写成事实。
+
+### 变更
+
+- **设置页三 Tab 视觉精简（Apple HIG 风格）**：总览把配置事实与健康摘要并入同一张 hero（一行事实 + 一行可点击健康摘要），不再让独立事实 KV 卡与提示行各占一屏；已识别模型、诊断等长信息收进可展开区，预设按钮只在总览保留一处（账号卡不再重复）。「花费与健康」把逐笔明细 / 趋势 / 按模型 / 节省账本收进「详细数据」折叠，首屏只留总花费、笔数、节省与健康摘要；明细首屏展示 Top 10，其余与分页一起展开。账号健康面板的两张表（账号 / 路由）改为「摘要行 + details 明细」，异常时默认展开，不让冷却或降级状态藏起来；链路类信息按首组展开组织。所有折叠只改变信息层级，原字段、状态分家、诊断可得性与 FX3-3 资费证据链保持不变。
+- **版本号行新增 GitHub star 链接**：总览 hero 的版本号后展示唯一一个 `⭐ Star on GitHub` 链接，指向 `https://github.com/pengtang1024/dsh-smart-provider`，`target="_blank"` + `rel="noopener noreferrer"` 安全打开；中英文文案均已补齐。
+
+### 验证（2026-11-26 实测）
+
+- 独立复验（收口前、未 push 的 `c4feb87` + `942e780`）：工作区干净，`node --check client.js` 退出码 0；unit **262/262**、full **320/320**，均 fail 0、退出码 0。
+- 源码断言：star 链接全文件仅 1 处且 href / target / rel 正确；hero 内无独立事实 KV 卡；预设按钮只在总览一处；CostPill 设置卡为摘要行 + details；健康两表为摘要 + details，`strongestFreeTag` / 两处 `health.billing` 资费列 / `availProjection` 均在 `AccountHealthPanel` 内；逐笔明细首屏 Top 10 + details；`health.billingHint` 仅 1 处；`cost.freePaid` 0 处。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.5.0`（`test/free-ui-chain.test.mjs` 的 FX3-5 同步更新）。
+
 ## 2.4.1
 
 修复版本（`2.4.0` → `2.4.1`）。用户重启 2.4.0 后反馈三处缺陷，本版全部是修复，不引入新功能。
