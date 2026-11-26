@@ -1316,10 +1316,11 @@ window.__ModuleLoader__.load({
             h('option', { value: 'soft' }, t('ranking.prioritySoft')),
           ),
         ),
-        // task-107: 探测开关，默认关闭。开启后首屏出现"检测未确认模型"按钮。
+        // task-107: 探测开关，默认开启（与执行路径 probeSetting !== false 一致）；
+        // 只有显式保存 false 才取消勾选。开启后首屏出现"检测未确认模型"按钮。
         h(Field, { label: t('ranking.probeEnabled'), help: t('ranking.probeEnabledHelp') },
           h('input', {
-            type: 'checkbox', checked: c.probeEnabled === true,
+            type: 'checkbox', checked: c.probeEnabled !== false,
             onChange: e => set('probeEnabled', e.target.checked),
           }),
         ),
@@ -2566,8 +2567,8 @@ window.__ModuleLoader__.load({
       // 不写账本的路由）；降级 = 账本 byModel 单源。两者都来自已 $mount 的
       // costService，$mount 软探测（ctx.get），绝不进 inject（死锁教训）。
       const [availProjection, setAvailProjection] = useState(null)
-      // task-107: 探测 verdict（Map "provider/model" -> verdict）。默认不自动
-      // 探测（lead 要求可配置、等用户拍板）——只有 probeEnabled 时才发最小探测。
+      // task-107: 探测 verdict（Map "provider/model" -> verdict）。默认自动探测，
+      // 只有显式关闭（probeEnabled=false）时才跳过最小探测。
       const [probeVerdicts, setProbeVerdicts] = useState({})
       // task-111: 探测诊断自曝（点击有反馈，失败显示具体原因）。
       const [probeDiag, setProbeDiag] = useState('')
@@ -2639,8 +2640,8 @@ window.__ModuleLoader__.load({
         return () => { alive = false }
       }, [costService])
 
-      // task-107: 手动/可选触发的最小探测。默认不自动发（probeEnabled=false），
-      // 只有用户开启后才对"弱信号命中但零样本"的少数候选探测（Host 单次上限3）。
+      // task-107: 手动/可选触发的最小探测。默认自动探测，
+      // 对"弱信号命中但零样本"的少数候选探测（Host 单次上限3）；显式关闭时跳过。
       // 探测失败/unknown 不挡——isPossiblyFree 仍按弱信号收录。
       const runProbe = useCallback(async (candidates, force) => {
         if (!probeEnabled || !Array.isArray(candidates) || candidates.length === 0) {
