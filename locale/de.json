@@ -4,9 +4,35 @@
     "description": "Meta-Provider: baut Failover zwischen günstigen Provider-Routen auf, greift nur während des Verbindungsaufbaus zurück, mit Hop-Level-Cooldown, Sitzungsprotokoll pro Hop, Offline-Kostenschätzung und Account-Ranking. Die Einstellungen bieten eine eigene Konfigurationsseite (Übersicht / Routing / Kosten & Gesundheit).",
     "detail": "docs/DETAIL.de.md"
   },
-  "nav": "Smart – intelligentes Routing",
+  "nav": "Smart-Provider",
   "setting": {
     "title": "Smart – intelligentes Routing",
     "description": "Failover-Ketten, Account-Pool, Ranking-Strategie und Kosten-/Gesundheitsstatus konfigurieren; alle Änderungen werden live übernommen, ohne Neustart."
+  },
+  "costPill": {
+    "cardTitle": "Kostenanzeige im Gespräch",
+    "cardHelp": "Aktivieren Sie die Anzeige und sehen Sie die Schätzung neben dem Eingabefeld im Gespräch. Das Zurücksetzen der Statistik setzt nur den Startmarkierer zurück; das vollständige Ledger bleibt erhalten. Kein Neustart nötig.",
+    "enabled": "Geschätzte Gesamtsumme anzeigen",
+    "enabledHelp": "Standardmäßig aus; nach dem Aktivieren sehen Sie die aufgelaufene Schätzung neben der Eingabe (Position unten wählbar).",
+    "position": "Anzeigeposition",
+    "positionHelp": "Gesprächs-Slot für die Anzeige; standardmäßig kompakt rechts neben der Eingabe.",
+    "pos": {
+      "conversation.input.right": "Rechts der Eingabe (kompakt)",
+      "conversation.session.header.utilities": "Symbole in der Sitzungskopfzeile",
+      "conversation.input.dock": "Eingabe-Dock (vollbreit)"
+    },
+    "refreshMs": "Intervall der automatischen Aktualisierung (ms)",
+    "refreshMsHelp": "Standard 60000 ms; 0 eingeben, um die automatische Aktualisierung zu deaktivieren. Manuelles Aktualisieren bleibt möglich. Mindestens 1000 ms gültig.",
+    "refreshInvalid": "0 oder mindestens 1000 ms eingeben.",
+    "monitor": "Überwachung",
+    "autoRefresh": "Automatisch aktualisieren",
+    "refreshNow": "Jetzt aktualisieren",
+    "since": "Statistikbeginn: {since}",
+    "noSince": "Statistikbeginn: gesamter Verlauf",
+    "clear": "Statistik ab jetzt neu starten",
+    "clearConfirm": "Damit wird nur ein neuer Startmarkierer gesetzt; das Kosten-Ledger wird nie gelöscht. Fortfahren?",
+    "clearNote": "Damit wird nur der Anzeige-Startmarkierer zurückgesetzt. Das vollständige Ledger bleibt erhalten und die Zustandsbeweise sind nicht betroffen.",
+    "cleared": "Neuer Statistikbeginn: {since}",
+    "error": "Statistik konnte nicht gelesen oder aktualisiert werden. Bitte in Kürze erneut versuchen."
   }
 }

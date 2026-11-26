@@ -8,5 +8,31 @@
   "setting": {
     "title": "Proveedor inteligente",
     "description": "Configura las cadenas, el grupo de cuentas, la estrategia de selección y el coste/salud; todos los cambios se aplican en caliente, sin reiniciar."
+  },
+  "costPill": {
+    "cardTitle": "Visualización de coste en la conversación",
+    "cardHelp": "Actívala y mira junto al cuadro de entrada de la conversación para ver la estimación. Reiniciar las estadísticas solo restablece el marcador de inicio; el registro completo se conserva. Sin reinicio.",
+    "enabled": "Mostrar total estimado",
+    "enabledHelp": "Desactivado por defecto; al activarlo verás el total acumulado junto a la entrada (posición más abajo).",
+    "position": "Posición de visualización",
+    "positionHelp": "Espacio de la conversación donde se muestra; por defecto compacto a la derecha de la entrada.",
+    "pos": {
+      "conversation.input.right": "Derecha de la entrada (compacto)",
+      "conversation.session.header.utilities": "Utilidades de la cabecera de sesión",
+      "conversation.input.dock": "Dock de entrada (ancho completo)"
+    },
+    "refreshMs": "Intervalo de actualización automática (ms)",
+    "refreshMsHelp": "Por defecto 60000 ms; introduce 0 para desactivar la actualización automática. La actualización manual sigue disponible. Mínimo válido: 1000 ms.",
+    "refreshInvalid": "Introduce 0 o al menos 1000 ms.",
+    "monitor": "Supervisión",
+    "autoRefresh": "Actualización automática",
+    "refreshNow": "Actualizar ahora",
+    "since": "Inicio de estadísticas: {since}",
+    "noSince": "Inicio de estadísticas: todo el historial",
+    "clear": "Reiniciar estadísticas desde ahora",
+    "clearConfirm": "Esto solo establece un nuevo marcador de inicio; el registro de costes nunca se borra. ¿Continuar?",
+    "clearNote": "Esto solo restablece el marcador de inicio de la visualización. El registro completo se conserva y las pruebas de estado no se ven afectadas.",
+    "cleared": "Nuevo inicio de estadísticas: {since}",
+    "error": "No se pudieron leer o actualizar las estadísticas. Inténtalo de nuevo en breve."
   }
 }

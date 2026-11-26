@@ -2,6 +2,24 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.6.2
+
+修复版本（`2.6.1` → `2.6.2`）：补齐本地化一致性并诚实说明桌面壳语言限制，纯修复与文档收口，代码路径、配置语义与计费判据零改动；按语义化版本 patch 递增。
+
+### 修复
+
+- **裸 key 修复（内容层 P0）**：补回 7 语字典此前遗漏的 18 个被引用 key（`tab.*` / `ranking.w.*` / `cost.col.*` / `health.freeMeasured*`），设置页不再显示英文裸 key；新增运行时求值 + 静态调用点扫描的覆盖门禁，防止后续新增调用点漏译。
+- **双美元符号修复**：`zh` 的 `cost.overviewLine` 改为普通 `{total}` 占位，不再用 `${total}` 把调用方已带的 `$` 翻倍；七语占位符一致性纳入门禁。
+- **本地化 JSON 与 client 对齐**：de / pt / ru 的 `nav` 改为 client.js 内联字典的实际值（以 client 为准）；de / es / fr / pt / ru 补齐 `costPill` 块（20 顶层键 + `pos` 三槽 = 22 键），与 zh / en 结构一致。
+- **文档一致性**：`docs/DETAIL.en.md` 中 P1 账号择优 / P2 两层路由由「默认关闭」改正为「默认启用（中立等权、可显式关闭）」，与 README 和中文 DETAIL 一致；README 注意事项补充桌面壳 locale preference 恒 `null` 的诚实说明（语言跟随系统 / 浏览器设置，宿主是否可指定语言待验证，不做 hack）。
+
+### 验证
+
+- 独立复验：unit ≥266、full ≥324 全绿，fail 0、退出码 0。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.6.2`（`test/free-ui-chain.test.mjs` 的 FX3-5 同步更新）。
+
+---
+
 ## 2.6.1
 
 文档版本（`2.6.0` → `2.6.1`）：只补兼容性声明与文档分类口径，代码路径、配置语义与计费判据零改动；按语义化版本 patch 递增。

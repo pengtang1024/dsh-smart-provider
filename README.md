@@ -638,6 +638,7 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 - **免费标签的「已确认免费」现在带来源后缀（2.4.0）**：价格表声明显示 `已确认免费·价格表`，探测显示 `已确认免费·探测`，账本显示 `已确认免费·账单`；弱信号仍是「可能免费（未实测）」。免费标签按 `(provider, modelId)` 元组取证据，不再让同名模型跨 provider 串标；probe 多为 `unknown` 的根因仍未定论。
 - **`yaml` 依赖的探测链（无写死家目录）**：`registry/registry-lib.mjs` 只在 DSH profile 里找 `yaml`，按 `DSH_HOME` → `HOME` → `os.homedir()` 的优先级组候选锚点（三者都指向**当前用户**，重复项去重后逐个尝试）。全部失败时抛错并列出试过的每个锚点，提示用 `DSH_HOME` 指安装根；**不再**回退到任何写死的他人家目录。该文件没有独立测试文件，因此这条改动靠全量门禁的语法检查 + 本机三种环境（普通 `HOME`、`env -u HOME -u DSH_HOME`、显式 `DSH_HOME`）的加载冒烟来守。
 - **仓库目录移动后插件不加载（link 指向旧路径）**：profile 里用 `link:` 装本包时记录的是安装当时的绝对路径，仓库被移动 / 改名 / 重新克隆后这条 link 仍指向旧目录 —— 表现为设置页分区消失、插件状态不是 ACTIVE、日志里找不到 `plugin:dsh-smart-provider` 而是加载失败。修法：在 profile 上重新 link 到新路径（`dsh plugin --profile <p> add link:<新路径>`，或编辑 profile 清单里那条 link 指向），然后**重启 App**（或触发一次 profile 重组合）让宿主重新解析。注意 HMR 也救不了这种情况：监听的是旧路径。
+- **桌面壳的 locale preference 当前读不到（宿主限制，待验证）**：DSH 桌面壳目前把 locale preference 读数恒定为 `null`，插件无法从该字段判断用户指定语言，因此界面语言跟随系统 / 浏览器设置（由 Host 的 locale 链决定），而不是用户在壳里选的语言。这是当前宿主的实际表现，插件不做 hack 去猜测或强行覆盖；宿主未来是否提供可读取、可指定的语言设置**尚待验证**，届时再按官方通道接入。
 
 ---
 

@@ -8,5 +8,31 @@
   "setting": {
     "title": "Fournisseur intelligent",
     "description": "Configurez les chaînes, le groupe de comptes, la stratégie de classement et le coût/santé ; toutes les modifications s'appliquent à chaud, sans redémarrage."
+  },
+  "costPill": {
+    "cardTitle": "Affichage des coûts dans la conversation",
+    "cardHelp": "Activez l’affichage, puis consultez l’estimation à côté du champ de saisie dans la conversation. Réinitialiser les statistiques ne fait que replacer le repère de début ; le registre complet est conservé. Aucun redémarrage nécessaire.",
+    "enabled": "Afficher le total estimé",
+    "enabledHelp": "Désactivé par défaut ; une fois activé, l’estimation cumulée apparaît à côté du champ de saisie (position configurable ci-dessous).",
+    "position": "Position d’affichage",
+    "positionHelp": "Emplacement dans la conversation ; compact à droite de la saisie par défaut.",
+    "pos": {
+      "conversation.input.right": "À droite de la saisie (compact)",
+      "conversation.session.header.utilities": "Outils de l’en-tête de session",
+      "conversation.input.dock": "Zone de saisie (pleine largeur)"
+    },
+    "refreshMs": "Intervalle d’actualisation automatique (ms)",
+    "refreshMsHelp": "60000 ms par défaut ; saisissez 0 pour désactiver l’actualisation automatique. L’actualisation manuelle reste disponible. Minimum valide : 1000 ms.",
+    "refreshInvalid": "Saisissez 0 ou au moins 1000 ms.",
+    "monitor": "Surveillance",
+    "autoRefresh": "Actualisation automatique",
+    "refreshNow": "Actualiser maintenant",
+    "since": "Début des statistiques : {since}",
+    "noSince": "Début des statistiques : historique complet",
+    "clear": "Redémarrer les statistiques maintenant",
+    "clearConfirm": "Cela ne définit qu’un nouveau repère de début ; le registre des coûts n’est jamais supprimé. Continuer ?",
+    "clearNote": "Cela ne réinitialise que le repère de début de l’affichage. Le registre complet est conservé et les preuves de santé ne sont pas affectées.",
+    "cleared": "Nouveau début des statistiques : {since}",
+    "error": "Les statistiques n’ont pas pu être lues ou mises à jour. Veuillez réessayer dans un instant."
   }
 }
