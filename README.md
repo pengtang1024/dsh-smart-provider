@@ -318,7 +318,7 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 - **删除二次确认**：删链路组 / 跳次 / 账号，第一次点击变成确认按钮，3 秒不确认自动回退。
 - **加载 / 空 / 错三态分家**：加载中、真的没有数据、通道出错各有各的文案与颜色，不拿空表冒充「没有数据」。
 - **诊断折叠**：`form` / `state` / 错误码这类内部串收进默认折叠的「诊断」，只有失败时默认展开。
-- **对话页预估总额 pill（2.4.0）**：三个 volatile 配置项 `costPillEnabled`（默认 `false`，只有显式 `true` 才显示）、`costPillPosition`（默认 `input.right`；可选 `conversation.session.header.utilities` 会话标题栏工具区 / `conversation.input.dock` 输入框上方条目；非法值回落默认）、`costPillRefreshMs`（默认 60000 毫秒，最小 1000 毫秒）。显示的是 `@Remote` 真账 `statsSince()` 的两位小数美元累计值与当前统计起点；「立即刷新」按钮常驻，定时刷新只在配置了间隔后运行且页面不可见时暂停。详见 §六末「对话页预估总额 pill」。
+- **对话页预估总额 pill（2.4.0，2.4.1 补齐设置入口）**：三个 volatile 配置项 `costPillEnabled`（默认 `false`，只有显式 `true` 才显示）、`costPillPosition`（默认 `conversation.input.right`；可选 `conversation.session.header.utilities` 会话标题栏工具区 / `conversation.input.dock` 输入框上方条目；非法值回落默认）、`costPillRefreshMs`（默认 60000 毫秒，最小 1000 毫秒）。2.4.1 起总览首屏有「对话页消耗显示」卡片，三个字段都有控件且即时写回，不必再手改配置。显示的是 `@Remote` 真账 `statsSince()` 的两位小数美元累计值与当前统计起点；「立即刷新」按钮常驻，定时刷新只在配置了间隔后运行且页面不可见时暂停。详见 §六末「对话页预估总额 pill」。
 - **账号字段可编辑且不丢未知字段**：`speedTier` / `priceTier` / `costModel` / `quotaCost` / `priority` 直接在账号行里改（取值来自 `lib/ranking.js` 的 `ACCOUNT_RANKING_FIELDS`，与 Host 同源）；`quotaCost` 只在 `costModel=subscription` 时写入；整行按「展开原对象再覆盖」重建，用户手写的其他键原样保留。
 - **`credentialRef` 可输入**（只写引用名，绝不写明文 key；留空表示用 DSH 已登录账号），模型选择器支持关键字搜索 / 只看免费 / 全选。
 - **不完整行不再静默丢弃**：账号行缺 `id` 或缺 `provider` 会被标红并拦住整次保存，而不是被 `filter` 掉还提示「已保存」。
@@ -338,14 +338,14 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 
 **诚实约定**：零样本一律显示「暂无数据」，绝不显示「不可用」，也绝不因为"没有坏消息"就涂成绿色；未知值一律退中性灰。健康层被关闭时（`health: false` / `health.enabled: false` / `ranking.health.enabled: false`）面板直接说「健康层当前是关闭的」，不假装正常、不拿空表冒充健康；通道本身不可用时显示诊断行，把失败原因摊开而不是静默留白。刷新方式是**快照时间 + 手动「重新读取」按钮**，刻意不用 `setInterval` 倒计时 —— 定时器在设置页反复挂载/卸载时会泄漏。
 
-### 对话页预估总额 pill（2.4.0）
+### 对话页预估总额 pill（2.4.0，2.4.1 补齐设置入口）
 
-设置页（`costPillEnabled` 等字段）配置的是对话页的累计估算成本显示，默认关闭：只有显式 `"costPillEnabled": true` 才挂载，读的是 `@Remote` 的 `smartProvider.statsSince()` 真账汇总（`cost.jsonl`，按统计起点过滤），显示两位小数美元金额与当前起点；读取失败显示错误行，不拿估算占位冒充真账。
+设置页（`costPillEnabled` 等字段）配置的是对话页的累计估算成本显示，默认关闭：只有显式 `"costPillEnabled": true` 才挂载，读的是 `@Remote` 的 `smartProvider.statsSince()` 真账汇总（`cost.jsonl`，按统计起点过滤），显示两位小数美元金额与当前起点；读取失败显示错误行，不拿估算占位冒充真账。2.4.1 起总览首屏直接提供「对话页消耗显示」卡片（开关 / 位置 / 刷新间隔三个控件），保存即生效、无需重启。
 
 | 配置字段 | 默认值 | 取值 / 说明 |
 |---|---|---|
 | `costPillEnabled` | `false` | 显式 `true` 才显示；volatile，即时生效 |
-| `costPillPosition` | `input.right` | 挂载点三档：`input.right`（输入框右侧紧凑位）、`conversation.session.header.utilities`（会话标题栏工具区）、`conversation.input.dock`（输入框上方条目）；非法值回落默认档 |
+| `costPillPosition` | `conversation.input.right` | 挂载点三档：`conversation.input.right`（输入框右侧紧凑位）、`conversation.session.header.utilities`（会话标题栏工具区）、`conversation.input.dock`（输入框上方条目）；非法值回落默认档 |
 | `costPillRefreshMs` | `60000` | 定时刷新间隔，最小 1000 毫秒；**定时监控默认关**（初装不轮询），手动「立即刷新」按钮常驻；页面不可见时暂停并中止在途请求，回到前台再续 |
 
 **「从现在重新统计」的清理语义**：先二次确认（「只设置新统计起点，不删除成本账本。确定继续？」），确认后 `smartProvider.clearStats()` 只在 `cost.jsonl` 旁的 `stats-state.json` 写入新的 `since` / `clearedAt`，**账本文件逐字节不变**，健康证据也不受影响；pill 与「花费与健康」页的累计数从新起点重新计数，历史行仍在磁盘上。它不删除、不回滚任何账本数据。
@@ -625,7 +625,8 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 - HMR 的监听列表可能为空（日志 `watching []`）：此时**源码改动不会自动重载**，需要触发一次 profile 重组合（改配置 / 重装）或重启，宿主才会跑新代码。安装新组合包本身会立即触发重组合，不需要重启。
 - 最小 profile 里没有 `sessions` 服务，因此没有 `hop-selected` 会话记录；该记录依赖 `sessions`，属可选降级（账本中的 `account_id` 仍然完整）。
 - 配置页显示的 provider / model 数量随用户 DSH 实时注册表变化，文档不写死。
-- **对话页 pill 默认不显示（2.4.0）**：`costPillEnabled` 默认 `false`，定时监控默认关；只有显式开启并配置 `costPillRefreshMs` 才轮询。它显示的是按统计起点过滤的**估算**累计成本（公开标价口径，不是 provider 真实账单），金额两位小数；`input.right` 之外的挂载点依赖宿主提供的对话页插槽，插槽不可用时不要假设 pill 一定出现。
+- **对话页 pill 默认不显示（2.4.0；2.4.1 起设置页首屏可开关）**：`costPillEnabled` 默认 `false`，定时监控默认关；只有显式开启并配置 `costPillRefreshMs` 才轮询。它显示的是按统计起点过滤的**估算**累计成本（公开标价口径，不是 provider 真实账单），金额两位小数；默认挂载点是 `conversation.input.right`，其它挂载点依赖宿主提供的对话页插槽，插槽不可用时不要假设 pill 一定出现。
+- **自动探测复选框与执行口径（2.4.1）**：未配置 `probeEnabled` 时显示勾选且确实执行自动探测，只有显式保存 `false` 才关闭；不再出现「界面显示关、后台却探测」的分叉。
 - **「从现在重新统计」不是清账（2.4.0）**：`clearStats()` 只写 `stats-state.json` 的统计起点，`cost.jsonl` 与既有健康证据都不动；历史花费仍在磁盘上，只是不再计入显示金额。不要把它当作隐私清除或账单删除功能。
 - **免费标签的「已确认免费」现在带来源后缀（2.4.0）**：价格表声明显示 `已确认免费·价格表`，探测显示 `已确认免费·探测`，账本显示 `已确认免费·账单`；弱信号仍是「可能免费（未实测）」。免费标签按 `(provider, modelId)` 元组取证据，不再让同名模型跨 provider 串标；probe 多为 `unknown` 的根因仍未定论。
 - **`yaml` 依赖的探测链（无写死家目录）**：`registry/registry-lib.mjs` 只在 DSH profile 里找 `yaml`，按 `DSH_HOME` → `HOME` → `os.homedir()` 的优先级组候选锚点（三者都指向**当前用户**，重复项去重后逐个尝试）。全部失败时抛错并列出试过的每个锚点，提示用 `DSH_HOME` 指安装根；**不再**回退到任何写死的他人家目录。该文件没有独立测试文件，因此这条改动靠全量门禁的语法检查 + 本机三种环境（普通 `HOME`、`env -u HOME -u DSH_HOME`、显式 `DSH_HOME`）的加载冒烟来守。

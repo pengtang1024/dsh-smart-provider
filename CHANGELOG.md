@@ -2,6 +2,22 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.4.1
+
+修复版本（`2.4.0` → `2.4.1`）。用户重启 2.4.0 后反馈三处缺陷，本版全部是修复，不引入新功能。
+
+### 修复
+
+- **自动探测复选框显示与行为分叉**：账号/择优卡的「新模型自动探测」复选框此前用 truthy 读值，未配置时显示关闭，而执行路径按 `probeEnabled !== false` 视作开启；用户看到「关」却在后台探测。现在复选框也按 `c.probeEnabled !== false` 渲染，只有显式保存 `false` 才取消勾选，显示与实际执行口径一致。
+- **CUSTOM_PROVIDERS 重复声明导致 HMR 杀死整个客户端模块**：生成脚本插入的 `const CUSTOM_PROVIDERS` / `const CUSTOM_MODELS` 位于浏览器模块顶层，DSH 热更新重新求值模块时触发 `Identifier ... has already been declared`，设置页与对话页 pill 的整个插件命名空间一起消失。现在候选声明移入 `window.__ModuleLoader__.load({ factory })` 作用域，HMR 重估不再与旧声明冲突，生成器仍以标记块为唯一插入锚点。
+- **设置页缺 pill 开关且默认位置与 slot 名不匹配**：`costPillEnabled` / `costPillPosition` / `costPillRefreshMs` 虽在 schema 中存在，设置页却没有控件，新手找不到开启入口；README 曾写默认 `input.right`，实际 schema 与 Host slot 名是 `conversation.input.right`。现在总览首屏新增「对话页消耗显示」卡片，三个控件都经 `form.mutate` 即时写回；默认位置统一为 `conversation.input.right`，并与三个真实对话插槽名逐字一致。
+
+### 验证（2026-11-26 实测）
+
+- 独立复验（修复后、版本收口前）：`env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit`：**17 个测试文件 / 262 条，pass 262 / fail 0，退出码 0**；`DSH_NODE_EXECUTABLE='/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT' node scripts/run-tests.mjs`：**24 个测试文件 / 320 条，pass 320 / fail 0，退出码 0**。
+- 源码断言：探测复选框 `checked: c.probeEnabled !== false`；`CUSTOM_PROVIDERS` 仅出现在 factory 内；总览首屏挂载 `CostPillSettingsCard`，三个 costPill 控件均调用 `mutate`，默认位置 `conversation.input.right` 在 schema 与 slot 列表中一致。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.4.1`。
+
 ## 2.4.0
 
 本轮为 RC1 收口版本，由 `2.3.1` 升级到 `2.4.0`（含新功能，按语义化版本 minor 递增）：一部分是 2.3.x 免费判据遗留的三处串标 / 假免费修复，另一部分是新增的对话页可配置预估总额 pill。未实现的能力（例如让 probe 在所有路由上都能给出确定结论）不在本版承诺内。
