@@ -31,6 +31,101 @@ window.__ModuleLoader__.load({
     // 故按本项目 STATIC_* 惯例内联）。改版本时两处都要更新。
     const PLUGIN_VERSION = '2.2.0'
 
+    // ---- NF3: free-signal weak-signal contract (inline mirror of lib/free-policy.js) --------
+    // Browser modules cannot import lib/, so this mirror must stay in lockstep with
+    // the Host policy. Rule version is shared verbatim; free-verify (task-26)
+    // compares FREE_POLICY_VECTORS + this function against the Host copy.
+    const FREE_SIGNAL_RULE_VERSION = 'free-signal-v1'
+    // Vectors mirror lib/free-policy.js FREE_POLICY_VECTORS verbatim; free-verify
+    // (task-26) compares the two exports. Only {name,input,expected:{free,level}}
+    // is checked — evidence/source wording may differ between Host and client.
+    const FREE_POLICY_VECTORS = Object.freeze([
+      { name: 'name-free', input: { provider: 'x-opencode-free', model: 'hy4-flash-free' }, expected: { free: true, level: 'weak' } },
+      { name: 'multiplier-zero', input: { model: 'm', multiplier: 0 }, expected: { free: true, level: 'declared' } },
+      { name: 'price-multiplier-zero-alias', input: { model: 'm', priceMultiplier: 0 }, expected: { free: true, level: 'declared' } },
+      { name: 'multiplier-string-zero', input: { model: 'm', multiplier: '0' }, expected: { free: false, level: 'none' } },
+      { name: 'multiplier-null', input: { model: 'm', multiplier: null }, expected: { free: false, level: 'none' } },
+      { name: 'multiplier-missing', input: { model: 'm' }, expected: { free: false, level: 'none' } },
+      { name: 'multiplier-negative', input: { model: 'm', multiplier: -1 }, expected: { free: false, level: 'none' } },
+      { name: 'cost-model-free', input: { model: 'm', costModel: 'free' }, expected: { free: true, level: 'declared' } },
+      { name: 'probe-free', input: { model: 'm', probeVerdict: 'free' }, expected: { free: true, level: 'measured' } },
+      { name: 'probe-metered', input: { model: 'm', probeVerdict: 'metered', name: 'free-model', multiplier: 0 }, expected: { free: false, level: 'none' } },
+      { name: 'probe-unknown-name-free', input: { model: 'hy4flash-free', probeVerdict: 'unknown' }, expected: { free: true, level: 'weak' } },
+      { name: 'probe-unknown-multiplier-zero', input: { model: 'm', probeVerdict: 'unknown', multiplier: 0 }, expected: { free: true, level: 'declared' } },
+      { name: 'real-zero-price', input: { model: 'm', price: { known: true, estimated: false, input: 0, output: 0 } }, expected: { free: true, level: 'measured' } },
+      { name: 'real-positive-price', input: { model: 'free-model', price: { known: true, estimated: false, input: 1e-6, output: 2e-6 } }, expected: { free: false, level: 'none' } },
+      { name: 'estimated-zero-price-not-free', input: { model: 'm', price: { known: false, estimated: true, input: 0, output: 0, priceTier: 'free' } }, expected: { free: false, level: 'none' } },
+      { name: 'ledger-positive-cost', input: { model: 'free-model', billing: { costUsd: 0.01 } }, expected: { free: false, level: 'none' } },
+      { name: 'ledger-paid-source', input: { model: 'free-model', billing: { billingSource: 'subscription-credit' } }, expected: { free: false, level: 'none' } },
+      { name: 'ledger-free-source', input: { model: 'm', billing: { billingSource: 'free-allowance' } }, expected: { free: true, level: 'measured' } },
+      { name: 'no-price-weak-signal', input: { model: 'm', name: 'free-tier' }, expected: { free: true, level: 'weak' } },
+      { name: 'flash-not-free', input: { model: 'deepseek-v4-flash', provider: 'opencode-go' }, expected: { free: false, level: 'none' } },
+      { name: 'price-tier-free-weak', input: { model: 'm', priceTier: 'free' }, expected: { free: true, level: 'weak' } },
+      { name: 'uppercase-free', input: { provider: 'OPENCODE-GO', model: 'Beam-FREE' }, expected: { free: true, level: 'weak' } },
+      { name: 'group-free', input: { model: 'm', group: 'Free-Tier' }, expected: { free: true, level: 'weak' } },
+      { name: 'empty-input', input: {}, expected: { free: false, level: 'none' } },
+    ])
+    // Pure classifier — identical decision tree to lib/free-policy.js.
+    // Tier ladder: measured > declared > weak > none. An unknown/absent probe
+    // never blocks weak signals; hard paid evidence always wins.
+    const freeSignal = input => {
+      const i = input && typeof input === 'object' && !Array.isArray(input) ? input : {}
+      const verdict = typeof i.probeVerdict === 'string' ? i.probeVerdict : ''
+      const b = obj(i.billing)
+      const price = obj(i.price)
+      const rawMultiplier = i.multiplier === undefined ? i.priceMultiplier : i.multiplier
+      const multiplierZero = typeof rawMultiplier === 'number'
+        && Number.isFinite(rawMultiplier) && rawMultiplier === 0
+      const costModelFree = typeof i.costModel === 'string' && i.costModel.toLowerCase() === 'free'
+      const realPrice = price.known === true && price.estimated !== true
+      const inputPrice = Number(price.input ?? 0)
+      const outputPrice = Number(price.output ?? 0)
+      const positive = realPrice && ((Number.isFinite(inputPrice) && inputPrice > 0)
+        || (Number.isFinite(outputPrice) && outputPrice > 0))
+      const zero = realPrice && Number.isFinite(inputPrice) && Number.isFinite(outputPrice)
+        && inputPrice === 0 && outputPrice === 0
+      const bs = str(b.billingSource)
+      const paidBilling = (Number.isFinite(b.cost) && b.cost > 0)
+        || (Number.isFinite(b.costUsd) && b.costUsd > 0)
+        || (Number.isFinite(b.estimatedCostUsd) && b.estimatedCostUsd > 0)
+        || (Number.isFinite(b.meteredSamples) && b.meteredSamples > 0)
+        || (Number.isFinite(b.paidCalls) && b.paidCalls > 0)
+        || /paid|meter|subscription|credit|go-plus/i.test(bs)
+      // 1. Hard paid evidence beats everything (even a measured free verdict).
+      if (verdict === 'metered' || paidBilling || positive) {
+        return { free: false, level: 'none',
+          source: verdict === 'metered' ? 'probe' : positive ? 'price' : 'billing' }
+      }
+      // 2. Measured free: probe verdict or a real (non-estimated) zero price.
+      if (verdict === 'free' || zero) {
+        return { free: true, level: 'measured', source: verdict === 'free' ? 'probe' : 'price' }
+      }
+      // 2b. Upstream free billing source is real but softer than probe/zero price.
+      if (/free|trial|bonus|allowance/i.test(bs)) {
+        return { free: true, level: 'measured', source: 'billing' }
+      }
+      // 3. User-declared defaults (NOT measured): multiplier=0 / costModel=free.
+      if (multiplierZero || costModelFree) return { free: true, level: 'declared', source: 'declared' }
+      // 4. Weak name / tier signals. 'unknown' probe never blocks these.
+      if ([i.provider, i.model, i.name, i.group]
+        .some(v => typeof v === 'string' && v.toLowerCase().includes('free'))) {
+        return { free: true, level: 'weak', source: 'name' }
+      }
+      if (typeof i.priceTier === 'string' && i.priceTier.toLowerCase() === 'free') {
+        return { free: true, level: 'weak', source: 'tier' }
+      }
+      // 5. Nothing — never claim free.
+      return { free: false, level: 'none', source: 'none' }
+    }
+    // Host projection row may carry a freeSignal tag; strict codec declares it
+    // as a nullable three-field object. A missing tag means "no free evidence".
+    const freeTagOf = row => {
+      const v = row?.freeSignal
+      return v && typeof v === 'object' && typeof v.free === 'boolean'
+        ? { free: v.free, level: str(v.level), source: str(v.source) }
+        : null
+    }
+
     // ---- typed @Remote contribution for real cost data ---------------------
     // The Host registers a `smartProvider/cost` @Remote service (see lib/remote.js).
     // Here we build the matching mountable contribution inlined (the browser
@@ -107,8 +202,15 @@ window.__ModuleLoader__.load({
       try { zod = require('zod') } catch { return null }
       if (!zod?.object) return null
       const z = zod.z ?? zod
+      const freeSignalCodec = z.object({
+        free: z.boolean(), level: z.string(), source: z.string(),
+      }).nullable()
       return z.record(z.string(), z.object({
         health: z.string(), tier: z.string(), confidence: z.number(),
+        // NF3: Host adds a free-signal tag to each projection row. MUST be a
+        // required nullable field — strict zod strips undeclared keys, which
+        // would silently erase the whole availability projection on the wire.
+        freeSignal: freeSignalCodec,
       }))
     })()
     // task-107: minimal probe result/candidates schema. strict codec 三件套
@@ -584,17 +686,17 @@ window.__ModuleLoader__.load({
       // 因此 id/name/group 含 free 为主判据，配合 seed + tier=free 投影。
       // 不会塞满 176：付费模型三项都不含 free、不在 seed、tier 非 free → 不命中。
       const isPossiblyFree = m => {
-        const id = str(m?.id ?? m), name = str(m?.name), group = str(m?.group)
-        const provider = str(m?.group)
-        // task-107: 探测证据优先（自定义名字的免费模型也能被识别）。
-        const pv = str(obj(probeVerdicts)[`${provider}/${id}`])
-        if (pv === 'free') return true       // 真实探测：免费
-        if (pv === 'metered') return false   // 真实探测：明确付费（不进免费区）
-        // 弱信号兜底（unknown/失败/未做探测仍收录，不能挡）。
-        if (`${id} ${name} ${group}`.toLowerCase().includes('free')) return true
-        if (FREE_MODEL_STATUS[id] !== undefined) return true
-        if (str(obj(availProjection)[id]?.tier) === 'free') return true
-        return false
+        const id = str(m?.id ?? m), provider = str(m?.group)
+        // NF3: one contract for all three free checks. Host freeSignal tag
+        // (measured/declared/weak) wins; otherwise classify locally from the
+        // probe verdict + available weak signals. Unknown never blocks weak.
+        const tagged = freeTagOf(obj(availProjection)[id])
+        if (tagged && tagged.level !== 'none') return tagged.free
+        return freeSignal({
+          provider, model: id, name: str(m?.name), group: provider,
+          probeVerdict: str(obj(probeVerdicts)[`${provider}/${id}`]),
+          priceTier: str(obj(availProjection)[id]?.tier),
+        }).free
       }
       // Exclude virtual smart副本: the same free model id appears twice in
       // modelCatalog — a real group entry (keep) and a group==='smart' mirror
@@ -699,9 +801,19 @@ window.__ModuleLoader__.load({
                         maybeFreeModels.map(m => {
                           const id = str(m?.id ?? m)
                           const st = statusOf(id)
-                          const label = st.key === 'healthy' ? t('pi.availableTag') : t('pi.unknownTag')
+                          const tagged = freeTagOf(obj(availProjection)[id])
+                          const probe = str(obj(probeVerdicts)[`${str(m?.group)}/${id}`])
+                          // NF3 wording: only measured evidence (Host tag or probe
+                          // verdict) says "已确认免费"; weak/declaration stays
+                          // "可能免费（未实测）". Zero samples still "暂无数据",
+                          // never "不可用".
+                          const confirmed = tagged?.level === 'measured' || probe === 'free'
+                          const label = confirmed ? t('pi.freeConfirmedTag') : t('pi.freePossibleTag')
+                          const samples = st.samples ?? 0
+                          const dataLabel = st.key === 'healthy' ? t('pi.availableTag')
+                            : samples > 0 ? t('pi.unknownTag') : t('health.stateUnknown')
                           return h('span', { key: id, style: S.pill(st.key === 'healthy') },
-                            `${str(m?.name) || id} · ${label}${st.reviewed ? '' : `（${t('pi.unreviewed')}）`}`)
+                            `${str(m?.name) || id} · ${label} · ${dataLabel}`)
                         })
                       )
                       : h('div', { style: S.muted }, t('pi.noMaybeFree')),
@@ -1074,7 +1186,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi, costService, onDirty }) {
+    function AccountsTab({ t, config, revision, mutate, applyPreset, working, pi, costService, onDirty, availProjection, probeVerdicts }) {
       // 账号数三态（loading / ok / error）：不能永远停在「正在读取」，也不能
       // 把读失败说成 0 个账号。数据源与成本页健康面板同一个 accountHealth()。
       const [accountState, setAccountState] = useState({ status: 'loading' })
@@ -1103,6 +1215,7 @@ window.__ModuleLoader__.load({
       const blankAccount = () => ({
         id: '', provider: provOpts[0]?.v, credentialRef: '', models: [modelOpts[0]?.v],
         tier: 'standard', speedTier: 'normal', priceTier: 'mid', costModel: 'metered', quotaCost: '', priority: 0,
+        priceMultiplier: undefined,
       })
       // 初始化 / config 同步 / dirty 基线共用同一归一化，避免"没动过"被判成脏。
       // 关键：展开原对象再覆盖 UI 编辑的键 —— 账号里未展示的字段
@@ -1125,6 +1238,10 @@ window.__ModuleLoader__.load({
           costModel: str(raw.costModel) || 'metered',
           quotaCost: quota,
           priority: Number.isFinite(Number(raw.priority)) ? Math.trunc(Number(raw.priority)) : 0,
+          // NF3: priceMultiplier lives INSIDE ranking (lib/account-pool.js:67-80).
+          // Keep the whole ranking block spread so weight/priceOverrides survive.
+          priceMultiplier: Number.isFinite(raw.ranking?.priceMultiplier)
+            ? raw.ranking.priceMultiplier : undefined,
         }
       })
       // 模型多选的搜索 / 只看免费状态（按账号行索引；不进 config）。
@@ -1168,6 +1285,19 @@ window.__ModuleLoader__.load({
       }))
       // 模型多选可用性：搜索 / 只看免费 / 已选始终可见 / 默认最多渲染 60 个。
       const MODEL_RENDER_CAP = 60
+      // NF3: "只看免费" uses the same weak-signal contract as the overview and
+      // auto-probe: Host tag first, then probe verdict + name/tier/multiplier.
+      // A metered verdict or paid billing excludes the model; unknown does not.
+      const modelFreeSignal = (id, label) => {
+        const group = (arr(pi?.models).find(m => str(m?.id ?? m) === id)?.group) ?? ''
+        const tagged = freeTagOf(obj(availProjection)[id])
+        if (tagged && tagged.level !== 'none') return tagged
+        return freeSignal({
+          provider: str(group), model: id, name: str(label), group: str(group),
+          probeVerdict: str(obj(probeVerdicts)[`${str(group)}/${id}`]),
+          priceTier: str(obj(availProjection)[id]?.tier),
+        })
+      }
       const pickerState = i => {
         const selected = new Set(arr(rows[i]?.models).map(str))
         const q = str(modelQuery[i]).trim().toLowerCase()
@@ -1176,7 +1306,7 @@ window.__ModuleLoader__.load({
           const id = str(o.v)
           const hay = `${id} ${str(o.l)}`.toLowerCase()
           if (q && !hay.includes(q)) return false
-          if (wantsFree && !hay.includes('free')) return false
+          if (wantsFree && !modelFreeSignal(id, o.l).free) return false
           return true
         }
         const pinned = modelOpts.filter(o => selected.has(str(o.v)))
@@ -1221,6 +1351,22 @@ window.__ModuleLoader__.load({
           row.speedTier = str(r.speedTier) || 'normal'
           row.priceTier = str(r.priceTier) || 'mid'
           row.costModel = str(r.costModel) || 'metered'
+          // NF3: priceMultiplier is a NESTED ranking field. Merge into the
+          // existing ranking sub-object so weight/priceOverrides/other keys
+          // are never overwritten. Blank = default 1; only finite numbers >=0
+          // are accepted (0 is legal); '0'/negative/NaN fall back to 1 AND
+          // surface a visible per-row warning (never a silent reset).
+          const ranking = obj(row.ranking)
+          const rawMul = r.priceMultiplier
+          const parsedMul = rawMul === '' || rawMul === undefined || rawMul === null
+            ? 1 : Number(rawMul)
+          const validMul = Number.isFinite(parsedMul) && parsedMul >= 0
+          const priceMultiplier = validMul ? parsedMul : 1
+          row.ranking = { ...ranking, priceMultiplier }
+          if (!validMul && rawMul !== '' && rawMul !== undefined && rawMul !== null) {
+            problems[i] = (problems[i] ? problems[i] + ' ' : '')
+              + fmt(t, 'account.priceMultiplierInvalid', { value: str(rawMul) })
+          }
           // 额度消耗代价只对订阅制有意义；不订阅就不写这个键。
           if (row.costModel === 'subscription' && r.quotaCost !== '' && Number.isFinite(Number(r.quotaCost))) {
             row.quotaCost = Math.min(1, Math.max(0, Number(r.quotaCost)))
@@ -1391,6 +1537,15 @@ window.__ModuleLoader__.load({
                     [{ v: 'metered', l: t('account.costMetered') }, { v: 'subscription', l: t('account.costSubscription') }, { v: 'free', l: t('account.costFree') }],
                     r.costModel, v => update(i, x => ({ ...x, costModel: v })), t('account.costModel'),
                   )),
+                h(Field, { label: t('account.priceMultiplier'), help: t('account.priceMultiplierHelp') },
+                  h('input', {
+                    type: 'number', min: 0, step: 'any',
+                    value: r.priceMultiplier === undefined || r.priceMultiplier === null
+                      ? '' : String(r.priceMultiplier),
+                    placeholder: t('account.priceMultiplierPh'),
+                    onChange: e => update(i, x => ({ ...x, priceMultiplier: e.target.value })),
+                    style: S.input, 'aria-label': t('account.priceMultiplier'),
+                  })),
                 r.costModel === 'subscription'
                   ? h(Field, { label: t('account.quotaCost'), help: t('account.quotaCostHelp') },
                     h('input', {
@@ -2113,8 +2268,15 @@ window.__ModuleLoader__.load({
           if (autoProbedRef.current[key]) continue
           // 只探零样本的（有样本已由双源判定，不必花钱探）
           if (Number(obj(availProjection)[id]?.samples ?? 0) > 0) continue
-          // 只探"可能免费"弱信号命中的，避免对全部 176 个批量探测
-          if (!`${id} ${str(m?.name)} ${provider}`.toLowerCase().includes('free')) continue
+          // NF3: same weak-signal contract — name free / multiplier 0 /
+          // costModel free / tier free. Unknown verdict never blocks a probe.
+          const tagged = freeTagOf(obj(availProjection)[id])
+          const sig = tagged && tagged.level !== 'none' ? tagged : freeSignal({
+            provider, model: id, name: str(m?.name), group: provider,
+            probeVerdict: str(obj(probeVerdicts)[`${provider}/${id}`]),
+            priceTier: str(obj(availProjection)[id]?.tier),
+          })
+          if (!sig.free) continue
           candidates.push(m)
           if (candidates.length >= 3) break
         }
@@ -2301,7 +2463,7 @@ window.__ModuleLoader__.load({
         // 两张卡都上报 dirty，供切 Tab 前的确认条使用。
         tab === 'routing' ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
           h(ChainsTab, { t, form, revision, mutate, config, pi, onDirty: v => reportDirty('chains', v) }),
-          h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService, onDirty: v => reportDirty('accounts', v) }),
+          h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService, onDirty: v => reportDirty('accounts', v), availProjection, probeVerdicts }),
         ) : null,
         tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}` }) : null,
       )
@@ -2350,6 +2512,10 @@ window.__ModuleLoader__.load({
       'account.costModel': '怎么计费', 'account.costModelHelp': '按量 = 按 token 计费；订阅 = 用额度折算；免费 = 成本按 0 算。',
       'account.costMetered': '按量付费', 'account.costSubscription': '订阅制（额度）', 'account.costFree': '免费',
       'account.quotaCost': '额度消耗代价', 'account.quotaCostHelp': '0~1：一次订阅额度消耗相当于多少份按量成本，越小越优先。',
+      'account.priceMultiplier': '价格倍率（0 = 免费）',
+      'account.priceMultiplierHelp': '留空 = 默认 1；0 表示这个账号免费；0.8 表示八折。只接受 ≥0 的数字，填错会自动按 1 并提示。',
+      'account.priceMultiplierPh': '默认 1',
+      'account.priceMultiplierInvalid': '价格倍率「{value}」无效，已按 1 保存（只接受 ≥0 的数字）。',
       'account.priority': '优先级', 'account.priorityHelp': '数字越小越优先（0 最高）；只影响同等级内部的先后。',
       'account.modelSearch': '搜索模型…', 'account.freeOnly': '只看免费',
       'account.selectedCount': '已选 {n} 个', 'account.selectAll': '全选', 'account.clear': '清空',
@@ -2378,6 +2544,7 @@ window.__ModuleLoader__.load({
       'pi.noMaybeFree': '当前未发现可能免费的模型',
       'pi.otherModels': '其他已登记模型 {n} 个（点开查看）',
       'pi.availableTag': '可用（已复核）', 'pi.unknownTag': '资费未确认',
+      'pi.freeConfirmedTag': '已确认免费', 'pi.freePossibleTag': '可能免费（未实测）',
       'pi.unreviewed': '未复核',
       'pi.freeModelsHint': '状态来自真实使用记录：有足够成功样本才显示"可用"，其余显示"资费未确认"（不是"不可用"）。无论状态如何都保留在列表里。',
       'pi.otherProvidersHint': 'Trae / Qoder / WorkBuddy 等插件的免费模型与可用性由各自插件管理，这里不标注。',
@@ -2515,6 +2682,10 @@ window.__ModuleLoader__.load({
       'account.costModel': 'How it bills', 'account.costModelHelp': 'Metered = per token; Subscription = quota-based cost; Free = cost counted as 0.',
       'account.costMetered': 'Metered', 'account.costSubscription': 'Subscription (quota)', 'account.costFree': 'Free',
       'account.quotaCost': 'Quota cost', 'account.quotaCostHelp': '0–1: how much one quota unit costs relative to metered pricing. Lower ranks first.',
+      'account.priceMultiplier': 'Price multiplier (0 = free)',
+      'account.priceMultiplierHelp': 'Blank = default 1; 0 = free account; 0.8 = 20% off. Only numbers ≥0 are accepted; invalid values fall back to 1.',
+      'account.priceMultiplierPh': 'default 1',
+      'account.priceMultiplierInvalid': 'Price multiplier "{value}" is invalid — saved as 1 (numbers ≥0 only).',
       'account.priority': 'Priority', 'account.priorityHelp': 'Lower number wins (0 highest); only orders accounts inside the same tier.',
       'account.modelSearch': 'Search models…', 'account.freeOnly': 'Free only',
       'account.selectedCount': '{n} selected', 'account.selectAll': 'Select all', 'account.clear': 'Clear',
@@ -2543,6 +2714,7 @@ window.__ModuleLoader__.load({
       'pi.noMaybeFree': 'No possibly-free models found',
       'pi.otherModels': 'Other registered models ({n}) — expand to view',
       'pi.availableTag': 'available (verified)', 'pi.unknownTag': 'billing unconfirmed',
+      'pi.freeConfirmedTag': 'confirmed free', 'pi.freePossibleTag': 'possibly free (unverified)',
       'pi.unreviewed': 'unreviewed',
       'pi.freeModelsHint': 'Status comes from real usage: "available" only with enough success samples; otherwise "billing unconfirmed" (not "unavailable"). All entries stay listed regardless.',
       'pi.otherProvidersHint': 'Free models and availability from Trae / Qoder / WorkBuddy and other plugins are managed by those plugins, not marked here.',
