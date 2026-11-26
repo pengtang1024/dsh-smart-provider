@@ -129,17 +129,20 @@ window.__ModuleLoader__.load({
     // each row also carries `providers: { [provider]: freeSignal|null }` with one
     // exact (provider, model) tag per provider. This adapts a projection row to
     // the legacy freeTagOf(row) shape by promoting that provider's exact tag to
-    // the top-level key. When the map has no entry, the row's own freeSignal (the
-    // Host's exact-evidence fallback) is returned unchanged — old Profiles without
-    // a map keep working.
+    // the top-level key. A PUBLISHED map is authoritative: a missing tuple means
+    // "no evidence for this provider", never a fallback to row.freeSignal (the
+    // strongest tag across ALL providers). Old Profiles without a map keep using
+    // the top-level tag unchanged.
     const tupleScope = (projection, id, provider) => {
       const rows = obj(projection)
       const row = rows[id]
       const map = row?.providers
       if (!provider || !map || typeof map !== 'object' || Array.isArray(map)) return rows
       const key = str(provider)
-      if (!key || !Object.prototype.hasOwnProperty.call(map, key)) return rows
-      const exact = map[key]
+      if (!key) return rows
+      // No entry for this tuple → null, so local weak-signal classification runs
+      // instead of leaking another provider's measured tag through the aggregate.
+      const exact = Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null
       return { ...rows, [id]: { ...row, freeSignal: exact && typeof exact === 'object' ? exact : null } }
     }
 
@@ -1821,17 +1824,20 @@ window.__ModuleLoader__.load({
       return t('health.freeNone')
     }
     // 投影按 modelId 索引；同一账号可对应多个模型，取证据最强的一档展示。
-    // HB2: each lookup is (provider, modelId) → prefer that provider's exact tag
-    // in the row's `providers` map; bare-modelId and legacy tuple keys stay as
-    // fallbacks for old Profiles. Never mix a different provider's tag here.
+    // HB2 residual: a lookup is STRICTLY (provider, modelId). Passing a bare
+    // modelId made tupleScope see an empty provider and read row.freeSignal —
+    // the strongest tag across ALL providers — whose measured rank outranked
+    // this tuple's own weak tag (workbuddy/hy4flash-free showed 已确认免费
+    // from an x-opencode-free zero-price row). Old Profiles without a `providers`
+    // map still read the legacy top-level tag through tupleScope's no-map branch.
     const FREE_LEVEL_RANK = { measured: 3, declared: 2, weak: 1 }
-    const strongestFreeTag = (projection, keys) => {
+    const strongestFreeTag = (projection, tuples) => {
       let best = null
-      for (const key of keys) {
-        if (!key) continue
-        const slash = key.indexOf('/')
-        const provider = slash > 0 ? key.slice(0, slash) : ''
-        const modelId = slash > 0 ? key.slice(slash + 1) : key
+      for (const tuple of tuples) {
+        if (!tuple) continue
+        const provider = str(tuple.provider)
+        const modelId = str(tuple.modelId)
+        if (!modelId) continue
         const tag = freeTagOf(obj(tupleScope(projection, modelId, provider))[modelId])
         if (!tag || tag.free !== true) continue
         if (!best || (FREE_LEVEL_RANK[str(tag.level)] ?? 0) > (FREE_LEVEL_RANK[str(best.level)] ?? 0)) best = tag
@@ -1879,8 +1885,18 @@ window.__ModuleLoader__.load({
       const snapAt = Number(snap.generatedAt)
       // 资费证据来自 availProjection（Host freeSignal + 账本合并后的投影），
       // 健康快照本身只带健康/冷却，不带任何资费字段。
-      const freeForAccount = row => strongestFreeTag(availProjection, [...arr(row?.models), str(row?.id), str(row?.provider)])
-      const freeForRoute = row => strongestFreeTag(availProjection, [str(row?.modelId), `${str(row?.provider)}/${str(row?.modelId)}`])
+      // Account rows own one provider + several models: rank the exact tag of
+      // each (account.provider, model) tuple, never the bare model aggregate.
+      const freeForAccount = row => {
+        const provider = str(row?.provider)
+        return strongestFreeTag(availProjection, arr(row?.models).map(modelId => ({ provider, modelId: str(modelId) })))
+      }
+      // Route rows own one (provider, modelId) tuple. Passing the bare modelId
+      // here was the residual bug: tupleScope saw an empty provider and read the
+      // strongest tag across all providers (x-opencode-free measured → workbuddy).
+      const freeForRoute = row => strongestFreeTag(availProjection, [{
+        provider: str(row?.provider), modelId: str(row?.modelId),
+      }])
       // 倒计时用组件内单一 setTimeout 每秒 tick 重绘（不用 setInterval）。
       // tab 隐藏时暂停；卸载时 alive=false + clearTimeout + 摘监听，三重清理防泄漏。
       const [, setTick] = useState(0)
