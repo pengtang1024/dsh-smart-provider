@@ -168,6 +168,48 @@ window.__ModuleLoader__.load({
         source: z.string().optional(),
       })
     })()
+    // CF-2: statsSince() returns the SAME summary as cost() plus a canonical
+    // `since` instant (ISO string or null when no start marker). Every field
+    // the Host returns must be declared here or strict zod strips it on the
+    // wire. Missing fields in the degraded catch path still satisfy the codec
+    // because they are optional/nullable, matching lib/remote.js verbatim.
+    const STATS_SINCE_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      return z.object({
+        records: z.number(),
+        estimatedCostUsd: z.number(),
+        freeCount: z.number(),
+        paidCount: z.number(),
+        failedCount: z.number().optional(),
+        byProvider: z.record(z.string(), z.number()),
+        source: z.string().optional(),
+        since: z.string().nullable(),
+      })
+    })()
+    // CF-2: clearStats() writes only the companion stats-state.json; the
+    // ledger is never truncated. `ok` says whether the marker was persisted.
+    const CLEAR_STATS_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      return z.object({
+        ok: z.boolean(),
+        since: z.string().nullable(),
+      })
+    })()
+    // statsSince({since?}) accepts an ISO string, epoch ms, or null/absent
+    // (absent = read the state marker). Strict codec needed at mount time.
+    const STATS_OPTIONS_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      return z.object({ since: z.union([z.string(), z.number()]).nullable().optional() })
+    })()
     // Detailed ledger view (costDetail) — separate descriptor so cost() keeps
     // its original light structure for older clients. zod strict here must list
     // EVERY field the Host returns or it gets stripped on the wire.
@@ -417,6 +459,57 @@ window.__ModuleLoader__.load({
         invoke(remote, input, signal) {
           const receiver = remote.smartProvider
           return receiver.accountHealth(signal)
+        },
+      }, {
+        // CF-2: statistics total from an explicit start or the persisted
+        // marker. Same strict-codec 三件套 rule as every other descriptor:
+        // without mode/typeSymbol/create the WHOLE namespace fails to mount.
+        id: '@local/dsh-smart-provider#smartProvider/statsSince',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'statsSince',
+        description: 'Read cost summary since a start instant or the saved marker',
+        invocation: { kind: 'direct' },
+        parameters: [{
+          name: 'opts', wire: 'opts', description: 'optional {since} (ISO string or epoch ms)', source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@local/dsh-smart-provider/types#StatsSinceOptions',
+            create: () => STATS_OPTIONS_SCHEMA ?? { parse: v => v },
+          },
+        }],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#StatsSinceSummary',
+          create: () => STATS_SINCE_SCHEMA ?? { parse: v => v },
+          description: 'cost summary plus canonical since instant',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          const opts = input && (input.opts ?? input)
+          return receiver.statsSince(opts, signal)
+        },
+      }, {
+        // CF-2: set the statistics start to now. Never deletes cost.jsonl;
+        // the Host writes stats-state.json and returns the instant.
+        id: '@local/dsh-smart-provider#smartProvider/clearStats',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'clearStats',
+        description: 'Start a new statistics window without deleting the ledger',
+        invocation: { kind: 'direct' },
+        parameters: [],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#ClearStatsResult',
+          create: () => CLEAR_STATS_SCHEMA ?? { parse: v => v },
+          description: 'clear acknowledgement with canonical since instant',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          return receiver.clearStats(signal)
         },
       }],
     })
@@ -2796,6 +2889,15 @@ window.__ModuleLoader__.load({
       'health.healthDeprecated': '已弃用', 'health.healthUnknown': '暂无数据',
       'error.jsonObject': '请输入合法的 JSON 对象。', 'error.jsonArray': '请输入合法的 JSON 数组。',
       'error.saveFailed': '保存失败，请重试。',
+      // CF-2: conversation cost-pill config labels (CF-3 consumes them).
+      'costPill.enabled': '对话页显示预估总额', 'costPill.enabledHelp': '默认关闭；开启后在对话页显示智能路由累计估算成本。',
+      'costPill.position': '显示位置', 'costPill.positionHelp': '选择对话页挂载点；默认输入框右侧紧凑位。',
+      'costPill.pos.input.right': '输入框右侧（紧凑）', 'costPill.pos.session.header.utilities': '会话标题栏工具区', 'costPill.pos.input.dock': '输入框上方条目',
+      'costPill.refreshMs': '自动刷新间隔（毫秒）', 'costPill.refreshMsHelp': '定时刷新默认关闭；手动刷新按钮常驻。最小 1000 毫秒。',
+      'costPill.monitor': '监控', 'costPill.autoRefresh': '定时刷新', 'costPill.refreshNow': '立即刷新',
+      'costPill.since': '统计起点：{since}', 'costPill.noSince': '统计起点：全部历史',
+      'costPill.clear': '从现在重新统计', 'costPill.clearConfirm': '只设置新统计起点，不删除成本账本。确定继续？',
+      'costPill.cleared': '新的统计起点：{since}',
     }
     const en = {
       nav: 'Smart provider',
@@ -2971,6 +3073,15 @@ window.__ModuleLoader__.load({
       'health.healthDeprecated': 'Deprecated', 'health.healthUnknown': 'No data yet',
       'error.jsonObject': 'Enter a valid JSON object.', 'error.jsonArray': 'Enter a valid JSON array.',
       'error.saveFailed': 'Save failed, please retry.',
+      // CF-2: conversation cost-pill config labels (CF-3 consumes them).
+      'costPill.enabled': 'Show estimated total in conversation', 'costPill.enabledHelp': 'Off by default; shows the accumulated smart-routing estimate in the conversation view.',
+      'costPill.position': 'Display position', 'costPill.positionHelp': 'Conversation slot for the pill; compact input-right by default.',
+      'costPill.pos.input.right': 'Input right (compact)', 'costPill.pos.session.header.utilities': 'Session header utilities', 'costPill.pos.input.dock': 'Input dock',
+      'costPill.refreshMs': 'Auto-refresh interval (ms)', 'costPill.refreshMsHelp': 'Scheduled refresh is off by default; manual refresh stays available. Minimum 1000 ms.',
+      'costPill.monitor': 'Monitor', 'costPill.autoRefresh': 'Auto-refresh', 'costPill.refreshNow': 'Refresh now',
+      'costPill.since': 'Statistics start: {since}', 'costPill.noSince': 'Statistics start: all history',
+      'costPill.clear': 'Restart statistics from now', 'costPill.clearConfirm': 'This only sets a new start marker; the cost ledger is never deleted. Continue?',
+      'costPill.cleared': 'New statistics start: {since}',
     }
 
     return {

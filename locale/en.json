@@ -8,5 +8,26 @@
   "setting": {
     "title": "Smart provider",
     "description": "Configure chains, account pool, ranking strategy and cost health; all edits apply live without a restart."
+  },
+  "costPill": {
+    "enabled": "Show estimated total in conversation",
+    "enabledHelp": "Off by default; shows the accumulated smart-routing estimate in the conversation view.",
+    "position": "Display position",
+    "positionHelp": "Conversation slot for the pill; compact input-right by default.",
+    "pos": {
+      "input.right": "Input right (compact)",
+      "session.header.utilities": "Session header utilities",
+      "input.dock": "Input dock"
+    },
+    "refreshMs": "Auto-refresh interval (ms)",
+    "refreshMsHelp": "Scheduled refresh is off by default; manual refresh stays available. Minimum 1000 ms.",
+    "monitor": "Monitor",
+    "autoRefresh": "Auto-refresh",
+    "refreshNow": "Refresh now",
+    "since": "Statistics start: {since}",
+    "noSince": "Statistics start: all history",
+    "clear": "Restart statistics from now",
+    "clearConfirm": "This only sets a new start marker; the cost ledger is never deleted. Continue?",
+    "cleared": "New statistics start: {since}"
   }
 }

@@ -8,5 +8,26 @@
   "setting": {
     "title": "Smart 智能路由",
     "description": "配置切换链、账号池、分级择优策略与成本健康；所有改动热更新，无需重启。"
+  },
+  "costPill": {
+    "enabled": "对话页显示预估总额",
+    "enabledHelp": "默认关闭；开启后在对话页显示智能路由累计估算成本。",
+    "position": "显示位置",
+    "positionHelp": "选择对话页挂载点；默认输入框右侧紧凑位。",
+    "pos": {
+      "input.right": "输入框右侧（紧凑）",
+      "session.header.utilities": "会话标题栏工具区",
+      "input.dock": "输入框上方条目"
+    },
+    "refreshMs": "自动刷新间隔（毫秒）",
+    "refreshMsHelp": "定时刷新默认关闭；手动刷新按钮常驻。最小 1000 毫秒。",
+    "monitor": "监控",
+    "autoRefresh": "定时刷新",
+    "refreshNow": "立即刷新",
+    "since": "统计起点：{since}",
+    "noSince": "统计起点：全部历史",
+    "clear": "从现在重新统计",
+    "clearConfirm": "只设置新统计起点，不删除成本账本。确定继续？",
+    "cleared": "新的统计起点：{since}"
   }
 }

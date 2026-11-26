@@ -60,4 +60,12 @@ export const Config = z.object({
   costDir: z.string().default('').volatile(),
   costBatchSize: z.number().default(16),
   costFlushIntervalMs: z.number().default(2000),
+  /**
+   * Conversation cost-pill controls (CF-2/CF-3). Volatile so the settings page
+   * toggles them without restart. The statistics start marker is NOT a config
+   * key: clearStats() persists it in stats-state.json next to cost.jsonl.
+   */
+  costPillEnabled: z.boolean().default(false).volatile(),
+  costPillPosition: z.string().default('input.right').volatile(),
+  costPillRefreshMs: z.number().default(60000).volatile(),
 })

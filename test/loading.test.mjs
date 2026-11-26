@@ -33,7 +33,7 @@ test('schema.js resolves schemastery through the shared anchors and exposes the 
   const config = Config({})
   assert.deepEqual(
     Object.keys(config).sort(),
-    ['accounts', 'chains', 'costBatchSize', 'costDir', 'costEnabled', 'costFlushIntervalMs', 'health', 'ranking', 'routing'],
+    ['accounts', 'chains', 'costBatchSize', 'costDir', 'costEnabled', 'costFlushIntervalMs', 'costPillEnabled', 'costPillPosition', 'costPillRefreshMs', 'health', 'ranking', 'routing'],
   )
 })
 
