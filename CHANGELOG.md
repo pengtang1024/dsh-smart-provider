@@ -2,6 +2,23 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.3.1
+
+修复版本（`2.3.0` → `2.3.1`）。用户反馈「重启没变化 / UI 没改完」：2.3.0 已承诺的免费链路只接了一半 —— Host 的实测/声明免费标签在 UI 合并时被丢掉、账号倍率没进入三处判据、健康面板没有资费列、价格倍率输入框埋在两层折叠里。本版把这些已承诺但未接通的链路补完，不是新能力、没有新增配置字段；健康面板「资费」列只是接通既有声明，属修复非 feat。
+
+### 修复
+
+- **免费标签在双源合并处丢失**：`availProjection` 合并现在透传 Host 行的 `freeSignal` 标签（账本源无标签，不能覆盖 Host 证据），实测 / 声明信号才能到达下游判据与面板。
+- **账号倍率 / costModel 未进判据**：概览候选、账号「只看免费」筛选、自动探测三处统一使用同一份账号声明与 Host 标签；倍率输入框移到账号卡顶层可见处，仍是单一输入点（写回 ranking 嵌套字段）。
+- **健康面板接通资费列与端到端门禁**：账号 / 路由两张表都展示来自 `availProjection` 的 `freeSignal` 最强档；新增 `test/free-ui-chain.test.mjs`，从源码断言合并透传、三处调用实参、表头与倍率输入位置，并纳入 `--unit` 白名单。
+- **文档口径补齐**：README / `docs/DETAIL.md` / `docs/DETAIL.en.md` 明确免费标签分实测 / 声明 / 未实测三档、账号倍率 0 属声明级且可被实测付费证据推翻；probe 71/71 `unknown` 仍是【待验证】根因，不宣称探测已能下结论。
+
+### 验证（2026-11-26 实测）
+
+- `env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit`：两轮均退出码 0、fail 0（轮次与断言数以实测输出为准）。
+- `DSH_NODE_EXECUTABLE='/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT' node scripts/run-tests.mjs`：两轮均退出码 0、fail 0（轮次与断言数以实测输出为准）。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.3.1`。
+
 ## 2.3.0
 
 本轮为免费判据统一版本，由 `2.2.0` 升级到 `2.3.0`（新增设置页价格倍率编辑与 Host/浏览器一致性门禁，按语义化版本 minor 递增）。用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」被裁决为弱信号 / 用户声明默认值，不是硬证据。

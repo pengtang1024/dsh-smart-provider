@@ -52,6 +52,7 @@ const UNIT_TESTS = [
   'test/note-failure-override.test.mjs',
   'test/config.test.mjs',
   'test/free-policy.test.mjs',
+  'test/free-ui-chain.test.mjs',
 ]
 
 /** Every source file worth a syntax check (client.js is browser code too). */

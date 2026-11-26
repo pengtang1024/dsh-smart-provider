@@ -230,7 +230,7 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 ### L1 —— 免费/付费的证据等级
 
-不靠模型名猜。**用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」已实现为弱信号 / 用户声明默认值（free-signal-v1，未实测）**：名字含 `free`、`priceMultiplier=0`（或 `costModel=free` / `priceTier=free`）即「默认免费（未实测）」：只用于候选收录 / 筛选 / 排序代理与显示「可能免费（未实测）」，等级为 `weak` / `declared`，**不写 L1 billingTier=FREE**；可被真实付费证据（probe `metered`、账本正成本、付费 billingSource、真实正价）推翻。`probeVerdict=unknown` 不阻断弱信号；估算零价（`estimated:true`）不是证据；只有有限数值 `0` 算倍率零。真凭实据的强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。设置页账号行的「价格倍率」可直接修改（留空 / 非法值按 1，`0` = 声明免费）；当前部分路由 probe 多为 `unknown` 的根因尚在验证，不据此宣称任何模型一定免费。
+不靠模型名猜。**用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」已实现为弱信号 / 用户声明默认值（free-signal-v1，未实测）**：名字含 `free`、`priceMultiplier=0`（或 `costModel=free` / `priceTier=free`）即「默认免费（未实测）」：只用于候选收录 / 筛选 / 排序代理与显示「可能免费（未实测）」，等级为 `weak` / `declared`，**不写 L1 billingTier=FREE**；可被真实付费证据（probe `metered`、账本正成本、付费 billingSource、真实正价）推翻。`probeVerdict=unknown` 不阻断弱信号；估算零价（`estimated:true`）不是证据；只有有限数值 `0` 算倍率零。真凭实据的强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。设置页账号行的「价格倍率」可直接修改（留空 / 非法值按 1，`0` = 声明免费）；当前部分路由 probe 多为 `unknown` 的根因尚在验证，不据此宣称任何模型一定免费。免费标签分实测 / 声明 / 未实测三档；账号倍率 0 属声明级，可被实测付费证据推翻。
 
 ### L2 —— 半开恢复，而不是时间到点自动复活
 
