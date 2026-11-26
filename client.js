@@ -2179,16 +2179,24 @@ window.__ModuleLoader__.load({
           // 合并策略：每个 modelId 取两源样本数的 MAX，任一源有足够真实样本
           // 即视为已复核（诚实：两个都是真实使用证据，不是编造）。
           const merged = {}
-          const addSample = (id, samples, tier) => {
+          // NF3: Host projection rows carry a strict {free,level,source}|null tag.
+          // addSample used to write only {samples,tier}, so every downstream
+          // freeTagOf(obj(availProjection)[id]) saw null even when Host had real
+          // measured/declared evidence. Keep the tag here; the ledger source has
+          // no tag and must never erase a Host one (Host wins, max samples still
+          // applies to both evidence sources).
+          const addSample = (id, samples, tier, hostRow) => {
             if (!id) return
             const prev = merged[id] ?? { samples: 0 }
             merged[id] = {
               samples: Math.max(Number(prev.samples ?? 0), Number(samples) || 0),
               // task-106: 保留 tier 供"可能免费"判据使用（不参与状态判定）。
               tier: str(tier) || str(prev.tier) || undefined,
+              // freeSignal: Host tag first; ledger rows only carry samples.
+              freeSignal: freeTagOf(hostRow) ?? freeTagOf(prev),
             }
           }
-          // 源 1：live registry 投影 {modelId:{health,tier,confidence}}（含会话信号）。
+          // 源 1：live registry 投影 {modelId:{health,tier,confidence,freeSignal}}（含会话信号）。
           try {
             const sr = await costService?.availabilityStatus?.()
             if (sr && sr.ok && sr.value) {
@@ -2199,7 +2207,7 @@ window.__ModuleLoader__.load({
                 const verified = Number(row?.confidence) >= 0.7
                   && str(row?.health) !== 'UNKNOWN'
                   && str(row?.tier) !== 'unknown'
-                addSample(id, verified ? AVAIL_HIGH_SAMPLES : 0, row?.tier)
+                addSample(id, verified ? AVAIL_HIGH_SAMPLES : 0, row?.tier, row)
               }
             }
           } catch { /* live source unavailable -> ledger still applies */ }
