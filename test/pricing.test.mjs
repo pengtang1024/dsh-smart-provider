@@ -199,6 +199,46 @@ const { mkdtempSync: mkTmp2, mkdirSync, writeFileSync: wFile, rmSync: rmDir } = 
 const PKG_ROOT = join(HERE, '..')
 const REAL_HOME = process.env.HOME // spawn with real HOME so registry-lib finds the yaml package
 
+// ---------------------------------------------------------------------------
+// task-40: buildPricing() must not synthesize a zero-price row for a route
+// explicitly marked status:unavailable (a badge id / top-level plugin, not a
+// working model). Otherwise the free classifier upgrades a name-only weak
+// signal to "measured". These are pure-function checks, no file writes.
+// ---------------------------------------------------------------------------
+
+test('task-40: buildPricing filters status:unavailable, keeps available zero rows', async () => {
+  const { buildPricing } = await import('../registry/registry-lib.mjs')
+  const doc = {
+    version: 1,
+    routes: [{
+      id: 'x-test-free', tier: 'free',
+      models: [
+        { id: 'free-ok', status: 'available' },
+        { id: 'free-unverified' },
+        { id: 'free-badge', status: 'unavailable' },
+        { id: 'free-weak', status: 'unverified' },
+      ],
+    }],
+  }
+  const rows = buildPricing(doc)
+  assert.deepEqual(rows.map(e => e.model), ['free-ok', 'free-unverified', 'free-weak'])
+  for (const row of rows) {
+    assert.equal(row.provider, 'x-test-free')
+    assert.equal(row.input, 0)
+    assert.equal(row.output, 0)
+  }
+})
+
+test('task-40: an unavailable row with a real m.price is also excluded', async () => {
+  const { buildPricing } = await import('../registry/registry-lib.mjs')
+  const rows = buildPricing({ routes: [{ id: 'x-test', tier: 'standard', models: [
+    { id: 'paid-unavailable', status: 'unavailable', price: { input: 1e-6, output: 2e-6 } },
+    { id: 'paid-ok', price: { input: 1e-6, output: 2e-6 } },
+  ] }] })
+  assert.deepEqual(rows.map(e => e.model), ['paid-ok'])
+})
+
+
 function makeCordisHome(withAnchors) {
   const home = mkTmp2(join(tmpdir(), 'gen-home-'))
   const profileDir = join(home, '.dsh', 'profiles', 'desktop')

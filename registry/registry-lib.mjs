@@ -176,16 +176,21 @@ export function buildChains(doc, existingAuto = []) {
 }
 
 /** Build pricing entries: free models priced at 0 so the meter proves the
- *  route was actually free. */
+ *  route was actually free. A model explicitly marked `status: unavailable`
+ *  is a registration only, NOT a real free declaration: a zero row would
+ *  upgrade a name-only weak signal to `measured` ("已确认免费"). Mirror
+ *  buildChains' 登记但不接线 rule — visibility without a price claim. */
 export function buildPricing(doc) {
-  return (doc.routes ?? []).flatMap(r => (r.models ?? []).map(m => ({
-    provider: r.id,
-    model: m.id,
-    input: (m.tier ?? r.tier) === 'free' ? 0 : (m.price?.input ?? 0),
-    output: (m.tier ?? r.tier) === 'free' ? 0 : (m.price?.output ?? 0),
-    cacheRead: 0,
-    cacheWrite: 0,
-  })))
+  return (doc.routes ?? []).flatMap(r => (r.models ?? [])
+    .filter(m => m.status !== 'unavailable')
+    .map(m => ({
+      provider: r.id,
+      model: m.id,
+      input: (m.tier ?? r.tier) === 'free' ? 0 : (m.price?.input ?? 0),
+      output: (m.tier ?? r.tier) === 'free' ? 0 : (m.price?.output ?? 0),
+      cacheRead: 0,
+      cacheWrite: 0,
+    })))
 }
 
 // ---- marker helpers -------------------------------------------------------

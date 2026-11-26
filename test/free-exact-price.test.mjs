@@ -86,3 +86,38 @@ test('BX5: Host free projection uses priceForExact, never bare-model priceFor', 
   assert.doesNotMatch(src, /import \{ priceFor(?:,| )/,
     'the free classifier must not import the fallback-capable lookup')
 })
+
+test('BX6: unavailable registry models have no zero-price row (weak, not measured)', async () => {
+  const { priceForExact } = await freshPricing()
+  // These two registry entries are marked status: unavailable (badge id / plugin,
+  // not working models). A zero row would make freeSignal report measured.
+  for (const model of ['hy4-flash-free-trial-202611', 'web-search-free']) {
+    const exact = priceForExact('x-opencode-free', model)
+    assert.equal(exact.known, false, `${model} must not have an exact zero-price row`)
+    assert.equal(exact.estimated, true)
+    assert.equal(freeSignal({ provider: 'x-opencode-free', model, price: exact }).level, 'weak',
+      `${model} may keep the name-only free hint, but never "已确认免费"`)
+  }
+  // Real declared-free models still ship a measured zero-price row.
+  for (const model of ['hy4-flash-free', 'hy4flash-free']) {
+    const exact = priceForExact('x-opencode-free', model)
+    assert.equal(exact.known, true, `${model} must keep its exact zero-price row`)
+    assert.equal(exact.estimated, false)
+    assert.equal(exact.input + exact.output, 0)
+    assert.equal(freeSignal({ provider: 'x-opencode-free', model, price: exact }).level, 'measured')
+  }
+  // Ranking's bare-model fallback semantics stay unchanged for rows that are
+  // still in the table: a different provider resolves via model id alone.
+  const { priceFor } = await freshPricing()
+  const fallback = priceFor('another-provider', 'hy4-flash-free')
+  assert.equal(fallback.known, true)
+  assert.equal(fallback.estimated, false)
+  // Every shipped default row must be an available declared-free model; no
+  // unavailable model may re-enter even through hand edits of pricing.json.
+  const shipped = JSON.parse(readFileSync(join(PKG, 'lib', 'pricing.json'), 'utf8'))
+  assert.equal(shipped._rows, shipped.entries.length)
+  for (const row of shipped.entries) {
+    assert.ok(['hy4-flash-free', 'hy4flash-free'].includes(row.model),
+      `${row.model} has no available zero-price declaration`)
+  }
+})

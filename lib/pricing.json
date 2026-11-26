@@ -4,7 +4,7 @@
   "_source": "registry/custom-routes.yaml + registry/custom-routes.user.yaml via scripts/gen-custom-routes.mjs (free-tier zero declarations only)",
   "_unit": "USD per token; cacheRead=cache-read input, cacheWrite=cache-creation input",
   "_disclaimer": "Offline published-price estimate, NOT a billing record. Subscription/gateway discounts are not reflected.",
-  "_rows": 4,
+  "_rows": 2,
   "entries": [
     {
       "provider": "x-opencode-free",
@@ -17,22 +17,6 @@
     {
       "provider": "x-opencode-free",
       "model": "hy4flash-free",
-      "input": 0,
-      "output": 0,
-      "cacheRead": 0,
-      "cacheWrite": 0
-    },
-    {
-      "provider": "x-opencode-free",
-      "model": "hy4-flash-free-trial-202611",
-      "input": 0,
-      "output": 0,
-      "cacheRead": 0,
-      "cacheWrite": 0
-    },
-    {
-      "provider": "x-opencode-free",
-      "model": "web-search-free",
       "input": 0,
       "output": 0,
       "cacheRead": 0,

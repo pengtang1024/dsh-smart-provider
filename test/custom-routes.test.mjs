@@ -329,3 +329,42 @@ test('hand-written chains keep sibling config keys (e.g. ranking) and gain marke
   assert.equal(g2.status, 0)
   assert.ok(first.equals(readFileSync(patch)), 'second run must not change the patch')
 })
+
+// ---------------------------------------------------------------------------
+// task-40: the generator must not write zero-price rows for models explicitly
+// marked unavailable. The generator is additive-only, so start from a table
+// with no entries (mirroring a fresh product) and assert the exact result.
+// The live product table (lib/pricing.json) is never touched by this test.
+// ---------------------------------------------------------------------------
+
+test('gen emits zero-price rows only for available declared-free models', () => {
+  const { root } = isolatedProfile(APP_MANAGED_PATCH)
+  // Copy the package (without .git) into the isolated HOME so the generator
+  // writes its copy of client.js / pricing.json — never the real working tree.
+  const pkg = join(root, 'pkg')
+  mkdirSync(pkg, { recursive: true })
+  spawnSync('rsync', ['-a', '--exclude=.git', PKG + '/', pkg + '/'], { encoding: 'utf8' })
+  const pricingPath = join(pkg, 'lib', 'pricing.json')
+  const clean = JSON.parse(readFileSync(pricingPath, 'utf8'))
+  clean.entries = []
+  clean._rows = 0
+  writeFileSync(pricingPath, JSON.stringify(clean, null, 2) + '\n', 'utf8')
+  const g = spawnSync(process.execPath, [join(pkg, 'scripts', 'gen-custom-routes.mjs'), '--write'], {
+    cwd: pkg,
+    env: { ...process.env, HOME: root, DSH_PROFILE: 'desktop', DSH_SMART_ROUTES_FILE: '' },
+    encoding: 'utf8',
+  })
+  assert.equal(g.status, 0, 'gen failed: ' + g.stdout + g.stderr)
+  const table = JSON.parse(readFileSync(pricingPath, 'utf8'))
+  const ids = table.entries.map(e => `${e.provider}/${e.model}`)
+  assert.deepEqual(ids, [
+    'x-opencode-free/hy4-flash-free',
+    'x-opencode-free/hy4flash-free',
+  ], 'unavailable registry models must not ship as zero-price declarations')
+  assert.equal(table._rows, table.entries.length)
+  for (const row of table.entries) {
+    assert.equal(row.input, 0)
+    assert.equal(row.output, 0)
+  }
+})
+
