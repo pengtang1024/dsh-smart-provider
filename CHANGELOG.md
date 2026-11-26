@@ -2,6 +2,24 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.5.1
+
+修复版本（`2.5.0` → `2.5.1`）：用户升级 2.5.0 后反馈的 checked 状态与连续写入三处缺陷全部修复。只修这三点，不引入新功能，也不改变任何既有配置语义、读写通道或计费判据；按语义化版本 patch 递增。
+
+### 修复
+
+- **P1 勾选 costPill 后 checked 不翻转**：设置页 `SmartSettingsSection` 此前只靠 CostPill slot 内部订阅刷新 pill，父组件不重渲染，勾选后「对话页消耗显示」的 checked 与摘要仍是旧快照。现在父组件订阅 `form.subscribe`，每次 `mutate` 触发重渲染并从当前快照重读；卸载时取消订阅。
+- **P2 连续写入撞 settings-conflict**：`mutate` 的 revision fence 此前取父渲染时冻结的 revision；同一轮连续两笔写入时第一笔已推高 revision，第二笔被旧 fence 拒绝。现在每次 `mutate` 调用前现读 `form.getSnapshot().revision` 作为 fence；revision=0 的补偿语义保持不变。
+- **边缘：遗留顶层 probeEnabled 显示与执行分叉**：schema 中不存在顶层 `probeEnabled`，但旧配置可能残留。现在 `RankingForm` 只在 `ranking.probeEnabled` 未设置时用顶层值作展示兜底（只读，不复制进 ranking），保存由 `AccountsTab.withOnDefaults` 把同一个 `!== false` 判据物化进 `ranking.probeEnabled`，让勾选与执行路径走同一读写口径。
+
+### 验证（task-66 独立复验，2026-11-26 实测）
+
+- 用户反馈的检查项：勾选 costPill 后 checked 与摘要即时翻转（旧用例 checkboxAfterLocalSetNotice=false → 现为 PASS=true）；父冻结 revision=3、host=4 时第二笔 `mutate` 成功（旧 mutateOk=false → 现为 true）；遗留顶层 `probeEnabled=false` 时勾选显示与执行路径一致（旧 PASS=false → 现为 true）。
+- 回归：unit **262/262**、full **320/320**，均 fail 0、退出码 0；本轮修复改动仅 `client.js`（`baeaf32`）。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.5.1`（`test/free-ui-chain.test.mjs` 的 FX3-5 同步更新）。
+
+---
+
 ## 2.5.0
 
 功能版本（`2.4.1` → `2.5.0`）：设置页三个 Tab 的视觉精简，以及版本号行的 GitHub star 入口。按语义化版本 minor 递增。只调整信息层级与入口，不改变任何既有配置语义、读写通道或计费判据；没有实测依据的结论仍不写成事实。
