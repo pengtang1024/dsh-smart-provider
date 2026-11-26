@@ -53,6 +53,7 @@ const UNIT_TESTS = [
   'test/config.test.mjs',
   'test/free-policy.test.mjs',
   'test/free-ui-chain.test.mjs',
+  'test/stats-host.test.mjs',
 ]
 
 /** Every source file worth a syntax check (client.js is browser code too). */

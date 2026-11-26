@@ -108,11 +108,11 @@ test('FX3-4: multiplier input sits at account-card top level, one input point', 
     'there must be exactly one multiplier input point')
 })
 
-test('FX3-5: version is consistently 2.3.1 in package, client and changelog', () => {
+test('FX3-5: version is consistently 2.4.0 in package, client and changelog', () => {
   const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'))
-  assert.equal(pkg.version, '2.3.1')
-  assert.match(client, /const PLUGIN_VERSION = '2\.3\.1'/)
+  assert.equal(pkg.version, '2.4.0')
+  assert.match(client, /const PLUGIN_VERSION = '2\.4\.0'/)
   const changelog = readFileSync(join(PKG, 'CHANGELOG.md'), 'utf8')
-  assert.match(changelog, /^## 2\.3\.1$/m)
-  assert.ok(changelog.indexOf('## 2.3.1') < changelog.indexOf('## 2.3.0'))
+  assert.match(changelog, /^## 2\.4\.0$/m)
+  assert.ok(changelog.indexOf('## 2.4.0') < changelog.indexOf('## 2.3.1'))
 })
