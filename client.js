@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
   factory: require => {
     const React = require('react')
     const h = React.createElement
-    const { useState, useEffect, useCallback, useRef } = React
+    const { useState, useEffect, useCallback, useRef, useReducer } = React
 
     const NS = 'settings.smart-provider'
     const ENTRY = 'smart-provider'
@@ -1633,10 +1633,19 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       // 写 ranking 时必须把默认值为「开」的开关物化：块一旦存在，
       // Host 读的是 enabled === true（lib/ranking.js:163）、
       // adapter 读的是 routing.enabled === true（lib/adapter.js:232）。
+      // task-65 边缘：勾选框的 checked 是 c.probeEnabled !== false，保存时
+      // 把同一个判据物化进 ranking.probeEnabled，读写走同一路径。若 config
+      // 有遗留顶层 probeEnabled（schema 无此键），一律以 ranking 为准，
+      // 不把顶层值复制进 ranking（否则顶层 false 会悄悄把勾选框变成关闭）。
       const withOnDefaults = draft => {
         const d = obj(draft)
         const routing = obj(d.routing)
-        return { ...d, enabled: d.enabled !== false, routing: { ...routing, enabled: routing.enabled !== false } }
+        return {
+          ...d,
+          enabled: d.enabled !== false,
+          routing: { ...routing, enabled: routing.enabled !== false },
+          probeEnabled: d.probeEnabled !== false,
+        }
       }
       const save = async () => {
         const problems = {}
@@ -1859,7 +1868,15 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           h('div', { style: S.card },
             h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('ranking.title')),
             h('div', { style: { ...S.muted, marginBottom: 8 } }, t('ranking.priorityHelp')),
-            h(RankingForm, { t, cfg: rankingDraft, onChange: setRankingDraft }),
+            h(RankingForm, {
+              t,
+              // task-65 边缘：遗留顶层 probeEnabled 在 schema 里不存在；
+              // 只作展示兜底，保存走 withOnDefaults 的 ranking 判据。
+              cfg: rankingDraft.probeEnabled === undefined && config?.probeEnabled !== undefined
+                ? { ...rankingDraft, probeEnabled: config.probeEnabled }
+                : rankingDraft,
+              onChange: setRankingDraft,
+            }),
           ),
           h('div', { style: S.card },
             h('div', { style: { fontWeight: 500, marginBottom: 8 } }, t('routing.title')),
@@ -2669,12 +2686,34 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       // 提前到所有引用点（runProbe、自动探测 effect）之前定义。原来定义在
       // 组件下方导致 `Cannot access 'probeEnabled' before initialization`
       // → slot 崩溃 → 白屏。configForms 快照是同步可读的，提前无副作用。
+      // task-65 P1：父组件自己订阅 form —— 只靠 CostPill slot 内部的订阅
+      // 更新 pill，父组件不重渲染，勾选后这里的 config/summary/checked
+      // 永远是旧快照。force tick 让 readSnapshot() 在每次 mutate 后重新取值。
+      const [configTick, bumpConfigTick] = useReducer(n => n + 1, 0)
+      useEffect(() => {
+        let alive = true
+        const sync = () => { if (alive) bumpConfigTick() }
+        let off
+        try { off = form?.subscribe?.(sync) } catch { off = undefined }
+        return () => { alive = false; try { off?.() } catch {} }
+      }, [form])
       const readSnapshot = useCallback(() => {
         try { return obj(form?.getSnapshot?.()) } catch { return {} }
       }, [form])
+      // configTick 只是重渲染触发器；读值始终走 form 当前快照（包括 revision）。
+      void configTick
       const snap = readSnapshot()
       const config = obj(snap.value)
+      // task-65 P2：不要用父渲染时冻结的 revision 做后续 mutate fence ——
+      // 连续两笔写入时第一笔已把 form revision 推高，旧 fence 会触发
+      // settings-conflict。mutate() 内部现读 revision；这里保留 0 仅供
+      // 渲染展示/兼容调用点。
       const revision = Number.isFinite(snap.revision) ? snap.revision : 0
+      // task-65 边缘：ranking.probeEnabled 是唯一读写路径。遗留顶层
+      // probeEnabled（schema 无此键）只在 ranking 未设置该键时兜底，
+      // 与 RankingForm 勾选 / 执行路径的 `!== false` 判定保持一致。
+      // 具体物化发生在 AccountsTab.withOnDefaults（保存时写 ranking）与
+      // RankingForm 展示兜底（只读顶层，不复制进 ranking）。
       const probeSetting = obj(config?.ranking).probeEnabled !== undefined
         ? obj(config?.ranking).probeEnabled
         : config?.probeEnabled
@@ -2942,11 +2981,17 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       const settings = injectedSettings ?? remote?.settings
       // 返回 {ok, detail}：detail 把真机失败原因带进 UI，让用户截图一次就能
       // 定位（浏览器 console 不进 DSH 日志，我们手里没有浏览器控制权限）。
+      // task-65 P2：调用方传入的 revision 是父渲染时冻结的旧值。每次 mutate
+      // 调用前现读 form.getSnapshot().revision 作为 fence，避免连续两笔
+      // 写入时第二笔撞 settings-conflict。仍保留 0 → undefined 的内部补偿
+      // 语义（Host form.mutate 无 revision 时自动读当前快照）。
       const mutate = useCallback(async (ops, expectedRevision) => {
-        const fstat = (() => { try { return `${form?.getSnapshot?.()?.status ?? '?'}/w=${form?.getSnapshot?.()?.writable}` } catch { return '?' } })()
+        const current = (() => { try { return obj(form?.getSnapshot?.()) } catch { return {} } })()
+        const fstat = `${current.status ?? '?'}/w=${current.writable}`
+        const fresh = Number.isFinite(current.revision) ? current.revision : expectedRevision
         try {
           if (typeof form?.mutate === 'function') {
-            const fence = Number.isFinite(expectedRevision) && expectedRevision > 0 ? expectedRevision : undefined
+            const fence = Number.isFinite(fresh) && fresh > 0 ? fresh : undefined
             const landed = await form.mutate(ops, fence)
             if (landed === true) return { ok: true }
             if (landed && typeof landed === 'object' && landed.ok === true) return { ok: true }
@@ -2957,7 +3002,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         }
         // 兜底：form 没有 mutate 时走显式注入的 remote.settings。
         try {
-          const res = await settings?.mutate?.(ENTRY, ops, expectedRevision)
+          const res = await settings?.mutate?.(ENTRY, ops, Number.isFinite(fresh) && fresh > 0 ? fresh : undefined)
           if (res && res.ok) return { ok: true }
           const e = res?.error
           return { ok: false, detail: `settings=${String(e?.code ?? 'no-code')}:${String(e?.message ?? 'no-msg')} st=${fstat}` }
