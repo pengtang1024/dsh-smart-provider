@@ -155,13 +155,13 @@ test('BX2-2: pill position default and enum match the real conversation slot nam
   }
 })
 
-test('FX3-5: version is consistently 2.6.2 in package, client and changelog', () => {
+test('FX3-5: version is consistently 2.7.0 in package, client and changelog', () => {
   const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'))
-  assert.equal(pkg.version, '2.6.2')
-  assert.match(client, /const PLUGIN_VERSION = '2\.6\.2'/)
+  assert.equal(pkg.version, '2.7.0')
+  assert.match(client, /const PLUGIN_VERSION = '2\.7\.0'/)
   const changelog = readFileSync(join(PKG, 'CHANGELOG.md'), 'utf8')
-  assert.match(changelog, /^## 2\.6\.2$/m)
-  assert.ok(changelog.indexOf('## 2.6.2') < changelog.indexOf('## 2.6.1'))
+  assert.match(changelog, /^## 2\.7\.0$/m)
+  assert.ok(changelog.indexOf('## 2.7.0') < changelog.indexOf('## 2.6.2'))
 })
 
 // I18N coverage gate (task-89): the i18n foundation used to drop 18 referenced

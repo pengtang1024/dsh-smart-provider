@@ -2,6 +2,33 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.7.0
+
+功能版本（`2.6.2` → `2.7.0`，2026-11-26）：设置页视觉精修与本地化 star 引导，并在 rebase 后恢复 v2.6.2 的 HIG 交互、修复账号健康表资费列错位；按语义化版本 minor 递增。
+
+### 新增
+
+- **设置页本地化 star 引导**：zh / en 内联字典补齐 star 文案，并在版本行整合唯一一个 `⭐ Star on GitHub` CTA（`target="_blank"` + `rel="noopener noreferrer"`）。
+- **README 与七语 DETAIL 文档 star 支持段**：README 与 7 语 `DETAIL.*.md` 按各自语言补上 star 支持说明。
+
+### 变更
+
+- **设置页视觉精修**：tab 品牌下划线、卡片阴影、分区标题、未保存徽章、空态虚线、表头底色、中性状态徽标、focus-visible 反馈等视觉细节，全部仅使用 `--dsw-alias-*` token，不改任何配置语义与计费判据。
+
+### 修复
+
+- **恢复被 rebase 挤掉的 v2.6.2 HIG 交互**：Top10 折叠、健康表摘要 + 折叠明细、`hasLatency` 自适应列。
+- **账号健康表错位与资费列**：修复账号健康表 4 表头 vs 8 单元格错位与 FX3-3 资费列显示。
+- **版本号三处一致**：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.7.0`。
+
+### 验证
+
+- `node --check client.js` 退出码 0。
+- `node scripts/run-tests.mjs` 退出码 0，full **324/324** 全绿、fail 0（24 个测试文件，`FX3-5` 版本一致性用例同步为 2.7.0）。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.7.0`（`test/free-ui-chain.test.mjs` 的 FX3-5 同步更新）。
+
+---
+
 ## 2.6.2
 
 修复版本（`2.6.1` → `2.6.2`）：补齐本地化一致性并诚实说明桌面壳语言限制，纯修复与文档收口，代码路径、配置语义与计费判据零改动；按语义化版本 patch 递增。
