@@ -76,7 +76,8 @@ test('availabilityStatus projection attaches exactly {free,level,source}|null', 
   assert.match(src, /return \{ free: signal\.free, level: signal\.level, source: signal\.source \}/,
     'the wire shape must not leak evidence to the strict codec'
   )
-  assert.match(src, /probeReader\?\.peek\?\./)
+  assert.match(src, /probeReader\?\.\(\)\?\.peek\?\./,
+    'probeReader is a lazy closure from index.js; peek must be called on the unwrapped probe')
   assert.match(src, /priceFor\(provider, modelId\)/)
   const methods = [...src.matchAll(/method:\s*'([^']+)'/g)].map(m => m[1])
   assert.deepEqual([...new Set(methods)].sort(),
