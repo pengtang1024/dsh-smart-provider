@@ -1549,6 +1549,17 @@ window.__ModuleLoader__.load({
                 r.tier, v => update(i, x => ({ ...x, tier: v })), t('field.tier'),
               ),
             ),
+            // 价格倍率（0 = 免费）放在账号卡顶层：路由设置第一屏可见，
+            // 不再藏在「详细设置 + 计费与等级细节」两层折叠里。
+            h(Field, { label: t('account.priceMultiplier'), help: t('account.priceMultiplierHelp') },
+              h('input', {
+                type: 'number', min: 0, step: 'any',
+                value: r.priceMultiplier === undefined || r.priceMultiplier === null
+                  ? '' : String(r.priceMultiplier),
+                placeholder: t('account.priceMultiplierPh'),
+                onChange: e => update(i, x => ({ ...x, priceMultiplier: e.target.value })),
+                style: S.input, 'aria-label': t('account.priceMultiplier'),
+              })),
             // 计费与等级细节：默认折叠，字段语义见 lib/ranking.js
             // ACCOUNT_RANKING_FIELDS；文案用大白话，不暴露原始字段名。
             h('details', { style: { marginTop: 6 } },
@@ -1570,15 +1581,6 @@ window.__ModuleLoader__.load({
                     [{ v: 'metered', l: t('account.costMetered') }, { v: 'subscription', l: t('account.costSubscription') }, { v: 'free', l: t('account.costFree') }],
                     r.costModel, v => update(i, x => ({ ...x, costModel: v })), t('account.costModel'),
                   )),
-                h(Field, { label: t('account.priceMultiplier'), help: t('account.priceMultiplierHelp') },
-                  h('input', {
-                    type: 'number', min: 0, step: 'any',
-                    value: r.priceMultiplier === undefined || r.priceMultiplier === null
-                      ? '' : String(r.priceMultiplier),
-                    placeholder: t('account.priceMultiplierPh'),
-                    onChange: e => update(i, x => ({ ...x, priceMultiplier: e.target.value })),
-                    style: S.input, 'aria-label': t('account.priceMultiplier'),
-                  })),
                 r.costModel === 'subscription'
                   ? h(Field, { label: t('account.quotaCost'), help: t('account.quotaCostHelp') },
                     h('input', {
@@ -1787,6 +1789,27 @@ window.__ModuleLoader__.load({
       if (k === 'metered') return t('health.tierMetered')
       return t('health.tierUnknown')
     }
+    // 免费标签白话文案：只认 freeSignal.level，不按模型名/档位猜。
+    // none 或没有标签一律「暂无数据」，弱信号绝不写成「已确认免费」。
+    const freeTagText = (t, tag) => {
+      if (!tag || tag.free !== true) return t('health.freeNone')
+      if (str(tag.level) === 'measured') return t('health.freeMeasured')
+      if (str(tag.level) === 'declared') return t('health.freeDeclared')
+      if (str(tag.level) === 'weak') return t('health.freeWeak')
+      return t('health.freeNone')
+    }
+    // 投影按 modelId 索引；同一账号可对应多个模型，取证据最强的一档展示。
+    const FREE_LEVEL_RANK = { measured: 3, declared: 2, weak: 1 }
+    const strongestFreeTag = (projection, keys) => {
+      let best = null
+      for (const key of keys) {
+        if (!key) continue
+        const tag = freeTagOf(obj(projection)[key])
+        if (!tag || tag.free !== true) continue
+        if (!best || (FREE_LEVEL_RANK[str(tag.level)] ?? 0) > (FREE_LEVEL_RANK[str(best.level)] ?? 0)) best = tag
+      }
+      return best
+    }
     // 零样本 = 暂无数据：字段缺失或 success+failure 全为 0 都算零样本，绝不写「0 / 0」。
     const samplesInfo = samples => {
       const s = obj(samples)
@@ -1821,11 +1844,15 @@ window.__ModuleLoader__.load({
     const implicitBadge = { ...S.muted, marginLeft: 6, fontSize: 10, padding: '1px 6px', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 'var(--dsw-radius-sm)' }
     const idCell = { ...S.td, overflowWrap: 'anywhere' }
 
-    function AccountHealthPanel({ t, snapshot, diag, loading, onRefresh }) {
+    function AccountHealthPanel({ t, snapshot, diag, loading, onRefresh, availProjection }) {
       const snap = obj(snapshot)
       const accounts = arr(snap.accounts)
       const routes = arr(snap.routes)
       const snapAt = Number(snap.generatedAt)
+      // 资费证据来自 availProjection（Host freeSignal + 账本合并后的投影），
+      // 健康快照本身只带健康/冷却，不带任何资费字段。
+      const freeForAccount = row => strongestFreeTag(availProjection, [...arr(row?.models), str(row?.id), str(row?.provider)])
+      const freeForRoute = row => strongestFreeTag(availProjection, [str(row?.modelId), `${str(row?.provider)}/${str(row?.modelId)}`])
       // 倒计时用组件内单一 setTimeout 每秒 tick 重绘（不用 setInterval）。
       // tab 隐藏时暂停；卸载时 alive=false + clearTimeout + 摘监听，三重清理防泄漏。
       const [, setTick] = useState(0)
@@ -1878,6 +1905,7 @@ window.__ModuleLoader__.load({
         body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
           h('div', null,
             h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.accountsTitle')),
+            h('div', { style: { ...S.muted, marginBottom: 6 } }, t('health.billingHint')),
             accounts.length === 0
               ? h('div', { style: S.muted }, t('health.empty'))
               : h('div', { style: { overflowX: 'auto' } },
@@ -1890,6 +1918,7 @@ window.__ModuleLoader__.load({
                   h('th', { style: S.th, scope: 'col' }, t('health.streak')),
                   h('th', { style: S.th, scope: 'col' }, t('health.usage')),
                   h('th', { style: S.th, scope: 'col' }, t('health.samples')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.billing')),
                 )),
                 h('tbody', null, accounts.map((a, i) => {
                   const row = obj(a)
@@ -1922,6 +1951,7 @@ window.__ModuleLoader__.load({
                     h('td', { style: S.td }, String(Number(row.streak) || 0)),
                     h('td', { style: S.td }, String(Number(row.usage) || 0)),
                     h('td', { style: S.td }, samplesText(t, row.samples)),
+                    h('td', { style: S.td }, freeTagText(t, freeForAccount(row))),
                   )
                 })),
                 ),
@@ -1929,6 +1959,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', null,
             h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('health.routesTitle')),
+            h('div', { style: { ...S.muted, marginBottom: 6 } }, t('health.billingHint')),
             routes.length === 0
               ? h('div', { style: S.muted }, t('health.empty'))
               : h('div', { style: { overflowX: 'auto' } },
@@ -1938,6 +1969,7 @@ window.__ModuleLoader__.load({
                   h('th', { style: S.th, scope: 'col' }, t('health.model')),
                   h('th', { style: S.th, scope: 'col' }, t('health.health')),
                   h('th', { style: S.th, scope: 'col' }, t('health.tier')),
+                  h('th', { style: S.th, scope: 'col' }, t('health.billing')),
                   h('th', { style: S.th, scope: 'col' }, t('health.confidence')),
                   h('th', { style: S.th, scope: 'col' }, t('health.samples')),
                 )),
@@ -1951,6 +1983,7 @@ window.__ModuleLoader__.load({
                       h('span', { style: { color: routeHealthColor(row.health), fontWeight: 500 } }, routeHealthText(t, row.health)),
                     ),
                     h('td', { style: S.td }, tierText(t, row.tier)),
+                    h('td', { style: S.td }, freeTagText(t, freeForRoute(row))),
                     h('td', { style: S.td }, confText(t, conf), Number.isFinite(conf) ? h('div', { style: S.muted, title: `${t('health.confidence')}: ${conf.toFixed(2)}` }, conf.toFixed(2)) : null),
                     h('td', { style: S.td }, samplesText(t, row.samples)),
                   )
@@ -1982,7 +2015,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function CostHealthTab({ t, localConfig, remote, costService, costDiag }) {
+    function CostHealthTab({ t, localConfig, remote, costService, costDiag, availProjection }) {
       const cfg = obj(localConfig)
       // 三个数据源各自三态（loading / ok / error）。绝不把"读失败"说成
       // "没有数据通道"，也绝不把 0 条记录说成"读不到"（item 4 状态分家）。
@@ -2127,6 +2160,7 @@ window.__ModuleLoader__.load({
           diag: healthDiag,
           loading: healthLoading,
           onRefresh: () => { void loadHealth(() => true) },
+          availProjection,
         }),
         // mount / state 这类内部串统一进折叠诊断，失败才默认展开。
         h(DiagDetails, { t, lines: diagLines, failed }),
@@ -2510,7 +2544,7 @@ window.__ModuleLoader__.load({
           h(ChainsTab, { t, form, revision, mutate, config, pi, onDirty: v => reportDirty('chains', v) }),
           h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService, onDirty: v => reportDirty('accounts', v), availProjection, probeVerdicts }),
         ) : null,
-        tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}` }) : null,
+        tab === 'cost' ? h(CostHealthTab, { t, localConfig: config, remote, costService: activeCostService, costDiag: `mountRetries=${costReady ? 'ready' : 'pending'} mount=${mountDiag ?? '?'}`, availProjection }) : null,
       )
     }
 
@@ -2681,6 +2715,9 @@ window.__ModuleLoader__.load({
       'health.stateCooling': '冷却中', 'health.stateHalfOpen': '半开待验证',
       'health.coolRemain': '剩余冷却', 'health.streak': '连续失败', 'health.samples': '成功 / 失败',
       'health.implicit': '（自动派生）', 'health.model': '模型', 'health.tier': '计费档',
+      'health.billing': '资费', 'health.billingHint': '免费标签分实测 / 声明 / 未实测；零样本显示「暂无数据」，不会把弱信号说成已确认。',
+      'health.freeMeasured': '已确认免费', 'health.freeDeclared': '声明免费（倍率 0）',
+      'health.freeWeak': '可能免费（未实测）', 'health.freeNone': '暂无数据',
       'health.confidence': '可信度', 'health.routesTitle': '各模型路由健康',
       'health.accountsTitle': '账号池状态',
       'health.snapshotAt': '快照时间 {time}', 'health.refresh': '重新读取',
@@ -2851,6 +2888,9 @@ window.__ModuleLoader__.load({
       'health.stateCooling': 'Cooling down', 'health.stateHalfOpen': 'Half-open, awaiting check',
       'health.coolRemain': 'Cooldown left', 'health.streak': 'Fail streak', 'health.samples': 'Success / failure',
       'health.implicit': '(auto-derived)', 'health.model': 'Model', 'health.tier': 'Billing tier',
+      'health.billing': 'Pricing', 'health.billingHint': 'Free labels are measured / declared / untested; zero samples read \"No data yet\" and weak signals are never called confirmed.',
+      'health.freeMeasured': 'Confirmed free', 'health.freeDeclared': 'Declared free (multiplier 0)',
+      'health.freeWeak': 'Possibly free (untested)', 'health.freeNone': 'No data yet',
       'health.confidence': 'Confidence', 'health.routesTitle': 'Per-model route health',
       'health.accountsTitle': 'Account pool state',
       'health.snapshotAt': 'Snapshot {time}', 'health.refresh': 'Read again',
