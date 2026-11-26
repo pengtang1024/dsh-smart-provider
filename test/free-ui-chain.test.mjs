@@ -108,6 +108,52 @@ test('FX3-4: multiplier input sits at account-card top level, one input point', 
     'there must be exactly one multiplier input point')
 })
 
+// BX2: the pill config existed in the schema but no settings control ever
+// wrote it, and the old default 'input.right' did not match any real Host
+// slot. These gates pin the first-screen controls and slot-name contract.
+test('BX2-1: overview first screen exposes all three cost-pill controls with mutate writes', () => {
+  // The card is a separate component: inspect its full region from client.
+  const at = client.indexOf('function CostPillSettingsCard(')
+  assert.notEqual(at, -1, 'a dedicated cost-pill settings card must exist')
+  const lines = client.slice(at).split('\n')
+  let depth = 0, seen = false, end = 0
+  for (let i = 0; i < lines.length; i += 1) {
+    for (const ch of lines[i]) { if (ch === '{') { depth += 1; seen = true } else if (ch === '}') depth -= 1 }
+    if (seen && depth <= 0) { end = i + 1; break }
+  }
+  const card = lines.slice(0, end).join('\n')
+  for (const key of ['COST_PILL_ENABLED_KEY', 'COST_PILL_POSITION_KEY', 'COST_PILL_REFRESH_KEY']) {
+    assert.match(card, new RegExp('save\\(\\[' + key + '\\]'), 'the card must write ' + key)
+  }
+  assert.match(card, /type: 'checkbox'/, 'an on/off checkbox must be visible')
+  assert.match(card, /select\(COST_PILL_SLOTS/, 'a position dropdown must be visible')
+  assert.match(card, /type: 'number', min: 1000/, 'a refresh interval input must be visible')
+  // Placement: the card is rendered on the overview tab, not inside Advanced.
+  assert.match(root, /tab === 'overview' \? h\(CostPillSettingsCard, \{ t, config, revision, mutate \}\) : null/,
+    'the card must mount on the overview first screen')
+})
+
+test('BX2-2: pill position default and enum match the real conversation slot names', () => {
+  assert.match(client, /const COST_PILL_DEFAULT_POSITION = 'conversation\.input\.right'/,
+    'client default must be a real slot name')
+  const slots = client.match(/const COST_PILL_SLOTS = \[([^\]]+)\]/)?.[1] ?? ''
+  assert.deepEqual(slots.match(/'conversation\.[^']+'/g) ?? [], [
+    "'conversation.input.right'",
+    "'conversation.session.header.utilities'",
+    "'conversation.input.dock'",
+  ], 'the three positions must be the Host slot names')
+  const schema = readFileSync(join(PKG, 'schema.js'), 'utf8')
+  assert.match(schema, /costPillPosition: z\.string\(\)\.default\('conversation\.input\.right'\)/, 
+    'schema default must match the client slot')
+  for (const f of ['zh', 'en']) {
+    const dict = JSON.parse(readFileSync(join(PKG, 'locale', f + '.json'), 'utf8'))
+    for (const slot of ['conversation.input.right', 'conversation.session.header.utilities', 'conversation.input.dock']) {
+      assert.ok(dict.costPill.pos?.[slot], f + ' locale must label slot ' + slot)
+    }
+    assert.ok(dict.costPill.cardTitle && dict.costPill.cardHelp, f + ' locale must explain the first-screen card')
+  }
+})
+
 test('FX3-5: version is consistently 2.4.0 in package, client and changelog', () => {
   const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'))
   assert.equal(pkg.version, '2.4.0')

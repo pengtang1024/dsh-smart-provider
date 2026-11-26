@@ -27,7 +27,7 @@ test('schema declares the three cost-pill fields as volatile with documented def
   const dict = Config.dict
   const expected = {
     costPillEnabled: { type: 'boolean', default: false },
-    costPillPosition: { type: 'string', default: 'input.right' },
+    costPillPosition: { type: 'string', default: 'conversation.input.right' },
     costPillRefreshMs: { type: 'number', default: 60000 },
   }
   for (const [key, spec] of Object.entries(expected)) {

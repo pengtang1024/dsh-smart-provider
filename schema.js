@@ -66,6 +66,6 @@ export const Config = z.object({
    * key: clearStats() persists it in stats-state.json next to cost.jsonl.
    */
   costPillEnabled: z.boolean().default(false).volatile(),
-  costPillPosition: z.string().default('input.right').volatile(),
+  costPillPosition: z.string().default('conversation.input.right').volatile(),
   costPillRefreshMs: z.number().default(60000).volatile(),
 })

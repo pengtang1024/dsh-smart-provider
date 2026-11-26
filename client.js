@@ -356,15 +356,18 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
     const COST_PILL_ENABLED_KEY = 'costPillEnabled'
     const COST_PILL_POSITION_KEY = 'costPillPosition'
     const COST_PILL_REFRESH_KEY = 'costPillRefreshMs'
-    const COST_PILL_DEFAULT_POSITION = 'input.right'
+    const COST_PILL_DEFAULT_POSITION = 'conversation.input.right'
     const COST_PILL_REFRESH_DEFAULT_MS = 60000
     const COST_PILL_SLOTS = ['conversation.input.right', 'conversation.session.header.utilities', 'conversation.input.dock']
     const costPillPositionOf = value => {
       const pos = str(value)
       return COST_PILL_SLOTS.includes(pos) ? pos : COST_PILL_DEFAULT_POSITION
     }
+    // 0 is an explicit opt-out of auto-refresh; other invalid values fall back
+    // to the default. The settings card help text promises this contract.
     const costPillRefreshMsOf = value => {
       const ms = Number(value)
+      if (ms === 0) return 0
       return Number.isFinite(ms) && ms >= 1000 ? ms : COST_PILL_REFRESH_DEFAULT_MS
     }
     // Volatile config may be absent before the first describe; only an explicit
@@ -1051,6 +1054,56 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
             }),
           ),
         ),
+      )
+    }
+
+    // ---- cost-pill settings card (BX2) ------------------------------------
+    // The pill config existed in schema.js but no control ever wrote it, so a
+    // beginner could not turn it on. This card lives on the FIRST overview
+    // screen (never inside Advanced) and writes each field through form.mutate
+    // immediately. Internal values are the Host's real conversation slot names.
+    function CostPillSettingsCard({ t, config, revision, mutate }) {
+      const enabled = config?.[COST_PILL_ENABLED_KEY] === true
+      const position = costPillPositionOf(config?.[COST_PILL_POSITION_KEY])
+      const refreshMs = costPillRefreshMsOf(config?.[COST_PILL_REFRESH_KEY])
+      const [draftMs, setDraftMs] = useState(String(refreshMs))
+      const [notice, setNotice] = useState(null)
+      useEffect(() => { setDraftMs(String(costPillRefreshMsOf(config?.[COST_PILL_REFRESH_KEY]))) }, [config?.[COST_PILL_REFRESH_KEY]])
+      const save = useCallback(async (path, value) => {
+        setNotice(null)
+        const res = await mutate([{ op: 'set', path, value }], revision)
+        setNotice(res?.ok === true
+          ? { ok: true, msg: t('action.saved') }
+          : { ok: false, msg: `${t('error.saveFailed')}${res?.detail ? '（' + res.detail + '）' : ''}` })
+      }, [mutate, revision, t])
+      const parsedMs = Number(draftMs)
+      const validMs = parsedMs === 0 || (Number.isFinite(parsedMs) && parsedMs >= 1000)
+      return h('div', { style: S.card },
+        h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('costPill.cardTitle')),
+        h('div', { style: { ...S.muted, marginBottom: 8 } }, t('costPill.cardHelp')),
+        h(Field, { label: t('costPill.enabled'), help: t('costPill.enabledHelp') },
+          h('input', {
+            type: 'checkbox', checked: enabled,
+            'aria-label': t('costPill.enabled'),
+            onChange: e => { void save([COST_PILL_ENABLED_KEY], e.target.checked) },
+          }),
+        ),
+        h(Field, { label: t('costPill.position'), help: t('costPill.positionHelp') },
+          select(COST_PILL_SLOTS.map(v => ({ v, l: t('costPill.pos.' + v) })), position,
+            value => { void save([COST_PILL_POSITION_KEY], value) }, t('costPill.position')),
+        ),
+        h(Field, { label: t('costPill.refreshMs'), help: t('costPill.refreshMsHelp') },
+          h('input', {
+            type: 'number', min: 1000, step: 1000,
+            value: draftMs, 'aria-label': t('costPill.refreshMs'),
+            onChange: e => setDraftMs(e.target.value),
+            onBlur: () => { if (validMs) void save([COST_PILL_REFRESH_KEY], parsedMs) },
+            onKeyDown: e => { if (e.key === 'Enter' && validMs) void save([COST_PILL_REFRESH_KEY], parsedMs) },
+            style: S.input,
+          }),
+        ),
+        !validMs ? h('div', { style: { ...S.err, marginLeft: 96 } }, t('costPill.refreshInvalid')) : null,
+        notice ? h('div', { style: { ...(notice.ok ? S.ok : S.err), marginTop: 6 } }, notice.msg) : null,
       )
     }
 
@@ -2903,6 +2956,8 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           onProbe: runProbe, applyPreset, working, presetNotice, costService: activeCostService,
           onOpenCost: () => requestTab('cost'),
         }) : null,
+        // BX2: cost-pill controls on the overview FIRST screen, never in Advanced.
+        tab === 'overview' ? h(CostPillSettingsCard, { t, config, revision, mutate }) : null,
         // 路由设置 = 先链路卡、后账号/择优卡，两张卡各自的保存按钮与语义不变。
         // 两张卡都上报 dirty，供切 Tab 前的确认条使用。
         tab === 'routing' ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
@@ -3100,11 +3155,12 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'health.healthDeprecated': '已弃用', 'health.healthUnknown': '暂无数据',
       'error.jsonObject': '请输入合法的 JSON 对象。', 'error.jsonArray': '请输入合法的 JSON 数组。',
       'error.saveFailed': '保存失败，请重试。',
-      // CF-2: conversation cost-pill config labels (CF-3 consumes them).
-      'costPill.enabled': '对话页显示预估总额', 'costPill.enabledHelp': '默认关闭；开启后在对话页显示智能路由累计估算成本。',
+      // CF-2/BX2: conversation cost-pill config labels + first-screen settings card.
+      'costPill.cardTitle': '对话页消耗显示', 'costPill.cardHelp': '开启后回对话页看输入框旁的预估金额；清理统计只重置起点，历史账本保留。无需重启。',
+      'costPill.enabled': '显示预估总额', 'costPill.enabledHelp': '默认关闭；勾选后回对话页看输入框旁的累计估算成本（位置见下方）。',
       'costPill.position': '显示位置', 'costPill.positionHelp': '选择对话页挂载点；默认输入框右侧紧凑位。',
-      'costPill.pos.input.right': '输入框右侧（紧凑）', 'costPill.pos.session.header.utilities': '会话标题栏工具区', 'costPill.pos.input.dock': '输入框上方条目',
-      'costPill.refreshMs': '自动刷新间隔（毫秒）', 'costPill.refreshMsHelp': '定时刷新默认关闭；手动刷新按钮常驻。最小 1000 毫秒。',
+      'costPill.pos.conversation.input.right': '输入框右侧（紧凑）', 'costPill.pos.conversation.session.header.utilities': '会话标题栏工具区', 'costPill.pos.conversation.input.dock': '输入框上方条目',
+      'costPill.refreshMs': '自动刷新间隔（毫秒）', 'costPill.refreshMsHelp': '默认 60000 毫秒；填 0 表示不自动刷新，手动刷新按钮常驻。有效最小 1000 毫秒。', 'costPill.refreshInvalid': '请填 0 或不小于 1000 的毫秒数。',
       'costPill.monitor': '监控', 'costPill.autoRefresh': '定时刷新', 'costPill.refreshNow': '立即刷新',
       'costPill.since': '统计起点：{since}', 'costPill.noSince': '统计起点：全部历史',
       'costPill.clear': '从现在重新统计', 'costPill.clearConfirm': '只设置新统计起点，不删除成本账本。确定继续？',
@@ -3286,11 +3342,12 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'health.healthDeprecated': 'Deprecated', 'health.healthUnknown': 'No data yet',
       'error.jsonObject': 'Enter a valid JSON object.', 'error.jsonArray': 'Enter a valid JSON array.',
       'error.saveFailed': 'Save failed, please retry.',
-      // CF-2: conversation cost-pill config labels (CF-3 consumes them).
-      'costPill.enabled': 'Show estimated total in conversation', 'costPill.enabledHelp': 'Off by default; shows the accumulated smart-routing estimate in the conversation view.',
+      // CF-2/BX2: conversation cost-pill config labels + first-screen settings card.
+      'costPill.cardTitle': 'Conversation cost display', 'costPill.cardHelp': 'Turn it on, then look beside the input box in the conversation for the estimate. Clearing statistics only resets the start marker; the full ledger is kept. No restart needed.',
+      'costPill.enabled': 'Show estimated total', 'costPill.enabledHelp': 'Off by default; once checked, look beside the conversation input for the accumulated estimate (position below).',
       'costPill.position': 'Display position', 'costPill.positionHelp': 'Conversation slot for the pill; compact input-right by default.',
-      'costPill.pos.input.right': 'Input right (compact)', 'costPill.pos.session.header.utilities': 'Session header utilities', 'costPill.pos.input.dock': 'Input dock',
-      'costPill.refreshMs': 'Auto-refresh interval (ms)', 'costPill.refreshMsHelp': 'Scheduled refresh is off by default; manual refresh stays available. Minimum 1000 ms.',
+      'costPill.pos.conversation.input.right': 'Input right (compact)', 'costPill.pos.conversation.session.header.utilities': 'Session header utilities', 'costPill.pos.conversation.input.dock': 'Input dock',
+      'costPill.refreshMs': 'Auto-refresh interval (ms)', 'costPill.refreshMsHelp': 'Default 60000 ms; enter 0 to disable auto-refresh. Manual refresh stays available. Valid minimum 1000 ms.', 'costPill.refreshInvalid': 'Enter 0 or at least 1000 ms.',
       'costPill.monitor': 'Monitor', 'costPill.autoRefresh': 'Auto-refresh', 'costPill.refreshNow': 'Refresh now',
       'costPill.since': 'Statistics start: {since}', 'costPill.noSince': 'Statistics start: all history',
       'costPill.clear': 'Restart statistics from now', 'costPill.clearConfirm': 'This only sets a new start marker; the cost ledger is never deleted. Continue?',

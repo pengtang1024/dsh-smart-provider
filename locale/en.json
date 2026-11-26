@@ -10,17 +10,20 @@
     "description": "Configure chains, account pool, ranking strategy and cost health; all edits apply live without a restart."
   },
   "costPill": {
-    "enabled": "Show estimated total in conversation",
-    "enabledHelp": "Off by default; shows the accumulated smart-routing estimate in the conversation view.",
+    "cardTitle": "Conversation cost display",
+    "cardHelp": "Turn it on, then look beside the input box in the conversation for the estimate. Clearing statistics only resets the start marker; the full ledger is kept. No restart needed.",
+    "enabled": "Show estimated total",
+    "enabledHelp": "Off by default; once checked, look beside the conversation input for the accumulated estimate (position below).",
     "position": "Display position",
     "positionHelp": "Conversation slot for the pill; compact input-right by default.",
     "pos": {
-      "input.right": "Input right (compact)",
-      "session.header.utilities": "Session header utilities",
-      "input.dock": "Input dock"
+      "conversation.input.right": "Input right (compact)",
+      "conversation.session.header.utilities": "Session header utilities",
+      "conversation.input.dock": "Input dock"
     },
     "refreshMs": "Auto-refresh interval (ms)",
-    "refreshMsHelp": "Scheduled refresh is off by default; manual refresh stays available. Minimum 1000 ms.",
+    "refreshMsHelp": "Default 60000 ms; enter 0 to disable auto-refresh. Manual refresh stays available. Valid minimum 1000 ms.",
+    "refreshInvalid": "Enter 0 or at least 1000 ms.",
     "monitor": "Monitor",
     "autoRefresh": "Auto-refresh",
     "refreshNow": "Refresh now",
