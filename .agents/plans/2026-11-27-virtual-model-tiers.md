@@ -1,5 +1,7 @@
 # 设计简报：虚拟模型收敛为档位选择（Smart Gateway 统一提供商入口）
 
+定稿状态：2026-11-27 按用户决策收敛（最终形态见 combined-tier-ids.md）
+
 - 日期：2026-11-27
 - 目标版本：dsh-smart-provider v2.7.0（只读调研基线，行号以当前工作区为准）
 - 性质：**设计文档，不含实现代码**。本文只定契约、约束、取舍与影响面；具体改法由实施阶段另行落地。
@@ -21,7 +23,7 @@
 
 ### 1.3 成功标准
 
-1. 对外 catalog 中的 smart 虚拟模型**数量固定**：基础三档 = 3 个；按第 2.5 节推荐纳入深度思考档后 = 4 个；不再随 chains 的非 `auto` key 数量增长。
+1. 对外 catalog 中的 smart 虚拟模型**数量固定**：3 模型档 × 3 强度档 = **9 个组合 id**（全笛卡尔积，`smart/<模型档>/<强度档>`；强度 id 用宿主规范值 `off / medium / high`，中文展示「关闭 / 均衡 / 高」），不再随 chains 的非 `auto` key 数量增长；最终形态见 combined-tier-ids.md §2.5。
 2. 每个虚拟模型 id 与一个档位一一对应；用户选哪个模型，就把对应 preset 写入 `ranking.strategy` 与 `ranking.routing.strategy`（复用现有 preset id，不新增策略 id）。
 3. 不出现任何 `Smart / xxx` 形式的 chain 派生模型名。
 4. 注册面不变：只有 1 个 smart adapter（`index.js:310`）+ 1 条 configurable provider（`index.js:407-412`）；patch 与测试中不得再声明 smart（`cordis.patch.yml:3-6`、`test/custom-routes.test.mjs:148-170`）。
@@ -46,7 +48,7 @@
 - **任务分类**：`classifyTask`（`lib/routing.js:126-171`）P0 模型名 `+tag` / `requiredCapabilities`，P1 图片，P2 tools，P3 `reasoningEffort` 非 none，P4 长上下文 > 200000，P5 purpose=title/summary/classify → thrifty，兜底 general。`derivePosition`（203-222）：catalog 的 `model.reasoning===true` → reasoning 标签、`contextWindow>=200000` → longctx、image → vision、`tool!==false` → tool、恒加 general；**thrifty/swift 永不自动推导**。`selectTiers`（305-331）无匹配则 relax 到全部路由并 WARN（不阻断）。
 - **思考档自动化程度 = 零**：没有任何基于消息内容判断「该不该思考」的逻辑；只有调用方显式 `reasoningEffort` / `+reasoning` 标签，或用户手选 `reasoning-first`。探测/可用性投影无 reasoning 字段。`test/routing-tier.test.mjs:179-185` 锁死「reasoning-first is a hint, not a fix」（无标签绝不伪造档）。
 
-> **同构提示（必须诚实记录）**：「智能」与「平衡」在现有策略表里共用 `balanced` id。智能 = 默认按任务自动选档入口；平衡 = 中性权重的显式手选入口。二者的底层 preset 相同是刻意选择——**不为了区分而新增策略 id**，因为那会触发 `test/ranking.test.mjs:52-54` 的 6 策略 id 顺序锁死，并连带七语字典同步。UI 语义差异由「默认自动 vs 用户手选」承载；「强制思考」语义另行独立成第四档（2.5）。
+> **同构提示（必须诚实记录）**：「智能」与「平衡」在现有策略表里共用 `balanced` id。智能 = 默认按任务自动选档入口；平衡 = 中性权重的显式手选入口。二者的底层 preset 相同是刻意选择——**不为了区分而新增策略 id**，因为那会触发 `test/ranking.test.mjs:52-54` 的 6 策略 id 顺序锁死，并连带七语字典同步。UI 语义差异由「默认自动 vs 用户手选」承载；「思考强度」不再独立成第四档，而是作为正交维度编入档位 id（见 2.5 与 combined-tier-ids.md）。
 
 ### 2.1 方案 A：固定三档虚拟模型（id 与档位一一对应）
 
@@ -141,37 +143,36 @@
 
 **事实前提**：思考档自动化程度为零。没有任何基于消息内容判断该不该思考的逻辑；只有调用方显式 `reasoningEffort` / `+reasoning` 标签，或用户手选 `reasoning-first`。探测/可用性投影无 reasoning 字段。`test/routing-tier.test.mjs:179-185` 锁死 `reasoning-first` 只是 hint、不是 fix——无标签绝不伪造 reasoning 档，且无匹配时 `selectTiers`（`lib/routing.js:305-331`）relax 到全部路由并 WARN。用户原话：「没好办法就开放出来让他选」。
 
-#### 方案①：把 reasoning 做成第四个固定虚拟档（深度思考档），用户直接选
+#### 方案①（已废弃）：把 reasoning 做成第四个固定虚拟档（深度思考档），用户直接选
 
-- **思路**：在 A/C 的固定档位集合里增加 `reasoning`（对外「深度思考档」），id 与档位一一对应；选中即写 `reasoning-first` + `reasoning-first`（两个现有 preset id，均无需新增）。
-- **优点**：完全符合用户「开放出来让他选」的原话；行为可预测、可测试；与「虚拟模型=档位」契约一致；UI 只需诚实说明「优先请求擅长思考的模型，没有则回退并提示」。
-- **缺点**：把判断责任交给用户；多一个档位需要同步七语字典 key（若新增 label key）。
-- **适用**：当前阶段——自动化信号不存在，强行自动化等于虚构。
+- **原思路**：在 A/C 的固定档位集合里增加 `reasoning`（对外「深度思考档」），id 与档位一一对应；选中即写 `reasoning-first` + `reasoning-first`（两个现有 preset id，均无需新增）。
+- **用户最终决策（2026-11-27）**：否决独立第四档——那是把「强度」这个正交维度做成第 4 个模型的维度混淆。**强度作为正交维度编入模型档 id，形成 `smart/<模型档>/<强度档>` 组合；不设独立第四档**。完整 9 个组合 id、强度 id 用宿主规范值 `off / medium / high`（中文展示「关闭 / 均衡 / 高」）等最终形态见 combined-tier-ids.md §2.2/§2.5。
+- **仍然成立的实事**：自动化信号不存在，强行自动化等于虚构；「开放出来让他选」的显式通道精神保留，只是暴露形态从第四档改为组合 id。
 
 #### 方案②：智能档内自动判断（复用 classifyTask 的 reasoningEffort 信号），无信号不硬塞
 
 - **思路**：不单列虚拟档；智能档内部读取 `reasoningEffort` 非 none（`lib/routing.js:156-158` 的 P3 信号）时自动倾向 reasoning。
 - **优点**：用户心智负担最低；与现有 `classifyTask` 信号天然对齐。
-- **缺点 / 自动化上限**：**只能复用调用方已显式给出的信号，无法从消息内容推断「该不该思考」**；探测/可用性投影无 reasoning 字段，UI 也无法展示确定性；无信号时与方案①的行为不可区分，用户看不到「为什么这次没思考」。
+- **缺点 / 自动化上限**：**只能复用调用方已显式给出的信号，无法从消息内容推断「该不该思考」**；探测/可用性投影无 reasoning 字段，UI 也无法展示确定性；无信号时与「用户手选组合强度档」的行为不可区分，用户看不到「为什么这次没思考」。
 - **适用**：作为后续增强（当真实信号源出现时），**不能作为本期的唯一机制**。
 
 #### 方案③：两者结合（智能档自动判断 + 保留可手动选的深度思考档）
 
-- **思路**：智能档按方案②消费显式信号；同时保留方案①的第四档作为手动兜底。
+- **思路**：智能档按方案②消费显式信号；同时保留用户手选组合强度档作为手动兜底（原「方案①第四档」已废弃，见上文定稿结论）。
 - **优点**：覆盖「有信号自动」和「没信号手选」两种路径。
 - **缺点 / 自动化上限**：自动化部分的上限与方案②完全相同（信号不存在就无从判断）；两套路径并存会让用户困惑「到底什么时候自动、什么时候手选」，文档和 UI 说明成本翻倍。
 - **适用**：成熟期演进，不是本期必须交付的形态。
 
-#### 推荐：**方案①（第四档固定虚拟模型：深度思考档）**
+#### 定稿结论：**不设独立第四档；强度编入模型档 id，形成组合档位**
 
-**明确推荐方案①，不含糊。** 理由：
+按用户最终决策（2026-11-27），思考强度不再做成第四个虚拟模型，而是作为正交维度编进每个模型档的 id：`smart/<模型档>/<强度档>`（强度 id 用宿主规范值 `off / medium / high`，中文展示「关闭 / 均衡 / 高」）。**最终形态见 combined-tier-ids.md**（§2.1 语法、§2.2 映射、§2.5 全笛卡尔积 9 个 id）。理由中仍然成立的实事：
 
 1. **与事实一致**：当前自动化上限为零，方案②③都只能在「调用方已经显式声明 reasoning」时工作，这等于把用户已做的选择再翻译一遍，并非真正的自动判断；把它们当作本期承诺会制造虚假确定性。
-2. **与用户原话一致**：用户明确说没好办法就开放出来让他选——方案①就是把思考能力做成一个可预测的显式档位。
-3. **与整体契约一致**：虚拟模型 = 档位，第四档只是档位集合的扩展，复用已有 `reasoning-first` preset id，不破坏 6 策略锁死与 schema 12 key。
+2. **与用户原话一致**：用户明确说没好办法就开放出来让他选——组合 id 就是把强度做成一个可预测的显式选择位。
+3. **与整体契约一致**：虚拟模型 = 档位，强度是正交维度，组合 id 不破坏 6 策略锁死与 schema 12 key；不新增独立第四档（维度混淆）。
 4. **诚实边界**：档位只是 hint，不是 fix（`test/routing-tier.test.mjs:179-185`）；UI 文案必须说明「若当前没有带 reasoning 标签的模型，会回退到可用模型并给出提示」，不得承诺一定深度思考。
 
-> 方案②③的自动化上限在此明确记录：它们最多消费 `reasoningEffort` / `+reasoning` 显式信号；无信号时不能、也不应伪造档位。未来若出现内容侧或投影侧的真实 reasoning 信号，再评估从①演进到③，本期不承诺。
+> 方案②③的自动化上限在此明确记录：它们最多消费 `reasoningEffort` / `+reasoning` 显式信号；无信号时不能、也不应伪造档位。未来若出现内容侧或投影侧的真实 reasoning 信号，再评估「显式组合强度档 + 智能档消费显式信号」的协同，本期不承诺。
 
 ---
 
@@ -215,25 +216,24 @@
 
 ## 4. 推荐方案与风险缓解
 
-### 4.1 推荐：**方案 A 的行为 + 方案 C 的兼容处理**（含 2.5 推荐的第四档）
+### 4.1 推荐：**方案 A 的行为 + 方案 C 的兼容处理**（强度编入档位 id，不设第四档）
 
-最终对外固定档位集合（4 个，provider=smart）：
+最终对外固定档位集合（**9 个组合 id**，provider=smart；全笛卡尔积，最终形态见 combined-tier-ids.md §2.5）：
 
 | 对外模型 id | 档位名 | 两层 preset | 备注 |
 |---|---|---|---|
-| `auto` | 智能档（默认） | `balanced` + `balanced` | 按任务自动选档；与「平衡档」共用 preset id，差异是默认入口语义 |
-| `cost` | 省钱档 | `cost-first` + `cost-first` | 成本优先 |
-| `balanced` | 平衡档 | `balanced` + `balanced` | 手选中性档 |
-| `reasoning` | 深度思考档 | `reasoning-first` + `reasoning-first` | 用户显式选；hint 非 fix，无匹配会回退并 WARN |
+| `smart/auto/off` · `smart/auto/medium` · `smart/auto/high` | 智能档 × 关闭/均衡/高 | `balanced` + `balanced` | 按任务自动选档；与「平衡档」共用 preset id，差异是默认入口语义 |
+| `smart/cost/off` · `smart/cost/medium` · `smart/cost/high` | 省钱档 × 关闭/均衡/高 | `cost-first` + `cost-first` | 成本优先 |
+| `smart/balanced/off` · `smart/balanced/medium` · `smart/balanced/high` | 平衡档 × 关闭/均衡/高 | `balanced` + `balanced` | 手选中性档 |
 
-（若产品决定本期只交付三档，则去掉 `reasoning` 一行；但 2.5 的推荐是纳入第四档，理由见该节。）
+强度 id 用宿主 `ReasoningEffortId` 规范值 `off / medium / high`，中文展示「关闭 / 均衡 / 高」；不设独立第四档（维度混淆，用户 2026-11-27 最终决策）。基础档 → preset 映射不变，强度档 → effort 映射见 combined-tier-ids.md §2.2。
 
 ### 4.2 推荐理由
 
 1. **正面命中诉求**：虚拟模型数量固定、语义固定，用户选模型就是选档位；`Smart / xxx` 消失。
 2. **改动面可控**：不动注册面、schema、remote、版本与 6 策略 id；不需要新开关、不需要新策略 id、不重构 discovery 与虚拟副本隔离。
 3. **兼容存量**：吸收 C 的兼容处理，已有 chains 仍可解析，老用户配置不被破坏。
-4. **思考档诚实**：以可预测的显式第四档替代「假装自动」，与零自动化事实和用户原话同时对齐。
+4. **思考档诚实**：以可预测的显式组合强度档替代「假装自动」，与零自动化事实和用户原话同时对齐；不设独立第四档。
 
 ### 4.3 风险与缓解表
 
@@ -244,7 +244,7 @@
 | 设置页镜像：`session.modelCatalog()` 的 smart 组条目变化（`client.js:2952-2963`） | 中 | 中 | 镜像只呈现固定档位；`client.js:933-944` 虚拟副本过滤与 1029-1033 标签保留；`VIRTUAL_PROVIDERS`（1162）继续过滤 chains/accounts 下拉与探测候选 |
 | 七语字典 / 静态 key 门禁（`test/free-ui-chain.test.mjs:172-265`） | 中 | 中 | 新增档位 label key 必须一次同步 zh/en/de/es/fr/pt/ru 七份字典，占位符一致；优先复用现有 preset key 减少新增；版本三处（158-165）不 bump |
 | 「智能」与「平衡」底层同构被误读为产品缺陷 | 中 | 低 | 在 UI 文案与本文显式说明：二者共用 `balanced` preset，差异是「默认自动入口 vs 手选中性档」；不为区分而新增策略 id（守住 `test/ranking.test.mjs:52-54`） |
-| 深度思考档被误认为「一定深度思考」 | 中 | 中 | UI 明确 hint 非 fix：无 reasoning 标签的模型时回退到可用路由并 WARN（`test/routing-tier.test.mjs:179-185`）；探测/投影无 reasoning 字段，不伪造标签 |
+| 组合强度档被误认为「一定深度思考」 | 中 | 中 | UI 明确 hint 非 fix：无 reasoning 标签的模型时回退到可用路由并 WARN（`test/routing-tier.test.mjs:179-185`）；探测/投影无 reasoning 字段，不伪造标签；不支持的 effort 不 clamp，走 failover（combined-tier-ids.md §2.2） |
 | 虚拟副本隔离被当冗余误删 | 低 | 高 | 明确 `smart/auto` 自身是虚拟 route：`adapter.js:503-505` / `account-pool.js:337,379-380,411-412` / `availability.js:269-270` / `health-snapshot.js:208` 全部保留；`test/health.test.mjs:554-576` 保持绿 |
 | 档位 contextWindow 取值波动 | 低 | 低 | 沿用 `#virtualContextWindow()`（338-355）：只信正整数，否则 128000 floor；不虚构大数值 |
 
@@ -252,16 +252,16 @@
 
 ## 5. 实施计划大纲（高层步骤，不涉及具体代码）
 
-1. **冻结档位契约**：确认固定 id 集合（auto/cost/balanced/reasoning）、对外档位名与两层 preset 映射；确认「智能/平衡同构」与「思考档 hint 非 fix」的对外文案口径。产出物是本设计简报的评审结论，不新增配置 key。
+1. **冻结档位契约**：确认固定 9 个组合 id（`smart/<auto|cost|balanced>/<off|medium|high>`）、对外档位名与两层 preset 映射（最终形态见 combined-tier-ids.md）；确认「智能/平衡同构」与「强度档 hint 非 fix」的对外文案口径。产出物是本设计简报的评审结论，不新增配置 key。
 2. **收敛虚拟模型输出**：把 `listModels('smart')` 的枚举来源从 chains 派生改为固定档位集合；contextWindow 继续走首跳缓存 + floor；`Smart / xxx` 不再生成。chains 配置保留、仍可被显式 id 解析。
-3. **同步设置页镜像与交互**：设置页 smart 组只显示固定档位；虚拟副本过滤、Smart Gateway 标签、chains/accounts 下拉过滤照旧；首屏按钮与档位语义对齐（省钱/平衡/智能 + 深度思考入口），避免两套命名打架。
+3. **同步设置页镜像与交互**：设置页 smart 组只显示固定档位；虚拟副本过滤、Smart Gateway 标签、chains/accounts 下拉过滤照旧；首屏按钮与档位语义对齐（省钱/平衡/智能 × 关闭/均衡/高），避免两套命名打架。
 4. **兼容与迁移收口**：为旧 `Smart / xxx` 选择提供明确落点（智能档）；不改 schema 12 key、不新增 remote 方法、不碰 patch 与注册面。
 5. **同步测试与字典**：按附录 A 改写必红测试；若引入新 `t()` key，一次同步七语字典与占位符；保持所有锁死项绿。
 6. **门禁与回归**：跑项目既有门禁（lint / build / test / i18n gate），并回归 cost / free / health / discovery 四条数据链路；确认无临时文件残留后再提交（commit，不 push）。
 
 ### 里程碑
 
-- [ ] **M1 — 契约冻结**：档位集合、id↔preset 映射、思考档方案①、同构说明与迁移口径评审通过；无代码改动。
+- [ ] **M1 — 契约冻结**：9 个组合 id 集合、id↔preset 映射、强度档正交编入 id（非第四档）、同构说明与迁移口径评审通过（最终形态见 combined-tier-ids.md）；无代码改动。
 - [ ] **M2 — 行为落地与测试同步**：虚拟模型输出固定档位、设置页镜像同步；`test/compaction.test.mjs` fixture/断言与七语字典按附录 A 同步；相关单测由红转绿。
 - [ ] **M3 — 全量门禁与收尾**：lint/build/test/i18n 全绿；cost/free/health/discovery 回归通过；版本三处一致、schema 12 key、remote 7 方法、6 策略顺序、DUPLICATE_ADAPTER 等锁死项复核；精确提交，不 push。
 
@@ -287,7 +287,7 @@
 | `test/free-ui-chain.test.mjs:158-165` | 版本三处一致（2.7.0） | 不 bump 版本 |
 | `test/health.test.mjs:554-576` | virtualProviders 含 smart + 追加去重 | 虚拟副本隔离保留 |
 | `test/custom-routes.test.mjs:148-170` | patch 不声明 smart（DUPLICATE_ADAPTER） | 不动 `cordis.patch.yml:3-6` |
-| `test/routing-tier.test.mjs:179-185` | reasoning-first 是 hint 非 fix，无标签不伪造档 | 第四档只写 preset，不改 `selectTiers` 回退语义 |
+| `test/routing-tier.test.mjs:179-185` | reasoning-first 是 hint 非 fix，无标签不伪造档 | 组合强度档只写 preset + 注入 effort，不改 `selectTiers` 回退语义 |
 | `test/compaction.test.mjs:71+` | `auto` 首跳缺失时回退 floor | 固定档位仍保留 `auto`，contextWindow 逻辑不动 |
 
 ### A-3 三档映射结论（供回读）
@@ -295,4 +295,4 @@
 - `auto` → **智能档** → `balanced` + `balanced`（默认按任务自动选档；与平衡档共用 preset id）
 - `cost` → **省钱档** → `cost-first` + `cost-first`
 - `balanced` → **平衡档** → `balanced` + `balanced`（手选中性档）
-- 第四档（推荐纳入）：`reasoning` → **深度思考档** → `reasoning-first` + `reasoning-first`（hint 非 fix）
+- 强度作为正交维度编入模型档 id：`smart/<模型档>/<off|medium|high>`（共 9 个组合 id），不设独立第四档；强度 id 用宿主规范值、中文展示「关闭/均衡/高」，强度 → effort 映射见 combined-tier-ids.md §2.2（hint 非 fix）
