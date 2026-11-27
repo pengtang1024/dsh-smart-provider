@@ -31,15 +31,18 @@ const UNIT_ONLY = process.argv.includes('--unit')
  * The --unit whitelist: every suite that runs under plain Node, i.e. imports
  * nothing from @deepseek-ai/* and never reads the Electron app.asar. Keeping
  * this list exhaustive (not just the three original suites) is the point —
- * a pure-logic suite left out of --unit is a real gate gap, verified per file
- * with `env -u DSH_NODE_EXECUTABLE node --test <file>`. Suites that do need
- * the DSH runtime are absent here, still run by the full gate, and --unit
+ * a pure-logic suite left out of --unit is a real gate gap. Verify per file
+ * with `env -u DSH_NODE_EXECUTABLE -u DSH_PROFILE_DIR -u DSH_HOME -u DSH_PROFILE
+ * node --test <file>` so a suite that silently reaches a locally-installed DSH
+ * profile is not mistaken for pure logic: config.test.mjs (schema.js →
+ * @deepseek-ai/schemastery) and pricing.test.mjs (spawn path → yaml from
+ * ~/.dsh/profiles/desktop/node_modules) pass only with a local DSH runtime.
+ * Both are therefore excluded here, still run by the full gate, and --unit
  * prints them as not covered.
  */
 const UNIT_TESTS = [
   'test/health.test.mjs',
   'test/ranking.test.mjs',
-  'test/pricing.test.mjs',
   'test/query-cost.test.mjs',
   'test/routing-tier.test.mjs',
   'test/tier-ids.test.mjs',
@@ -51,7 +54,6 @@ const UNIT_TESTS = [
   'test/health-taxonomy.test.mjs',
   'test/cooldown-consistency.test.mjs',
   'test/note-failure-override.test.mjs',
-  'test/config.test.mjs',
   'test/free-policy.test.mjs',
   'test/free-ui-chain.test.mjs',
   'test/stats-host.test.mjs',
