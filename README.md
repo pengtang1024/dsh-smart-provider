@@ -10,6 +10,25 @@ Deutsch → [docs/DETAIL.de.md](docs/DETAIL.de.md)
 Русский → [docs/DETAIL.ru.md](docs/DETAIL.ru.md)
 Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 
+<details>
+<summary>目录</summary>
+
+- [一、已落地能力（有验收证据）](#一已落地能力有验收证据)
+- [二、包结构](#二包结构)
+- [三、三处 P0 修复](#三三处-p0-修复)
+- [四、账号池 —— “多账号” 是池化，不是扁平跳链](#四账号池-多账号-是池化不是扁平跳链)
+- [五、账号择优 ranking（P1，默认启用 + 中立等权）](#五账号择优-rankingp1默认启用-中立等权)
+- [六、三层健康自动管理（默认开启）](#六三层健康自动管理默认开启)
+- [七、两层智能路由 routing（P2，默认启用 + 中立等权）](#七两层智能路由-routingp2默认启用-中立等权)
+- [八、成本统计设计](#八成本统计设计)
+- [九、配置说明](#九配置说明)
+- [十、构建时已执行的验证](#十构建时已执行的验证)
+- [十一、尚未验证 / 注意事项](#十一尚未验证-注意事项)
+- [English summary (secondary)](#english-summary-secondary)
+- [支持本项目](#支持本项目)
+
+</details>
+
 **本地化：自动跟随当前 DSH 语言（无需选择）。** 设置页文案随 DSH 当前语言实时切换，不提供语言选择器：zh / en / de / es / fr / pt / ru 七语设置文案内联同一 248 活跃 key 键集；缺译文或尚未支持的语言（如 ja）自动回退 en，绝不显示裸 key。机制沿用 `ctx.locale.register(NS, { zh, en, de, es, fr, pt, ru })` + `ctx.locale.bind(NS)` + slot 的 `useSyncExternalStore`，切换语言即时生效。
 
 实现依据父工作区的设计文档：
@@ -21,7 +40,12 @@ Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 - `账号池自动管理深化设计.md` —— L2 账号四状态与半开恢复、L2a 拓扑分类
 - `落地规格.md` —— 四稿合并后的分期规格与冲突裁决（开发强约束）
 
-**当前状态：插件已安装并启用，插件状态 ACTIVE；插件内默认虚拟模型为「智能」（`smart`），默认思考强度为 `auto`。** 宿主会话默认已落盘为智能虚拟模型：profile 的 `agent-default-model` 现为 `provider: smart` / `model: smart`（单段 catalog id）；思考强度由 `defaultEffort` 设置项决定，默认 `auto`；`smart/auto` 只是内部组合 id，不是 profile 里填的值。智能路由默认生效，省钱链路、配置页真读写、P1（资源自适应 / 中立默认 / 动态链）、P2（两层智能路由）、三层健康自动管理（默认开启）均已落地并独立验收。详见下文与 `docs/DETAIL.md`。
+### 现行规范与历史过程文档
+
+- **唯一现行规范**：`SPEC-2026-11-27-smart-provider.md`（4 虚拟模型 + 6 强度 + i18n 硬约束的锁定契约；标题下标注「✅ 现行规范（CURRENT SPEC）」）。凡与下方历史过程稿冲突之处，以该 SPEC 为准。
+- **历史过程稿 / 只读调研，不代表现行口径**：上方早期设计简报（`meta-provider-设计方案.md` / `多账号池设计方案.md` / `方案盲点审查.md` / `可用性自动管理设计.md` / `账号池自动管理深化设计.md` / `落地规格.md`）、`.agents/plans/2026-11-27-*.md` 四份设计稿、`diagnosis.md`、`docs/规格反转前置对照报告.md`、`docs/设计简报-模型定位与探测分组.md`、`docs/两层智能路由设计.md`、`docs/模型能力数据通路调研报告.md`、`docs/现状调研报告-模型定位只读展示.md`、`docs/免费模型探测分组可行性调研报告.md`、`docs/样式问题调研报告-账号池表格.md`、`docs/根因分析-第二次打开设置页空白.md` 等。它们保留作为决策来龙去脉的只读记录；具体行为与默认值一律以现行 SPEC 和本文正文为准。
+
+**本项目开发环境实测状态（非所有用户的普适声明）：插件已安装并启用、插件状态 ACTIVE，宿主会话已落盘为智能虚拟模型；新安装用户请以自身 profile 为准。** 插件内默认虚拟模型为「智能」（`smart`），默认思考强度为 `auto`。历史上已落盘的宿主会话为智能虚拟模型：profile 的 `agent-default-model` 现为 `provider: smart` / `model: smart`（单段 catalog id）；思考强度由 `defaultEffort` 设置项决定，默认 `auto`；`smart/auto` 只是内部组合 id，不是 profile 里填的值。智能路由默认生效，省钱链路、配置页真读写、P1（资源自适应 / 中立默认 / 动态链）、P2（两层智能路由）、三层健康自动管理（默认开启）均已落地并独立验收。详见下文与 `docs/DETAIL.md`。
 
 ---
 
@@ -36,13 +60,13 @@ Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 
 - **社区市场上架入口**：向 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 提 PR，在 `data/plugins/` 下新增一条 YAML 条目即可；站点与市场会自动收录（通常一天内）。分类填 `category: model`（模型与账号接入）。不要把条目提到别处。本仓库的条目草稿见 [`marketplace/pengtang1024__dsh-smart-provider.yml`](marketplace/pengtang1024__dsh-smart-provider.yml)，字段自检与提 PR 步骤见 [`RELEASE.md`](RELEASE.md)。
 - **条目文件与字段**：文件路径为 `data/plugins/<owner>__<repo>.yml`，须与 `url` 的 owner/repo slug 一致；本插件对应 `data/plugins/pengtang1024__dsh-smart-provider.yml`，`url` 为 `https://github.com/pengtang1024/dsh-smart-provider`，`name` 为 `pengtang1024/dsh-smart-provider`。`description.en` / `description.zh` 各一句话、非空、以句号结尾；`icon` / `tarball` 为可选字段。
-- **安装来源优先级**：市场按 npm 包 → 作者在 GitHub Release 提供的 `.tgz` 预构建包 → GitHub 源码归档的顺序选择安装源。本包当前 `package.json` 为 `@local/dsh-smart-provider`、`private: true`，未发布到 npm；不填 `tarball` 时市场回退到源码归档。
+- **安装来源优先级**：市场按 npm 包 → 作者在 GitHub Release 提供的 `.tgz` 预构建包 → GitHub 源码归档的顺序选择安装源。本包已按公共 npm 包配置/发布流程（`dsh-smart-provider`、`publishConfig.access=public`，首发正在 staging 审批中，不宣称已上架指定版本），市场条目按 npm-first 填写；`tarball` 仅在 Release 附件确实上传成功后填写，未上传时保持注释。
 - **可选 `tarball`**：只在 GitHub Release 附件已上传成功后填写，值必须是 GitHub 托管的 `.tgz` 附件直链（如 `https://github.com/pengtang1024/dsh-smart-provider/releases/download/v<version>/<asset>.tgz`）；未上传时保持注释、不要写占位 URL。`icon` 同理，只接受 GitHub 托管的位图（png / jpg / jpeg / webp），本仓库目前只有 `icon.svg`，故暂不填。
 - **社区市场与官方 format-1 索引是两套机制**：上面是社区市场（awesome-dsh-plugin YAML 条目 + 自动收录）。官方 DSH format-1 索引（`@deepseek-ai/dsh-plugin-market` / Web 的 Discover 页 / `plugin_market` 工具）是另一套：无中央条目仓库、默认零索引源、`plugin_market` 工具只读。本节 PR 不会生成 format-1 条目；上架后可把 Discover 页作为核对收录结果的查看入口，不要混淆两者的入口与写入方式。
 
 ## 一、已落地能力（有验收证据）
 
-- **智能路由默认生效。** 插件内默认虚拟模型为智能（`smart` 单段 id），默认强度为 `auto`（由 `defaultEffort` 设置项决定）；组合 id `smart/auto` 保留作内部默认值与历史会话兼容，不再是 catalog 里的单段模型。宿主会话默认已落盘为智能虚拟模型：`agent-default-model` 现为 `provider: smart` / `model: smart`（单段 catalog id）；强度走 `defaultEffort`，默认 `auto`；`smart/auto` 只是内部组合 id，不是 profile 里填的值。选路、回退、成本记录与会话记录已在真实会话中验证。
+- **智能路由默认生效。** 插件内默认虚拟模型为智能（`smart` 单段 id），默认强度为 `auto`（由 `defaultEffort` 设置项决定）；组合 id `smart/auto` 保留作内部默认值与历史会话兼容，不再是 catalog 里的单段模型。本项目开发环境实测中，宿主会话已落盘为智能虚拟模型：`agent-default-model` 为 `provider: smart` / `model: smart`（单段 catalog id）；强度走 `defaultEffort`，默认 `auto`；`smart/auto` 只是内部组合 id，不是 profile 里填的值。选路、回退、成本记录与会话记录已在真实会话中验证；新安装用户以自身 profile 为准。
 - **省钱真落地（用户可选，不是默认）。** 自建免费路由 `x-opencode-free`（`hy4-flash-free`）排在 `smart` 链首，真实账本里该路由的每一笔 `estimated_cost_usd` 都是 `0`（已核对 213+ 笔，最近一次全量统计 487 笔 cost=0）；遇到 402/配额错误自动 fallback 到付费路由（`opencode-go`）。链键按新契约改名，旧 `chains.auto` 自动迁移为 `chains.smart`。免费档由 `registry/custom-routes.user.yaml` 的 `tier: free` 自动排首，不需要改代码。
 - **配置页真读写（2.2.0 起为三个 Tab：总览 / 路由设置 / 花费与健康）。** 设置页展示来自 pi-ai 的真实资源（当前约 49 provider / 58 model，数量随你的 DSH 实时注册表变化）、真实凭据名与账号健康，并可写回插件配置；「花费与健康」走 `@Remote` 真账通道（`lib/cost-stats.js` 读真实 `cost.jsonl` + `lib/remote.js` 暴露 `smartProvider.cost()` / `costDetail()`），明细带 ttft 与 tok/s 两列，不再依赖硬编码或空壳状态。保存按钮常驻卡片头、有「未保存」标记、切 Tab 会拦住未保存草稿；删除一律二次确认；加载 / 空 / 错三态分家，诊断信息收进默认折叠区。详见 §六末的设置页结构说明。
 - **P1（资源自适应）。** `chains` 动态生成（`discoverAutoChain()` 从实时注册表按 provider/model 名排序建中立 `smart` 链，不内置任何具体用户的模型 id）；内置默认链刻意为空 `DEFAULT_CHAINS={smart:[]}`，没配时使用用户当前真实拥有的路由；老配置（`chains` / `accounts` / `custom-routes.user.yaml`）原样保留、不覆盖；定价表缺失字段有降级回退（reasoning / cacheOutput 回退到 output，cacheRead / cacheWrite 回退到 input）；策略默认中立 `.25`（`balanced`）。
@@ -121,7 +145,7 @@ dsh-smart-provider/
 │   ├── ranking.test.mjs      路由排序回归测试（纯逻辑，--unit 白名单）
 │   ├── remote-surface.test.mjs @Remote 路由面契约回归测试（9 条纯逻辑，--unit 白名单）
 │   └── routing-tier.test.mjs tier 选择 / relax 诊断 / 手填标签回归测试（task-7，14 条纯逻辑，--unit 白名单）
-│                             共 24 个测试文件 / 318 条断言（全量）；--unit 白名单 17 个测试文件 / 260 条（纯逻辑）
+│                             共 25 个测试文件 / 349 条断言（全量，2026-11-28 实测）；--unit 白名单 18 个测试文件 / 281 条（纯逻辑，2026-11-28 实测）
 ├── locale/{en,zh}.json       插件显示元数据
 ├── docs/DETAIL.md            插件管理器详情页
 ├── icon.svg                  原创图标
@@ -261,7 +285,13 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 ### L1 —— 免费/付费的证据等级
 
-不靠模型名猜。**用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」已实现为弱信号 / 用户声明默认值（free-signal-v1，未实测）**：名字含 `free`、`priceMultiplier=0`（或 `costModel=free` / `priceTier=free`）即「默认免费（未实测）」：只用于候选收录 / 筛选 / 排序代理与显示「可能免费（未实测）」，等级为 `weak` / `declared`，**不写 L1 billingTier=FREE**；可被真实付费证据（probe `metered`、账本正成本、付费 billingSource、真实正价）推翻。`probeVerdict=unknown` 不阻断弱信号；估算零价（`estimated:true`）不是证据；只有有限数值 `0` 算倍率零。真凭实据的强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。设置页账号行的「价格倍率」可直接修改（留空 / 非法值按 1，`0` = 声明免费）；当前部分路由 probe 多为 `unknown` 的根因尚在验证，不据此宣称任何模型一定免费。免费标签分实测 / 声明 / 未实测三档；实测档按来源显示「已确认免费·价格表 / ·探测 / ·账单」后缀，且按 `(provider, modelId)` 元组取证据（同名模型不跨 provider 串标）；账号倍率 0 属声明级，可被实测付费证据推翻。
+不靠模型名猜。**用户口径「名字带 free 或者倍率为 0 的可以默认认为免费」已实现为弱信号 / 用户声明默认值（free-signal-v1，未实测）**：名字含 `free`、`priceMultiplier=0`（或 `costModel=free` / `priceTier=free`）即「默认免费（未实测）」：只用于候选收录 / 筛选 / 排序代理与显示「可能免费（未实测）」，等级为 `weak` / `declared`，**不写 L1 billingTier=FREE**；可被真实付费证据（probe `metered`、账本正成本、付费 billingSource、真实正价）推翻。
+
+`probeVerdict=unknown` 不阻断弱信号；估算零价（`estimated:true`）不是证据；只有有限数值 `0` 算倍率零。真凭实据的强度：上游 `billingSource`/`cost>0`（高，0.95）> 自己的付费样本（高）> 账本里 20 条以上 cost=0 样本（中，0.7）。只有价格标记、没有任何真实样本时结论是 `UNKNOWN`，不是 `free`。
+
+**重命名会强制清零计费证据**：旧价格不能顺延给新 id，必须重新确认，否则“省钱”就是假的。设置页账号行的「价格倍率」可直接修改（留空 / 非法值按 1，`0` = 声明免费）；当前部分路由 probe 多为 `unknown` 的根因尚在验证，不据此宣称任何模型一定免费。
+
+免费标签分实测 / 声明 / 未实测三档；实测档按来源显示「已确认免费·价格表 / ·探测 / ·账单」后缀，且按 `(provider, modelId)` 元组取证据（同名模型不跨 provider 串标）；账号倍率 0 属声明级，可被实测付费证据推翻。
 
 ### L2 —— 半开恢复，而不是时间到点自动复活
 
@@ -407,11 +437,13 @@ routing 配置嵌在 `ranking` 对象下（`schema.js` 的 `routing` 字段声�
 }
 ```
 
-- `enabled` —— 必须为 `true` 才激活；否则逐字节走 legacy。
+- `enabled` —— 未显式配置时宿主注入默认 `routing`（`enabled:true` / `balanced` / 四因子 .25）；只有显式 `ranking.routing.enabled !== true`（含 `null`）才逐字节走 legacy。
 - `strategy` —— 8 种预设之一：`balanced` / `cost-first` / `speed-first` / `reasoning-first` / `longctx-first` / `vision-first` / `legacy` / `custom`；`balanced` 是中立默认，省钱（cost-first）是显式选择。
 - `tierPolicy` —— 层一强制层（`auto` 不强制；`reasoning-first` / `longctx-first` / `vision-first` 会强制优先选对应位置）。
 - `weights` —— 层二账号评分权重，自定义时归一化；routing 启用时会覆盖 ranking 的权重。
-- `positionOverrides` —— 手动指定某模型的位置标签（键用 `provider/model` 或 `model`）。**两种形态都受支持**：上面示例的对象形态 `{ "vendor/model": { "tags": ["reasoning"] } }`（**主推**，与 `registry/position-overrides.user.yaml` 里的 `overrides` 完全同形，方便同一份东西在文件与 cordis 配置之间搬），以及数组形态 `{ "vendor/model": ["reasoning"] }`。两种形态都先做小写 / 去空格 / 白名单过滤，再与 catalog 自动推导出的能力标签**保守合并**（合并，不是替换）。**可感知的行为变化**：1.2.0 之前实现只读 `.tags`，于是 README 自己写的数组形态是**静默无效**的 —— 你照文档配了 `positionOverrides`，`selectTiers` 依旧报 `no tier matches ... relaxing`，且没有任何提示；现在数组形态同样生效，两种写法等价。
+- `positionOverrides` —— 手动指定某模型的位置标签（键用 `provider/model` 或 `model`）。**两种形态都受支持**：上面示例的对象形态 `{ "vendor/model": { "tags": ["reasoning"] } }`（**主推**，与 `registry/position-overrides.user.yaml` 里的 `overrides` 完全同形，方便同一份东西在文件与 cordis 配置之间搬），以及数组形态 `{ "vendor/model": ["reasoning"] }`。
+
+两种形态都先做小写 / 去空格 / 白名单过滤，再与 catalog 自动推导出的能力标签**保守合并**（合并，不是替换）。**可感知的行为变化**：1.2.0 之前实现只读 `.tags`，于是 README 自己写的数组形态是**静默无效**的 —— 你照文档配了 `positionOverrides`，`selectTiers` 依旧报 `no tier matches ... relaxing`，且没有任何提示；现在数组形态同样生效，两种写法等价。
 - `tierLimit` —— 最多选几个候选层（默认 2）。**语义**：非有限值（`NaN`）、`-1`、`0` 一律回落到默认 2（以前 `-1` 会静默少一层、`0` 会匹配上了也一层都不选，直接和「层一永不阻断请求」的契约打架）；小数向下取整（`2.9 → 2`）；`1` / `2` 正常切片。
 - `longContextTokens` —— 长上下文判定阈值（默认 200000；tokens 用 chars/4 估算，仅用于选路、不用于计费）。
 - `dynamicAuto` —— 动态 auto 链；只在用户没有配置该 outer model 与 `*` 时生效，显式配置始终优先（向后兼容）。
@@ -489,7 +521,7 @@ node scripts/query-cost.mjs
 node scripts/query-cost.mjs --model kimi-k3
 
 # 按外层模型 / provider / 账号 / 时间过滤
-node scripts/query-cost.mjs --outer auto
+node scripts/query-cost.mjs --outer smart
 node scripts/query-cost.mjs --provider opencode-go
 node scripts/query-cost.mjs --account acctA
 node scripts/query-cost.mjs --by-account          # 按 account_id 汇总花费
@@ -554,7 +586,7 @@ dsh-smart-provider: registered smart adapter with N chain keys
 dsh-smart-provider: discovered N neutral auto hop(s) from live registry
 ```
 
-按卸载：`dsh plugin --profile <profile> remove @local/dsh-smart-provider`。
+按卸载：`dsh plugin --profile <profile> remove dsh-smart-provider`。
 
 ### 运行时依赖契约
 
@@ -582,16 +614,16 @@ FAIL: 1 file(s) under test/ are never executed by the full gate:
 Rename it to <name>.test.mjs (or move it out of test/) so it actually runs.
 ```
 
-`--unit` 是一个**纯逻辑白名单**（当前 17 个测试文件：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config` / `free-policy` / `free-ui-chain` / `stats-host`），其余需要 DSH runtime 的测试文件会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
+`--unit` 是一个**纯逻辑白名单**（当前 18 个测试文件：`health` / `ranking` / `pricing` / `query-cost` / `routing-tier` / `persistence` / `hydration-billing` / `health-snapshot` / `remote-surface` / `probe` / `health-taxonomy` / `cooldown-consistency` / `note-failure-override` / `config` / `free-policy` / `free-ui-chain` / `stats-host`），其余需要 DSH runtime 的测试文件会被明确打印成「不在 --unit 覆盖内」，不会被静默跳过；白名单里写了但文件不存在的条目会打 WARN —— 否则子集悄悄缩小又是一次假绿。
 
 ```bash
 # 1) 一条命令跑完整验证门槛（语法检查 + 全部自动发现的测试，自动选运行时）
 npm test
-# => 发现 24 个测试文件；语法检查逐文件 ok；tests 318 / pass 318 / fail 0（2026-11-26 实测，退出码 0）
+# => 发现 25 个测试文件；语法检查逐文件 ok；tests 349 / pass 349 / fail 0（2026-11-28 实测，退出码 0）
 
-# 2) 只跑纯逻辑子集（15 个测试文件，任何 Node 都行，无需 DSH；会打印未覆盖的文件）
+# 2) 只跑纯逻辑子集（18 个测试文件，任何 Node 都行，无需 DSH；会打印未覆盖的文件）
 npm run test:unit
-# => 17 个测试文件，tests 260 / pass 260 / fail 0（2026-11-26 实测，退出码 0）
+# => 18 个测试文件，tests 281 / pass 281 / fail 0（2026-11-28 实测，退出码 0）
 
 # 3) 不带 npm 时等价写法（全量就是发现出来的那批文件）
 ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test test/*.test.mjs
@@ -609,12 +641,12 @@ node -e 'const p=require("./lib/pricing.json"); if(p._rows!==p.entries.length)th
 ```bash
 # 纯逻辑子集：任何 Node 都行，不需要 DSH runtime
 env -u DSH_NODE_EXECUTABLE node scripts/run-tests.mjs --unit
-# => 17 个测试文件 / tests 260 / pass 260 / fail 0，退出码 0
+# => 18 个测试文件 / tests 281 / pass 281 / fail 0，退出码 0
 #    （补 CHANGELOG 标题前为 259/1，唯一 fail 是 FX3-5 版本号一致性）
 
 # 全量：必须用 Electron 的 Node（@deepseek-ai/* 在 app.asar 内部）
 DSH_NODE_EXECUTABLE="/Applications/DSH NEXT.app/Contents/MacOS/DSH NEXT" node scripts/run-tests.mjs
-# => 24 个测试文件 / tests 318 / pass 318 / fail 0，退出码 0
+# => 25 个测试文件 / tests 349 / pass 349 / fail 0，退出码 0
 #    （补 CHANGELOG 标题前为 317/1，同一条 FX3-5）
 ```
 
@@ -673,13 +705,13 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 - **`yaml` 依赖的探测链（无写死家目录）**：`registry/registry-lib.mjs` 只在 DSH profile 里找 `yaml`，按 `DSH_HOME` → `HOME` → `os.homedir()` 的优先级组候选锚点（三者都指向**当前用户**，重复项去重后逐个尝试）。全部失败时抛错并列出试过的每个锚点，提示用 `DSH_HOME` 指安装根；**不再**回退到任何写死的他人家目录。该文件没有独立测试文件，因此这条改动靠全量门禁的语法检查 + 本机三种环境（普通 `HOME`、`env -u HOME -u DSH_HOME`、显式 `DSH_HOME`）的加载冒烟来守。
 - **仓库目录移动后插件不加载（link 指向旧路径）**：profile 里用 `link:` 装本包时记录的是安装当时的绝对路径，仓库被移动 / 改名 / 重新克隆后这条 link 仍指向旧目录 —— 表现为设置页分区消失、插件状态不是 ACTIVE、日志里找不到 `plugin:dsh-smart-provider` 而是加载失败。修法：在 profile 上重新 link 到新路径（`dsh plugin --profile <p> add link:<新路径>`，或编辑 profile 清单里那条 link 指向），然后**重启 App**（或触发一次 profile 重组合）让宿主重新解析。注意 HMR 也救不了这种情况：监听的是旧路径。
 - **桌面壳的 locale preference 当前读不到（宿主限制，待验证）**：DSH 桌面壳目前把 locale preference 读数恒定为 `null`，插件无法从该字段判断用户指定语言，因此界面语言跟随系统 / 浏览器设置（由 Host 的 locale 链决定），而不是用户在壳里选的语言。这是当前宿主的实际表现，插件不做 hack 去猜测或强行覆盖；宿主未来是否提供可读取、可指定的语言设置**尚待验证**，届时再按官方通道接入。
-- **对话框原生强度控件现在显示（2026-11-28 口径）**：`lib/tier-ids.js::virtualReasoningDeclaration()` 声明 6 档 `reasoning.efforts`（auto + 关闭/低/中/高/极高，默认 auto），`lib/adapter.js` 的 `listModels`/`resolveModel` 给 smart 条目补上 `reasoning` 字段，满足宿主 `ModelSelect.tsx:498` 的 `reasoning !== undefined` 条件，对话框原生 Effort 行出现，用户可在原位置像其他模型一样选强度。auto 涵盖 off：默认档省略参数、按模型与任务动态裁决；手动档若首跳不支持（免费首跳只有 off）则降级注入合法的 off 档。原生 effort 名受宿主 codec（`z.string()`）限制，zh 显示中文、其余语种英文回退；设置页 7 语 `virtualEffort.*` 文案键保留不动。此前「原生控件不显示、强度仅由设置页决定」的旧口径已作废；不改链路、不换首跳。详见 `SPEC-2026-11-27-smart-provider.md` §7.1。
+- **对话框原生强度控件现在显示（2026-11-28 口径）**：详见 §六「设置页结构」末条与 `SPEC-2026-11-27-smart-provider.md` §7.1；此处只记录结论——原生 Effort 行已出现，不改选路链路、不换首跳。
 
 ---
 
 ## English summary (secondary)
 
-`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. The 2026-11-27 spec reversal defines **4 virtual models** (Balanced `balanced` / Economy `cost` / Efficient `speed` / Smart `smart`, default Smart) and **6 thinking efforts** (`auto` + off/low/medium/high/max, default `auto`); the catalog lists only the 4 single-segment models and effort is configured via `defaultEffort`, while `auto` is a per-model + per-task dynamic bias rather than a fixed mapping, manual efforts fully override it, and all names are localized in 7 languages via `virtualModel.*` / `virtualEffort.*` keys (the 24 `<model>/<effort>` combinations remain for internal parsing and legacy compatibility only). It is **installed and enabled**; inside the plugin the default virtual model is Smart (`smart`) with `auto` effort, while the host-session default has now landed on the Smart virtual model: the profile `agent-default-model` is `provider: smart` / `model: smart` (single-segment catalog id), effort is set by the `defaultEffort` setting (default `auto`), and `smart/auto` is only an internal combined id, not the value filled into the profile. Verified capabilities include: `smart/auto` in real sessions (old-id-era verification), the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources plus a read-only model-positioning view (the static four-rule task-recognition note promoted out of the collapsed advanced area, and a per-model real positioning table read through the new `@Remote modelPositions()` Host projection that shows each model's tags and source `auto`/`user`/`mixed`, shows an unconfirmed empty state when the per-model data cannot be read, and adds no manual-entry UI — overrides still go through `ranking.routing.positionOverrides` / `registry/position-overrides.user.yaml`), visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (318 full-suite / 260 pure-logic assertions across 24 / 17 suites, measured 2026-11-26, exit 0; 1 expected FX3-5 version-consistency failure in each before the CHANGELOG heading landed, green after the doc fix), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
+`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. The 2026-11-27 spec reversal defines **4 virtual models** (Balanced `balanced` / Economy `cost` / Efficient `speed` / Smart `smart`, default Smart) and **6 thinking efforts** (`auto` + off/low/medium/high/max, default `auto`); the catalog lists only the 4 single-segment models and effort is configured via `defaultEffort`, while `auto` is a per-model + per-task dynamic bias rather than a fixed mapping, manual efforts fully override it, and all names are localized in 7 languages via `virtualModel.*` / `virtualEffort.*` keys (the 24 `<model>/<effort>` combinations remain for internal parsing and legacy compatibility only). In this project's development environment it is **installed and enabled**; new installers should check their own profile. Inside the plugin the default virtual model is Smart (`smart`) with `auto` effort, while the host-session default has now landed on the Smart virtual model: the profile `agent-default-model` is `provider: smart` / `model: smart` (single-segment catalog id), effort is set by the `defaultEffort` setting (default `auto`), and `smart/auto` is only an internal combined id, not the value filled into the profile. Verified capabilities include: `smart/auto` in real sessions (old-id-era verification), the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources plus a read-only model-positioning view (the static four-rule task-recognition note promoted out of the collapsed advanced area, and a per-model real positioning table read through the new `@Remote modelPositions()` Host projection that shows each model's tags and source `auto`/`user`/`mixed`, shows an unconfirmed empty state when the per-model data cannot be read, and adds no manual-entry UI — overrides still go through `ranking.routing.positionOverrides` / `registry/position-overrides.user.yaml`), visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (349 full-suite / 281 pure-logic assertions across 25 / 18 suites, measured 2026-11-28, exit 0), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
 
 ---
 

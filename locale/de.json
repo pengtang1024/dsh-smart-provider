@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Smart-Provider",
-    "description": "Meta-Provider: baut Failover zwischen günstigen Provider-Routen auf, greift nur während des Verbindungsaufbaus zurück, mit Hop-Level-Cooldown, Sitzungsprotokoll pro Hop, Offline-Kostenschätzung und Account-Ranking. Die Einstellungen bieten eine eigene Konfigurationsseite (Übersicht / Routing / Kosten & Gesundheit).",
+    "description": "Meta-Provider: baut Failover zwischen konfigurierten Provider-Routen auf, greift nur während des Verbindungsaufbaus zurück, mit Hop-Level-Cooldown, Sitzungsprotokoll pro Hop, Offline-Kostenschätzung und Account-Ranking. Die Einstellungen bieten eine eigene Konfigurationsseite (Übersicht / Routing / Kosten & Gesundheit).",
     "detail": "docs/DETAIL.de.md"
   },
   "nav": "Smart-Provider",

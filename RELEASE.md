@@ -1,6 +1,6 @@
 # 发布指南（Release Guide）
 
-本文件说明 `dsh-smart-provider` 的发布渠道与操作步骤。**当前上架 PR 已提交（[#19362](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/19362)，OPEN，待审核，尚未合并/收录）**。当前版本以 `package.json` 为准（`2.8.1`），本文不修改任何版本号。
+本文件说明 `dsh-smart-provider` 的发布渠道与操作步骤。**当前上架 PR 已提交（[#19362](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/19362)，OPEN，待审核，尚未合并/收录）**。当前版本以 `package.json` 为准（`2.10.1`），本文不修改任何版本号。
 
 ## 一、两套机制，不要混淆
 
@@ -9,11 +9,11 @@
 | 社区市场 | [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 仓库的 `data/plugins/<owner>__<repo>.yml` | 向该仓库提 PR 新增 YAML；站点/市场自动收录（通常一天内）。不要向市场应用仓库提条目。 |
 | 官方 format-1 索引 | `@deepseek-ai/dsh-plugin-market` / Web Discover 页 / `plugin_market` 工具 | 无中央条目仓库，默认零索引源，工具只读；本节 PR 不会生成 format-1 条目。Discover 页仅可用作查看入口。 |
 
-安装来源优先级：**npm 包 → 作者在 GitHub Release 提供的 `.tgz` 预构建包 → GitHub 源码归档**。本包 `package.json` 为 `@local/dsh-smart-provider`、`private: true`，未发布到 npm；因此实际走 Release `.tgz`（填写 `tarball` 时）或 GitHub 源码归档（不填时）。
+安装来源优先级：**npm 包 → 作者在 GitHub Release 提供的 `.tgz` 预构建包 → GitHub 源码归档**。本包已按公共 npm 包配置/发布流程（`dsh-smart-provider`、`publishConfig.access=public`；npm 首发正在 staging 审批中，不宣称已上架指定版本），市场条目按 npm-first 填写；`tarball` 只在 Release 附件上传成功后填写，未上传时保持注释、不写占位 URL。
 
 ## 二、打 GitHub Release 与 `.tgz` 预构建包
 
-1. 在仓库 `https://github.com/pengtang1024/dsh-smart-provider` 上确认代码、测试与版本号三处一致（发布前核对，`package.json` version / `client.js` 的 `PLUGIN_VERSION` / `CHANGELOG.md` 顶部正式版本号）。tag 用 `v<version>`，例如 `v2.8.1`。
+1. 在仓库 `https://github.com/pengtang1024/dsh-smart-provider` 上确认代码、测试与版本号三处一致（发布前核对，`package.json` version / `client.js` 的 `PLUGIN_VERSION` / `CHANGELOG.md` 顶部正式版本号）。tag 用 `v<version>`，例如 `v2.10.1`。
 2. 打包根目录必须是**仓库根目录**，`package.json` 的 `files` 字段已列全运行时文件：`index.js`、`client.js`、`schema.js`、`lib`、`registry`、`cordis.patch.yml`、`README.md`、`locale/*.json`、`docs`、`scripts`、`icon.svg`；`test/` 与 `RELEASE.md` 不在清单内，不必塞进发布包。包内结构建议：
 
    ```

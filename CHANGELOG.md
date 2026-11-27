@@ -9,6 +9,9 @@
 ### 修复
 
 - **FX3-5 版本字面量同步**：把 FX3-5 的版本字面量从 `2.9.0` 同步到 `2.10.1`（含正则转义形式），恢复版本三处一致门禁；不改动测试断言逻辑。
+
+### 变更
+
 - **公共 npm 发布配置与市场 npm-first 条目**：`package.json` 改为无 scope 公共包（`dsh-smart-provider`、`publishConfig.access=public`、`files` 白名单与 `prepublishOnly`），新增 GitHub Actions OIDC trusted publishing 发布流程（`.github/workflows/release.yml`，`--provenance`），市场条目移除 `tarball` 字段改为 npm-first；版本号与版本三处一致门禁不变。
 
 ### 验证

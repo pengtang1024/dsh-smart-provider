@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Proveedor inteligente",
-    "description": "Meta-proveedor que conmuta por error entre rutas de proveedor económicas, con retroceso solo en la fase de establecimiento, enfriamiento por salto, registros de sesión por salto, estimación de coste sin conexión y selección de cuentas por rango. Una sección de ajustes dedicada ofrece una página de configuración (resumen / enrutamiento / coste y salud).",
+    "description": "Meta-proveedor que conmuta por error entre rutas de proveedor configuradas, con retroceso solo en la fase de establecimiento, enfriamiento por salto, registros de sesión por salto, estimación de coste sin conexión y selección de cuentas por rango. Una sección de ajustes dedicada ofrece una página de configuración (resumen / enrutamiento / coste y salud).",
     "detail": "docs/DETAIL.es.md"
   },
   "nav": "Proveedor inteligente",

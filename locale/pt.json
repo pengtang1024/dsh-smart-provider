@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Provedor inteligente",
-    "description": "Meta-provedor: alterna entre rotas de provedores baratos com failover, recua apenas na fase de estabelecimento da conexão, com resfriamento por salto, registro de sessão por salto, estimativa de custo offline e classificação de contas. A área de configurações oferece uma página dedicada (visão geral / roteamento / custo e saúde).",
+    "description": "Meta-provedor: alterna entre rotas de provedores configuradas com failover, recua apenas na fase de estabelecimento da conexão, com resfriamento por salto, registro de sessão por salto, estimativa de custo offline e classificação de contas. A área de configurações oferece uma página dedicada (visão geral / roteamento / custo e saúde).",
     "detail": "docs/DETAIL.pt.md"
   },
   "nav": "Provedor inteligente",
