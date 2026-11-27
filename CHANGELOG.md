@@ -4,16 +4,23 @@
 
 ## 2.10.0（2026-11-28）
 
+### 变更
+
+- **虚拟模型 / 思考强度规格反转（2026-11-27，以 `SPEC-2026-11-27-smart-provider.md` 为唯一契约）**：旧设计稿「3 模型档 × 3 强度 = 9 组合 id / 否决第 4 档与 auto 强度 / 中文只放自由文本不进 locale」的定稿结论被取代。新契约：虚拟模型 **4 个**（均衡 `balanced` / 省钱 `cost` / 效率 `speed` / 智能 `smart`，**默认智能**）；思考强度 **6 档**（`auto` 默认 + 关闭 `off` / 低 `low` / 中 `medium` / 高 `high` / 极高 `max`），`medium` 中文改为「中」，「均衡」只指 `balanced` 模型，消除撞名。host 目录**只列 4 个单段模型**，强度改由新增设置项 `defaultEffort` 独立选择，`<model>/<effort>` 的 24 组合 id（如 `smart/auto`）**仅作内部解析与历史兼容**、不再是 catalog 条目；`auto` 是按虚拟模型 + 任务内容**动态决定偏向**、非硬绑定映射，`classifyTask` 的智能判断保留，用户手动选档时完全覆盖 auto；4 模型名与 6 强度名全部走 i18n（`virtualModel.*` / `virtualEffort.*`，zh / en / de / es / fr / pt / ru 七语），缺键回退 en、仍缺回退原始 id，不再回退中文自由文本。旧默认模型 `auto` 别名迁移到 `smart`，历史组合 id 后缀继续解析，`chains.auto` 需迁移为 `chains.smart`。同步纠正「已设为默认模型」的过期声明：**插件内默认智能**，**宿主会话默认已落盘为智能虚拟模型**：`agent-default-model` 现为 `provider: smart` / `model: smart`（单段 catalog id），强度由 `defaultEffort` 决定、默认 `auto`，`smart/auto` 只是内部组合 id、不是 profile 里填的值。README / CHANGELOG / marketplace 中英描述同步新口径。
+
+---
+
+## 2.9.0
+
+功能版本（`2.8.1` → `2.9.0`，2026-11-27）：设置页新增模型定位只读展示，置顶任务识别四档规则与逐台真实定位表（Host @Remote modelPositions，读不到标未确认）；按语义化版本 minor 递增。
+
 ### 新增
 
+- **模型定位只读展示**：设置页置顶展示任务识别四档规则与逐台真实定位表（@Remote modelPositions，读不到标未确认）。
 - **发布到插件市场章节**：README 在「兼容性与分类」之后补充社区市场上架入口与条目格式、安装来源优先级、可选 `tarball` / `icon` 约束，以及官方 format-1 索引与社区市场的区别（只写机制与操作步骤，不代表已完成上架）。
 - **`RELEASE.md` 发布指南**：说明 GitHub Release 与 `.tgz` 预构建包制作、awesome-dsh-plugin PR 步骤、CI 强制项清单和上架后验收要点。
 - **市场条目草稿**：新增 `marketplace/pengtang1024__dsh-smart-provider.yml`，按社区市场 YAML 格式填写 `url` / `name` / `category: model` / 中英单句描述；`icon` 因仓库仅有 SVG（非位图）暂不填，`tarball` 保持注释——v2.8.1 Release 已发布但尚无 `.tgz` 附件，待附件上传后再填。
 - **实际发布**：市场条目 PR 已提交到 awesome-dsh-plugin [#19362](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/19362)，待审核收录。
-
-### 变更
-
-- **虚拟模型 / 思考强度规格反转（2026-11-27，以 `SPEC-2026-11-27-smart-provider.md` 为唯一契约）**：旧设计稿「3 模型档 × 3 强度 = 9 组合 id / 否决第 4 档与 auto 强度 / 中文只放自由文本不进 locale」的定稿结论被取代。新契约：虚拟模型 **4 个**（均衡 `balanced` / 省钱 `cost` / 效率 `speed` / 智能 `smart`，**默认智能**）；思考强度 **6 档**（`auto` 默认 + 关闭 `off` / 低 `low` / 中 `medium` / 高 `high` / 极高 `max`），`medium` 中文改为「中」，「均衡」只指 `balanced` 模型，消除撞名。host 目录**只列 4 个单段模型**，强度改由新增设置项 `defaultEffort` 独立选择，`<model>/<effort>` 的 24 组合 id（如 `smart/auto`）**仅作内部解析与历史兼容**、不再是 catalog 条目；`auto` 是按虚拟模型 + 任务内容**动态决定偏向**、非硬绑定映射，`classifyTask` 的智能判断保留，用户手动选档时完全覆盖 auto；4 模型名与 6 强度名全部走 i18n（`virtualModel.*` / `virtualEffort.*`，zh / en / de / es / fr / pt / ru 七语），缺键回退 en、仍缺回退原始 id，不再回退中文自由文本。旧默认模型 `auto` 别名迁移到 `smart`，历史组合 id 后缀继续解析，`chains.auto` 需迁移为 `chains.smart`。同步纠正「已设为默认模型」的过期声明：**插件内默认智能**，**宿主会话默认已落盘为智能虚拟模型**：`agent-default-model` 现为 `provider: smart` / `model: smart`（单段 catalog id），强度由 `defaultEffort` 决定、默认 `auto`，`smart/auto` 只是内部组合 id、不是 profile 里填的值。README / CHANGELOG / marketplace 中英描述同步新口径。
 
 ---
 
