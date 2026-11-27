@@ -8,7 +8,7 @@
 
 ### 变更
 
-- **CI 发布链路**：workflow 测试改为可在纯 Node 运行的单元子集，`prepublishOnly` 同步改为 `npm run test:unit`，确保 GitHub Actions OIDC 可完成 npm 发布（不再依赖本地 token / 浏览器 2FA）。
+- **CI 发布链路**：GitHub Actions 发布流程对齐 dsh-paste-image：OIDC provenance 发布，CI 用单元门禁。
 - **npm-first 安装口径**：README / RELEASE 按已发布的公共 npm 包（`dsh-smart-provider`、`publishConfig.access=public`）重述安装来源优先级；`tarball` 只在 GitHub Release 附件确实上传成功后填写、不写占位 URL，清掉「未发布 / private」旧口径。
 - **七语默认行为与本地化口径**：README 明确设置页不提供语言选择器、自动跟随 DSH 当前语言，zh / en / de / es / fr / pt / ru 七语共用同一活跃键集、缺键回退 en（不回退中文、不显示裸 key）；七语 `docs/DETAIL.<lang>.md` 与 locale 描述同步美化，英文插件描述把「cheap provider routes」修正为「configured provider routes」，不把省钱写成默认行为。
 - **卸载命令与状态口径**：按公共包名给出 `dsh plugin --profile <profile> remove dsh-smart-provider`；把「插件已安装启用 / 宿主会话默认智能」明确标注为本机开发环境实测，新安装用户以自身 profile 为准。

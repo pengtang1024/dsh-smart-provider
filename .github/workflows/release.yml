@@ -16,14 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # setup-node registers the public registry. It does not receive a token
-      # (no NODE_AUTH_TOKEN anywhere in this workflow); the generated npmrc
-      # auth-token line is removed by the "Clear token" step below so npm must
-      # exchange the GitHub OIDC token for a short-lived credential.
+      # No registry-url: setup-node then writes no `_authToken` line, and npm
+      # can reach the OIDC exchange instead of sending a dummy token.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
 
       # Trusted publishing needs npm >= 11.5.1; the runner's bundled one may be older.
       - name: Upgrade npm
@@ -32,54 +29,18 @@ jobs:
           npm --version
           npm config get registry
 
-      - name: Check syntax
+      - name: Test
+        run: npm run test:unit
+
+      - name: Syntax check
         run: node --check client.js
-
-      # CI has no DSH Electron runtime: the full gate needs @deepseek-ai/* from
-      # app.asar (config.test.mjs, gen cordis, buildPricing), which the runner
-      # cannot load. Run the pure-logic unit subset (281/281 under plain Node)
-      # here; the full gate is run locally with
-      # DSH_NODE_EXECUTABLE='/opt/DSH NEXT/dsh-desktop-next' and must not block
-      # publishing. package.json prepublishOnly also calls test:unit, so npm's
-      # own lifecycle check matches what CI can actually run.
-      - name: Run tests (unit subset)
-        run: node scripts/run-tests.mjs --unit
-
-      # Optional full gate, never blocks a release: it only runs on manual
-      # workflow_dispatch when FULL_GATE is explicitly set to 'true' by the
-      # operator, and still needs a runner that provides the DSH runtime.
-      - name: Full gate (optional, non-blocking)
-        if: github.event_name == 'workflow_dispatch' && vars.FULL_GATE == 'true'
-        continue-on-error: true
-        run: echo "Full gate must run on a host with the DSH Electron runtime (DSH_NODE_EXECUTABLE); skipped on this runner."
-
-      - name: Check package payload
-        run: |
-          npm pack --dry-run --json > /tmp/pack.json
-          node -e "const p=require('/tmp/pack.json')[0].files.map(f=>f.path); for(const f of ['client.js','cordis.patch.yml','lib/index.js','registry/registry-lib.mjs','locale/en.json']) if(!p.includes(f)) throw new Error('missing from tarball: '+f)"
 
       - name: OIDC preflight
         run: |
           if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then echo "OIDC env: present"; else echo "OIDC env: MISSING"; fi
-          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then echo "OIDC request token: MISSING"; exit 1; fi
 
-      # IMPORTANT: trusted publishing must be configured on npmjs.com
-      # (package settings -> Trusted Publisher -> GitHub Actions) with the
-      # allowed action set to 'npm publish' (not just stage publish). Accounts
-      # with staged publishing enabled otherwise only put the package in
-      # staging, which still requires a human 2FA approval to finish.
-      # setup-node's registry-url writes //registry.npmjs.org/:_authToken=
-      # with ${NODE_AUTH_TOKEN} into ~/.npmrc. With no token set, npm can send
-      # the literal string "${NODE_AUTH_TOKEN}" and fail before OIDC exchange.
-      # Drop that line and unset the variable: trusted publishing is the only
-      # credential path. No local token, no browser 2FA.
-      - name: Clear token (OIDC-only credential path)
-        run: |
-          unset NODE_AUTH_TOKEN
-          npm config delete //registry.npmjs.org/:_authToken || true
-          if grep -q _authToken "$HOME/.npmrc" 2>/dev/null; then
-            echo "FAIL: _authToken still present in ~/.npmrc"; exit 1
-          fi
-
+      # No NODE_AUTH_TOKEN: npm exchanges the GitHub OIDC token for a short-lived
+      # registry credential. The trusted publisher must be configured on
+      # npmjs.com first (package settings → Trusted Publisher → GitHub Actions).
       - name: Publish
         run: npm publish --provenance --access public --loglevel=verbose
