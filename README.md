@@ -30,6 +30,16 @@ Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 - **支持的 DSH 版本**：本包在 `package.json` 的 `engines` 里声明 `dsh: ">=0.2.0-rc.2 <0.4.0-0"` —— 大白话说，从 `0.2.0-rc.2`（含）到 `0.4.0` 正式版之前（不含）的 DSH 都支持，包含 `0.2.2-rc.5` 这类 rc 预发布版本；`node: ">=20"` 表示需要 Node 20 或更新。这只是给安装器 / 使用者看的兼容性声明，不改变 `peerDependencies`（它仍逐项声明实际用到的 DSH 包），也没有所谓的 `dsh.compatibility` / `dsh.category` 字段。
 - **分类由外部注册表决定**：插件的分类不在本包里声明。若要收录到 `awesome-dsh-plugin` 之类的插件注册表，分类写在那份注册表的 YAML 里，建议归为 `category: model`（模型与账号接入）；本仓库只是被收录的插件源码，不代注册表做分类。本包的 `keywords` 已同时带有英文关键词（`model-router` / `meta-provider` / `failover` 等）与中文关键词（模型路由 / 智能调度 / 成本统计），便于注册表与搜索收录时识别。
 
+### 发布到插件市场
+
+本仓库只提供插件源码；收录由外部注册表决定，本包里没有 `dsh.category` 之类字段。本节记录上架机制与操作步骤；**当前上架 PR 已提交（[#19362](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/19362)，状态 OPEN）、待 CI 与人工审核，尚未合并/收录**，后续状态以该 PR 页面为准。
+
+- **社区市场上架入口**：向 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 提 PR，在 `data/plugins/` 下新增一条 YAML 条目即可；站点与市场会自动收录（通常一天内）。分类填 `category: model`（模型与账号接入）。不要把条目提到别处。本仓库的条目草稿见 [`marketplace/pengtang1024__dsh-smart-provider.yml`](marketplace/pengtang1024__dsh-smart-provider.yml)，字段自检与提 PR 步骤见 [`RELEASE.md`](RELEASE.md)。
+- **条目文件与字段**：文件路径为 `data/plugins/<owner>__<repo>.yml`，须与 `url` 的 owner/repo slug 一致；本插件对应 `data/plugins/pengtang1024__dsh-smart-provider.yml`，`url` 为 `https://github.com/pengtang1024/dsh-smart-provider`，`name` 为 `pengtang1024/dsh-smart-provider`。`description.en` / `description.zh` 各一句话、非空、以句号结尾；`icon` / `tarball` 为可选字段。
+- **安装来源优先级**：市场按 npm 包 → 作者在 GitHub Release 提供的 `.tgz` 预构建包 → GitHub 源码归档的顺序选择安装源。本包当前 `package.json` 为 `@local/dsh-smart-provider`、`private: true`，未发布到 npm；不填 `tarball` 时市场回退到源码归档。
+- **可选 `tarball`**：只在 GitHub Release 附件已上传成功后填写，值必须是 GitHub 托管的 `.tgz` 附件直链（如 `https://github.com/pengtang1024/dsh-smart-provider/releases/download/v<version>/<asset>.tgz`）；未上传时保持注释、不要写占位 URL。`icon` 同理，只接受 GitHub 托管的位图（png / jpg / jpeg / webp），本仓库目前只有 `icon.svg`，故暂不填。
+- **社区市场与官方 format-1 索引是两套机制**：上面是社区市场（awesome-dsh-plugin YAML 条目 + 自动收录）。官方 DSH format-1 索引（`@deepseek-ai/dsh-plugin-market` / Web 的 Discover 页 / `plugin_market` 工具）是另一套：无中央条目仓库、默认零索引源、`plugin_market` 工具只读。本节 PR 不会生成 format-1 条目；上架后可把 Discover 页作为核对收录结果的查看入口，不要混淆两者的入口与写入方式。
+
 ## 一、已落地能力（有验收证据）
 
 - **智能路由默认生效。** `smart/auto` 是默认模型，已在真实会话中验证选路、回退、成本记录与会话记录。
