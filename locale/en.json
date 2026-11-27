@@ -34,5 +34,19 @@
     "clearNote": "This only resets the display start marker. The full ledger is kept and health evidence is unaffected.",
     "cleared": "New statistics start: {since}",
     "error": "Statistics could not be read or updated. Please retry shortly."
+  },
+  "virtualModel": {
+    "balanced": "Balanced",
+    "cost": "Economy",
+    "speed": "Efficient",
+    "smart": "Smart"
+  },
+  "virtualEffort": {
+    "auto": "Auto",
+    "off": "Off",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "max": "Max"
   }
 }

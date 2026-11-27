@@ -245,10 +245,17 @@ test('never throws and never invents a tier on absent task/positions', () => {
   assert.doesNotThrow(() => selectTiers(undefined, undefined, [], {}))
   assert.doesNotThrow(() => selectTiers(reasoningTask(), undefined, ['alpha-route']))
   // Both "none" (wire sentinel) and "off" (DSH canonical value) mean OFF —
-  // no reasoning tier is invented upstream either; "high" is a real signal.
+  // no reasoning tier is invented upstream either. All other SPEC §2.2 effort
+  // ids (auto + the 5 manual levels low/medium/high/max) are real signals;
+  // classifyTask's P3 binary semantics are unchanged by the spec reversal.
   assert.equal(classifyTask({ messages: [{ content: 'hi' }], reasoningEffort: 'none' }).kind, 'general')
   assert.equal(classifyTask({ messages: [{ content: 'hi' }], reasoningEffort: 'off' }).kind, 'general')
-  assert.equal(classifyTask({ messages: [{ content: 'hi' }], reasoningEffort: 'high' }).kind, 'reasoning')
+  for (const effort of ['auto', 'low', 'medium', 'high', 'max']) {
+    assert.equal(
+      classifyTask({ messages: [{ content: 'hi' }], reasoningEffort: effort }).kind,
+      'reasoning', `${effort} must remain a reasoning signal`,
+    )
+  }
 })
 
 test('every position tag hint covers a documented tag', () => {

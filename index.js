@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { Config } from './schema.js'
 import { yaml } from './registry/registry-lib.mjs'
 import { SmartAdapter } from './lib/adapter.js'
-import { discoverAutoChain } from './lib/chains.js'
+import { discoverAutoChain, migrateChainKeys } from './lib/chains.js'
 import { CostMeter } from './lib/cost-meter.js'
 import { buildHealthDeps } from './lib/health-setup.js' // L7: three-layer health power-on (default-on, opt-out)
 import { hydrateHealthEvidence } from './lib/health-persistence.js' // task-6: cold-start replay of persisted health evidence
@@ -122,8 +122,8 @@ export function apply(ctx, config = Config({})) {
   // them, so coerce defensively rather than trusting their runtime type.
   // Volatile fields arrive from the Loader as `{get()}` refs, never as the
   // raw value. Reading the ref itself makes normalizeChains() see `[['get',
-  // fn]]`, drop every hop and fall back to the PAID DEFAULT_CHAINS, and makes
-  // normalizeRankingConfig() silently discard the configured ranking
+  // fn]]`, drop every hop and fall back to DEFAULT_CHAINS ({smart: []}), and
+  // makes normalizeRankingConfig() silently discard the configured ranking
   // (task-44 root cause). Unwrap first, then coerce defensively. Retained for
   // the `loader/volatile-update` handler below, which rebuilds in place.
   const unwrap = v => v && typeof v.get === 'function' ? v.get() : v
@@ -163,9 +163,17 @@ export function apply(ctx, config = Config({})) {
 
   // Coerce the unwrapped volatile values to the shapes adapter/pool expect.
   const rawChains = unwrap(config.chains)
-  const chains = rawChains && typeof rawChains === 'object' && !Array.isArray(rawChains)
-    && Object.keys(rawChains).length > 0 && !Object.hasOwn(rawChains, 'meta')
-    ? rawChains : undefined
+  // SPEC §5: the legacy default model key `auto` must become `smart` before
+  // the table reaches the adapter, or withTierChains derives no default tier
+  // and listModels silently skips the configured chain. Composite keys are
+  // dropped by migrateChainKeys (parse-time compatibility only).
+  const migratedChains = rawChains && typeof rawChains === 'object' && !Array.isArray(rawChains)
+    && !Object.hasOwn(rawChains, 'meta')
+    ? migrateChainKeys(rawChains) : undefined
+  // An empty result (all keys legacy-invalid) counts as unconfigured, so live
+  // discovery may still build the default `smart` chain.
+  const chains = migratedChains && Object.keys(migratedChains).length > 0
+    ? migratedChains : undefined
   const rawAccounts = unwrap(config.accounts)
   const accounts = Array.isArray(rawAccounts) ? rawAccounts : undefined
 
@@ -295,11 +303,24 @@ export function apply(ctx, config = Config({})) {
   // explicit opt-out returns undefined and SmartAdapter takes its exact legacy
   // path. The shared registries are the SAME objects L5's registryReader reads.
   const health = buildHealthDeps(config)
+  // Native effort control labels: read the host's active UI locale (settings
+  // namespace `locale`, field `preference`) so the composer Effort row shows
+  // Chinese only in a zh UI and English everywhere else. describe() is
+  // synchronous and optional — a lean profile simply falls back to en.
+  const readUiLocale = () => {
+    try {
+      const settings = optionalService('settings')
+      const row = settings?.describe?.({ redactSecrets: true })?.find?.(d => d?.ns === 'locale')
+      return typeof row?.value?.preference === 'string' ? row.value.preference : undefined
+    } catch { return undefined }
+  }
   const adapter = new SmartAdapter({
     runtime,
     chains,
     accounts,
     ranking,
+    locale: readUiLocale(),
+    defaultEffort: unwrap(config.defaultEffort),
     // Lazy bridge: only the hop record (P0-3) needs sessions, so the adapter
     // keeps working when the profile has no sessions service.
     sessions: { get: id => getSessions()?.get?.(id) },
@@ -384,7 +405,7 @@ export function apply(ctx, config = Config({})) {
         ctx.logger?.info?.('dsh-smart-provider: no provider models discovered; auto chain stays empty (honest)')
         return
       }
-      adapter.reconfigure({ chains: { auto }, accounts, ranking })
+      adapter.reconfigure({ chains: { smart: auto }, accounts, ranking })
       ctx.logger?.info?.('dsh-smart-provider: discovered %d neutral auto hop(s) from live registry', auto.length)
     } catch (error) {
       ctx.logger?.warn?.('dsh-smart-provider: auto-chain discovery failed (staying empty): %o', error)
@@ -434,7 +455,7 @@ export function apply(ctx, config = Config({})) {
   // the cost* fields were written by the settings page and silently ignored
   // until a restart (task-6).
   const VOLATILE_KEYS = new Set([
-    'chains', 'accounts', 'ranking', 'health', 'routing',
+    'chains', 'accounts', 'ranking', 'health', 'routing', 'defaultEffort',
     'costEnabled', 'costDir', 'costBatchSize', 'costFlushIntervalMs',
   ])
   const COST_KEYS = ['costEnabled', 'costDir', 'costBatchSize', 'costFlushIntervalMs']
@@ -491,10 +512,12 @@ export function apply(ctx, config = Config({})) {
         try { void previous.close()?.catch?.(() => {}) } catch { /* already closed */ }
       }
       // health/routing/ranking/chains/accounts -> in-place reconfigure.
-      if (['health', 'routing', 'ranking', 'chains', 'accounts'].some(k => changed.has(k))) {
+      if (['health', 'routing', 'ranking', 'chains', 'accounts', 'defaultEffort'].some(k => changed.has(k))) {
         const nextRawChains = unwrap(config.chains)
-        const nextChains = nextRawChains && typeof nextRawChains === 'object' && !Array.isArray(nextRawChains)
-          && !Object.hasOwn(nextRawChains, 'meta') ? nextRawChains : undefined
+        const nextMigratedChains = nextRawChains && typeof nextRawChains === 'object' && !Array.isArray(nextRawChains)
+          && !Object.hasOwn(nextRawChains, 'meta') ? migrateChainKeys(nextRawChains) : undefined
+        const nextChains = nextMigratedChains && Object.keys(nextMigratedChains).length > 0
+          ? nextMigratedChains : undefined
         const nextRawAccounts = unwrap(config.accounts)
         const nextAccounts = Array.isArray(nextRawAccounts) ? nextRawAccounts : undefined
         // health/routing can flip the pool's health wiring and the ranking
@@ -504,6 +527,7 @@ export function apply(ctx, config = Config({})) {
           chains: nextChains,
           accounts: nextAccounts,
           ranking: withRouting(unwrap(config.ranking)),
+          defaultEffort: unwrap(config.defaultEffort),
         })
       }
       ctx.logger?.info?.('dsh-smart-provider: applied volatile config update (%s)', [...changed].join(', '))

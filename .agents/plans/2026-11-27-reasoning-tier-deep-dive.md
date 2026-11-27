@@ -1,5 +1,9 @@
 # 补充设计探讨：思考档（reasoning tier）有没有比「直接开放成手动档」更好的方案
 
+> ## ⚠️ 已被新规格取代（2026-11-27 规格反转）
+>
+> **本稿 2026-11-27 的「3 模型档 × 3 强度 = 9 个组合 id、否决第 4 档、否决 auto 强度、名称只放自由文本不进 locale」结论已被 `SPEC-2026-11-27-smart-provider.md` 取代，不再作为当前契约。** 以下内容作为历史设计数据原样保留，仅供溯源；现行契约以该 SPEC 为准：4 个虚拟模型（均衡 `balanced` / 省钱 `cost` / 效率 `speed` / 智能 `smart`，默认智能）、6 档强度（`auto` + 关闭 `off` / 低 `low` / 中 `medium` / 高 `high` / 极高 `max`，默认 `auto`）、host 目录只列 4 个单段模型 + `defaultEffort` 设置项（24 组合仅作内部解析/历史兼容，非 catalog 条目）、`auto` 为按模型与任务内容的动态偏向而非硬绑定（保留 `classifyTask` 判断、手动档覆盖）、名称走 7 语 i18n 键 `virtualModel.*` / `virtualEffort.*`。
+>
 定稿状态：2026-11-27 按用户决策收敛（最终形态见 combined-tier-ids.md）
 
 > 本文是 `.agents/plans/2026-11-27-virtual-model-tiers.md`（下称「前一简报」）§2.5 的**挑战性补充**，不是它的复述。

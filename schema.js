@@ -54,6 +54,20 @@ export const Config = z.object({
    * balanced, four factors .25); explicit enabled:false = byte-for-byte legacy.
    */
   routing: z.any().default(undefined).volatile(),
+  /**
+   * 新建会话默认思考强度：auto=按虚拟模型与任务内容动态决定；手动档覆盖自动判断
+   * (SPEC §7). Manual ids are the host ReasoningEffortId values; strength is a
+   * standalone config key, no longer carried by a model-id suffix. Volatile so
+   * the settings page can change it without a restart.
+   */
+  defaultEffort: z.union([
+    z.const('auto'),
+    z.const('off'),
+    z.const('low'),
+    z.const('medium'),
+    z.const('high'),
+    z.const('max'),
+  ]).default('auto').volatile(),
   /** Enable the JSONL cost meter (volatile: editable without restart). */
   costEnabled: z.boolean().default(true).volatile(),
   /** Output directory for cost.jsonl; empty = ~/.dsh/smart-provider. */

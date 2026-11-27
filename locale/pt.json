@@ -34,5 +34,19 @@
     "clearNote": "Isso apenas redefine o marcador de início da exibição. O registro completo é mantido e as evidências de saúde não são afetadas.",
     "cleared": "Novo início das estatísticas: {since}",
     "error": "Não foi possível ler ou atualizar as estatísticas. Tente novamente em instantes."
+  },
+  "virtualModel": {
+    "balanced": "Equilibrado",
+    "cost": "Econômico",
+    "speed": "Eficiente",
+    "smart": "Inteligente"
+  },
+  "virtualEffort": {
+    "auto": "Automático",
+    "off": "Desativado",
+    "low": "Baixo",
+    "medium": "Médio",
+    "high": "Alto",
+    "max": "Máximo"
   }
 }

@@ -34,5 +34,19 @@
     "clearNote": "只重置显示起点，历史账本保留，健康证据不受影响。",
     "cleared": "新的统计起点：{since}",
     "error": "暂无法读取或更新统计数据，请稍后重试。"
+  },
+  "virtualModel": {
+    "balanced": "均衡",
+    "cost": "省钱",
+    "speed": "效率",
+    "smart": "智能"
+  },
+  "virtualEffort": {
+    "auto": "自动",
+    "off": "关闭",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "max": "极高"
   }
 }

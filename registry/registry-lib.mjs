@@ -240,14 +240,14 @@ export function buildClientBlock(doc) {
   ].join('\n')
 }
 
-/** Extract the current DEFAULT_CHAINS auto list from chains.js source (regex,
+/** Extract the current DEFAULT_CHAINS smart list from chains.js source (regex,
  *  no eval) so the free models can be prepended without losing paid hops. */
 export function readExistingAuto(chainsSrc) {
-  // P1: DEFAULT_CHAINS is now `Object.freeze({ auto: [] })` (neutral empty
-  // shell). Accept that form and an empty auto list — the generator builds
+  // P1: DEFAULT_CHAINS is now `Object.freeze({ smart: [] })` (neutral empty
+  // shell). Accept that form and an empty smart list — the generator builds
   // chains from the user's declaration, not from shipped default hops.
-  const m = chainsSrc.match(/DEFAULT_CHAINS\s*=\s*(?:Object\.freeze\(\s*)?\{[\s\S]*?auto:\s*\[([\s\S]*?)\]/)
-  if (!m) throw new Error('cannot locate DEFAULT_CHAINS.auto in chains.js')
+  const m = chainsSrc.match(/DEFAULT_CHAINS\s*=\s*(?:Object\.freeze\(\s*)?\{[\s\S]*?smart:\s*\[([\s\S]*?)\]/)
+  if (!m) throw new Error('cannot locate DEFAULT_CHAINS.smart in chains.js')
   const hops = [...m[1].matchAll(/\{\s*provider:\s*'([^']+)'\s*,\s*model:\s*'([^']+)'\s*\}/g)]
     .map(x => ({ provider: x[1], model: x[2] }))
   return hops // may be [] — neutral default, not an error

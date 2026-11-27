@@ -34,5 +34,19 @@
     "clearNote": "Cela ne réinitialise que le repère de début de l’affichage. Le registre complet est conservé et les preuves de santé ne sont pas affectées.",
     "cleared": "Nouveau début des statistiques : {since}",
     "error": "Les statistiques n’ont pas pu être lues ou mises à jour. Veuillez réessayer dans un instant."
+  },
+  "virtualModel": {
+    "balanced": "Équilibré",
+    "cost": "Économique",
+    "speed": "Efficace",
+    "smart": "Intelligent"
+  },
+  "virtualEffort": {
+    "auto": "Automatique",
+    "off": "Désactivé",
+    "low": "Faible",
+    "medium": "Moyen",
+    "high": "Élevé",
+    "max": "Maximal"
   }
 }

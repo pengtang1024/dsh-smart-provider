@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const ENTRY = 'smart-provider'
     // 与 package.json 的 version 保持同步（浏览器模块无法 require package.json，
     // 故按本项目 STATIC_* 惯例内联）。改版本时两处都要更新。
-    const PLUGIN_VERSION = '2.8.1'
+    const PLUGIN_VERSION = '2.10.0'
 
     // Generated custom-route candidate lists must live inside the factory:
     // HMR re-evaluates the module, so top-level consts here would throw
@@ -600,6 +600,9 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
     // these constants are inlined on purpose: presets and default chains must
     // render even when Host commands are unreachable. Host command results
     // (below) override these when available.
+    // These are ranking/routing STYLE ids (mirrored from lib/ranking.js), not
+    // virtual model tiers: they never enumerate the 4 models or the 6 efforts
+    // and must not be read as the retired 3-tier / 9-combination model scheme.
     const STATIC_STRATEGIES = [
       { id: 'legacy', label: '兼容模式', description: '完全保持旧行为：route 优先 + 最少使用', weights: null },
       { id: 'balanced', label: '均衡（推荐）', description: '各项均衡，不偏向省钱或速度', weights: { cost: 0.25, speed: 0.25, tier: 0.25, load: 0.25 } },
@@ -632,8 +635,11 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       `${t('routing.rule.reason')} → ${t('routing.rule.reasoning')}`,
       `${t('routing.rule.long')} → ${t('routing.rule.longctx')}`,
     ]
+    // SPEC §5/§7: the default chain key is `smart` (default virtual model),
+    // not the retired `auto`. ChainsTab also recognizes a legacy `chains.auto`
+    // key when rendering an older saved config.
     const STATIC_DEFAULT_CHAINS = {
-      auto: [
+      smart: [
         { provider: 'opencode-go', model: 'deepseek-v4.1-flash' },
         { provider: 'opencode-go', model: 'glm-5.3-flash' },
         { provider: 'opencode-go', model: 'mimo-v2.6-flash' },
@@ -665,18 +671,37 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'glm-5.3': 'GLM 5.3',
       'mimo-v2.6-flash': '小米 MiMo V2.6 Flash（便宜）',
     }
-    // Combined virtual tier ids (smart/<tier>/<effort>) are display-only: the
-    // adapter's listModels.name is the authoritative free-text label (Chinese
-    // names live there, NOT in t()/locale). This fallback covers early snapshots
-    // where only the raw id reached the client, without adding any i18n key.
-    const TIER_LABELS = { auto: '智能档', cost: '省钱档', balanced: '平衡档' }
-    const EFFORT_LABELS = { off: '关闭', medium: '均衡', high: '高' }
-    const tierIdLabel = id => {
+    // SPEC §2: 4 single-segment virtual models (balanced/cost/speed/smart,
+    // default smart) and 6 efforts (auto + off/low/medium/high/max). Names are
+    // locale keys rendered through t() — no Chinese free text, so the en UI
+    // never shows Chinese. The old "balanced=medium" collision is gone:
+    // medium now means 中 and balanced means 均衡. Historical <model>/<effort>
+    // ids stay parseable as a display fallback; they are NOT catalog entries
+    // and the client never synthesizes 24 combination entries.
+    const TIER_LABELS = {
+      balanced: 'virtualModel.balanced', cost: 'virtualModel.cost',
+      speed: 'virtualModel.speed', smart: 'virtualModel.smart',
+    }
+    const EFFORT_LABELS = {
+      auto: 'virtualEffort.auto', off: 'virtualEffort.off', low: 'virtualEffort.low',
+      medium: 'virtualEffort.medium', high: 'virtualEffort.high', max: 'virtualEffort.max',
+    }
+    const VIRTUAL_MODEL_IDS = Object.keys(TIER_LABELS)
+    const VIRTUAL_EFFORT_IDS = Object.keys(EFFORT_LABELS)
+    const DEFAULT_VIRTUAL_MODEL = 'smart'
+    const DEFAULT_VIRTUAL_EFFORT = 'auto'
+    const DEFAULT_EFFORT_KEY = 'defaultEffort' // schema.js config key (SPEC §7)
+    const tierIdLabel = (id, t) => {
       const parts = str(id).split('/')
       if (parts.length !== 2 || !TIER_LABELS[parts[0]] || !EFFORT_LABELS[parts[1]]) return null
-      return 'Smart ' + TIER_LABELS[parts[0]] + ' · ' + EFFORT_LABELS[parts[1]] + '强度'
+      return t(TIER_LABELS[parts[0]]) + ' · ' + t(EFFORT_LABELS[parts[1]])
     }
-    const modelLabel = id => MODEL_LABELS[str(id)] || tierIdLabel(id) || str(id)
+    const modelLabel = (id, t) => TIER_LABELS[str(id)]
+      ? t(TIER_LABELS[str(id)])
+      : (MODEL_LABELS[str(id)] || tierIdLabel(id, t) || str(id))
+    const effortOf = config => VIRTUAL_EFFORT_IDS.includes(str(config?.[DEFAULT_EFFORT_KEY]))
+      ? str(config[DEFAULT_EFFORT_KEY])
+      : DEFAULT_VIRTUAL_EFFORT
 
     // ---- tiny helpers -----------------------------------------------------
     const arr = v => (Array.isArray(v) ? v : [])
@@ -1198,6 +1223,31 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       )
     }
 
+    // ---- default thinking effort (schema.js `defaultEffort`) ---------------
+    // SPEC §2/§7: effort is an independent config key, never a model-id suffix.
+    // auto = soft bias from the selected virtual model plus classifyTask's
+    // task signal; a manual level fully overrides it. Every option label is a
+    // virtualEffort.* locale key rendered through t() (no Chinese in en UI).
+    function DefaultEffortSettingsCard({ t, config, revision, mutate }) {
+      const value = effortOf(config)
+      const [notice, setNotice] = useState(null)
+      const save = useCallback(async next => {
+        setNotice(null)
+        const res = await mutate([{ op: 'set', path: [DEFAULT_EFFORT_KEY], value: next }], revision)
+        setNotice(res?.ok === true
+          ? { ok: true, msg: t('action.saved') }
+          : { ok: false, msg: `${t('error.saveFailed')}${res?.detail ? '（' + res.detail + '）' : ''}` })
+      }, [mutate, revision, t])
+      const options = VIRTUAL_EFFORT_IDS.map(id => ({ v: id, l: t(`virtualEffort.${id}`) }))
+      return h('div', { style: S.card },
+        h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('defaultEffort.title')),
+        h(Field, { label: t('defaultEffort.label'), help: t('defaultEffort.help') },
+          select(options, value, v => { void save(v) }, t('defaultEffort.label')),
+        ),
+        notice ? h('div', { style: { ...(notice.ok ? S.ok : S.err), marginTop: 6 } }, notice.msg) : null,
+      )
+    }
+
     // ---- chains -----------------------------------------------------------
     // Fallback lists are used ONLY when the pi snapshot is empty/not loaded —
     // never the source of truth. The real lists come from the runtime pi snapshot
@@ -1219,14 +1269,14 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         .map(p => ({ v: p.id, l: p.name }))
       return list.length ? list : FALLBACK_PROVIDERS.map(v => ({ v, l: v }))
     }
-    const modelOptions = pi => {
+    const modelOptions = (pi, t) => {
       // Exclude models whose catalog group is a virtual provider (smart-only
       // models). Real providers' models remain fully selectable (task-81).
       const list = arr(pi?.models)
         .filter(m => !VIRTUAL_PROVIDERS.has(str(m?.group)))
-        .map(m => ({ v: str(m?.id ?? m), l: str(m?.name) || modelLabel(str(m?.id ?? m)) }))
+        .map(m => ({ v: str(m?.id ?? m), l: str(m?.name) || modelLabel(str(m?.id ?? m), t) }))
         .filter(o => o.v)
-      return list.length ? list : FALLBACK_MODELS.map(m => ({ v: m, l: modelLabel(m) }))
+      return list.length ? list : FALLBACK_MODELS.map(m => ({ v: m, l: modelLabel(m, t) }))
     }
     // ≥N real success samples = high enough confidence to show an explicit
     // status (design §7 FREE_LEDGER_SAMPLES). Below that = UNKNOWN/unreviewed.
@@ -1256,8 +1306,18 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
     // Structured chain editor: every hop is a pair of dropdowns, never JSON.
     function ChainsTab({ t, form, revision, mutate, config, pi, onDirty }) {
       const provOpts = providerOptions(pi)
-      const modelOpts = modelOptions(pi)
-      const configured = obj(config?.chains)
+      const modelOpts = modelOptions(pi, t)
+      // SPEC §5: host migrates a persisted `chains.auto` to `chains.smart` on
+      // read. Normalize here too so an older snapshot cannot resurrect the
+      // retired default key on the next save.
+      const normalizeChainKeys = src => {
+        const out = {}
+        for (const [key, hops] of Object.entries(obj(src))) {
+          out[key === 'auto' ? 'smart' : key] = hops
+        }
+        return out
+      }
+      const configured = normalizeChainKeys(config?.chains)
       const usingDefault = Object.keys(configured).length === 0
       const initial = usingDefault ? STATIC_DEFAULT_CHAINS : configured
       // 一处归一化：初值、config 同步与 dirty 基线必须同形状，否则"没动过"
@@ -1266,7 +1326,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         model, hops: arr(hops).map(x => ({ provider: str(x?.provider), model: str(x?.model) })),
       }))
       const [groups, setGroups] = useState(() => normalize(initial))
-      useEffect(() => { setGroups(normalize(Object.keys(obj(config?.chains)).length ? config.chains : STATIC_DEFAULT_CHAINS)) }, [config?.chains])
+      useEffect(() => { setGroups(normalize(Object.keys(configured).length ? configured : STATIC_DEFAULT_CHAINS)) }, [config?.chains])
       // 提示状态是显式 {ok,msg}：早先用正则 /error|失败/i 猜颜色，英文失败
       // 文案（Save failed）匹配不到就显示成绿色"成功"。
       const [msg, setMsg] = useState(null)
@@ -1321,7 +1381,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         setMsg({ ok, msg: ok ? t('action.saved') : t('error.saveFailed'), detail: ok ? '' : str(r?.detail) })
       }
       // 恢复默认：Host 契约（lib/chains.js normalizeChains:70-86）—— chains 传
-      // undefined / null / {} 都会归一到 DEFAULT_CHAINS（{auto: []}）并走自动发现。
+      // undefined / null / {} 都会归一到 DEFAULT_CHAINS（{smart: []}）并走自动发现。
       // 所以这里写 {} （不需要、也不去赌 set undefined 的语义），成功才提示已清空。
       const clearCustom = async () => {
         setConfirmKey(null)
@@ -1671,7 +1731,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       }, [costService])
       useEffect(() => { void loadAccounts() }, [loadAccounts])
       const provOpts = providerOptions(pi)
-      const modelOpts = modelOptions(pi)
+      const modelOpts = modelOptions(pi, t)
       const configuredAccounts = arr(config?.accounts)
       const blankAccount = () => ({
         id: '', provider: provOpts[0]?.v, credentialRef: '', models: [modelOpts[0]?.v],
@@ -3225,6 +3285,9 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         }) : null,
         // BX2: cost-pill controls on the overview FIRST screen, never in Advanced.
         tab === 'overview' ? h(CostPillSettingsCard, { t, config, revision, mutate }) : null,
+        // SPEC §7: default thinking effort is a top-level schema key; editable
+        // from the overview so beginner users can pick auto vs a manual level.
+        tab === 'overview' ? h(DefaultEffortSettingsCard, { t, config, revision, mutate }) : null,
         // 路由设置 = 先链路卡、后账号/择优卡，两张卡各自的保存按钮与语义不变。
         // 两张卡都上报 dirty，供切 Tab 前的确认条使用。
         tab === 'routing' ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
@@ -3314,11 +3377,17 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'pi.freeModelsHint': '状态来自真实使用记录：有足够成功样本才显示"可用"，其余显示"资费未确认"（不是"不可用"）。无论状态如何都保留在列表里。',
       'pi.otherProvidersHint': 'Trae / Qoder / WorkBuddy 等插件的免费模型与可用性由各自插件管理，这里不标注。',
       'preset.pick': '你想让它怎么选？点一下就好（随时可改）',
-      'preset.balanced': '⚖ 平衡（推荐）', 'preset.balancedSub': '省心又省钱，大多数人选这个',
+      'preset.balanced': '⚖ 均衡（推荐）', 'preset.balancedSub': '省心又省钱，大多数人选这个',
       'preset.cost': '💰 更省钱', 'preset.costSub': '尽量用便宜的模型',
       'preset.speed': '⚡ 更快', 'preset.speedSub': '优先用响应快的模型',
       'preset.applying': '正在保存你的选择…',
       'preset.applied': '已切换为「{name}」，立即生效',
+      'virtualModel.balanced': '均衡', 'virtualModel.cost': '省钱',
+      'virtualModel.speed': '效率', 'virtualModel.smart': '智能',
+      'virtualEffort.auto': '自动', 'virtualEffort.off': '关闭', 'virtualEffort.low': '低',
+      'virtualEffort.medium': '中', 'virtualEffort.high': '高', 'virtualEffort.max': '极高',
+      'defaultEffort.title': '虚拟模型思考强度', 'defaultEffort.label': '默认强度',
+      'defaultEffort.help': 'auto=按所选虚拟模型与任务内容动态决定；手动档（关闭/低/中/高/极高）覆盖自动判断。',
       'chains.cardTitle': '链路（模型的备用顺序）',
       'chains.plainTitle': '模型的备用顺序',
       'chains.plainExplain': '智能路由会按下面的顺序尝试：从上到下，不行就自动换下一个。这些都是你已经在 DSH 里配置好的模型，不用另外设置。',
@@ -3515,6 +3584,12 @@ const en = {
       'preset.speed': '⚡ Be fast', 'preset.speedSub': 'Prefer the quickest models',
       'preset.applying': 'Saving your choice…',
       'preset.applied': 'Switched to "{name}" — live now',
+      'virtualModel.balanced': 'Balanced', 'virtualModel.cost': 'Economy',
+      'virtualModel.speed': 'Efficient', 'virtualModel.smart': 'Smart',
+      'virtualEffort.auto': 'Auto', 'virtualEffort.off': 'Off', 'virtualEffort.low': 'Low',
+      'virtualEffort.medium': 'Medium', 'virtualEffort.high': 'High', 'virtualEffort.max': 'Max',
+      'defaultEffort.title': 'Virtual model reasoning effort', 'defaultEffort.label': 'Default effort',
+      'defaultEffort.help': 'Auto = decided dynamically from the selected virtual model and task content; a manual level overrides it.',
       'chains.cardTitle': 'Chains (model fallback order)',
       'chains.plainTitle': 'Model fallback order',
       'chains.plainExplain': 'Smart routing tries these in order: top to bottom, switching automatically if one fails. These are models you already configured in DSH — nothing extra to set.',
@@ -3749,6 +3824,12 @@ const de = {
       'preset.speedSub': 'Schnellste Modelle bevorzugen',
       'preset.applying': 'Ihre Auswahl wird gespeichert…',
       'preset.applied': 'Auf „{name}“ umgestellt – sofort aktiv',
+      'virtualModel.balanced': 'Ausgewogen', 'virtualModel.cost': 'Sparsam',
+      'virtualModel.speed': 'Effizient', 'virtualModel.smart': 'Intelligent',
+      'virtualEffort.auto': 'Automatisch', 'virtualEffort.off': 'Aus', 'virtualEffort.low': 'Niedrig',
+      'virtualEffort.medium': 'Mittel', 'virtualEffort.high': 'Hoch', 'virtualEffort.max': 'Maximal',
+      'defaultEffort.title': 'Denkaufwand des virtuellen Modells', 'defaultEffort.label': 'Standardaufwand',
+      'defaultEffort.help': 'Automatisch = dynamische Entscheidung anhand des gewaehlten virtuellen Modells und des Aufgabeninhalts; eine manuelle Stufe ueberschreibt die automatische Entscheidung.',
       'chains.cardTitle': 'Ketten (Reihenfolge der Modell-Fallbacks)',
       'chains.plainTitle': 'Reihenfolge der Modell-Fallbacks',
       'chains.plainExplain': 'Smart-Routing probt diese Modelle in der Reihenfolge von oben nach unten und wechselt bei Ausfall automatisch. Es handelt sich um Modelle, die Sie bereits in DSH konfiguriert haben – nichts weiter einzustellen.',
@@ -4030,6 +4111,12 @@ const es = {
       'preset.speedSub': 'Preferir los modelos más rápidos',
       'preset.applying': 'Guardando tu elección…',
       'preset.applied': 'Cambiado a «{name}»: activo ahora',
+      'virtualModel.balanced': 'Equilibrado', 'virtualModel.cost': 'Económico',
+      'virtualModel.speed': 'Eficiente', 'virtualModel.smart': 'Inteligente',
+      'virtualEffort.auto': 'Automático', 'virtualEffort.off': 'Desactivado', 'virtualEffort.low': 'Bajo',
+      'virtualEffort.medium': 'Medio', 'virtualEffort.high': 'Alto', 'virtualEffort.max': 'Máximo',
+      'defaultEffort.title': 'Nivel de razonamiento del modelo virtual', 'defaultEffort.label': 'Nivel predeterminado',
+      'defaultEffort.help': 'Automático = se decide dinámicamente según el modelo virtual elegido y el contenido de la tarea; un nivel manual sustituye la decisión automática.',
       'chains.cardTitle': 'Cadenas (orden de respaldo de modelos)',
       'chains.plainTitle': 'Orden de respaldo de modelos',
       'chains.plainExplain': 'El enrutamiento inteligente prueba estos modelos de arriba abajo y cambia automáticamente si uno falla. Son modelos que ya configuraste en DSH: no hay nada más que ajustar.',
@@ -4273,6 +4360,12 @@ const es = {
       'preset.speed': '⚡ Aller vite', 'preset.speedSub': 'Privilégier les modèles les plus rapides',
       'preset.applying': 'Enregistrement de votre choix…',
       'preset.applied': 'Passé à « {name} » — actif immédiatement',
+      'virtualModel.balanced': 'Équilibré', 'virtualModel.cost': 'Économique',
+      'virtualModel.speed': 'Efficace', 'virtualModel.smart': 'Intelligent',
+      'virtualEffort.auto': 'Automatique', 'virtualEffort.off': 'Désactivé', 'virtualEffort.low': 'Faible',
+      'virtualEffort.medium': 'Moyen', 'virtualEffort.high': 'Élevé', 'virtualEffort.max': 'Maximal',
+      'defaultEffort.title': 'Niveau de raisonnement du modèle virtuel', 'defaultEffort.label': 'Niveau par défaut',
+      'defaultEffort.help': 'Automatique = décidé dynamiquement selon le modèle virtuel choisi et le contenu de la tâche ; un niveau manuel remplace la décision automatique.',
       'chains.cardTitle': 'Chaînes (ordre de repli des modèles)',
       'chains.plainTitle': 'Ordre de repli des modèles',
       'chains.plainExplain': 'Le routage intelligent essaie ces modèles de haut en bas et bascule automatiquement en cas d’échec. Ce sont des modèles déjà configurés dans DSH — rien de plus à régler.',
@@ -4469,6 +4562,12 @@ const es = {
       'preset.speed': '⚡ Ser rápido', 'preset.speedSub': 'Preferir os modelos mais rápidos',
       'preset.applying': 'Salvando sua escolha…',
       'preset.applied': 'Alterado para "{name}" — ativo imediatamente',
+      'virtualModel.balanced': 'Equilibrado', 'virtualModel.cost': 'Econômico',
+      'virtualModel.speed': 'Eficiente', 'virtualModel.smart': 'Inteligente',
+      'virtualEffort.auto': 'Automático', 'virtualEffort.off': 'Desativado', 'virtualEffort.low': 'Baixo',
+      'virtualEffort.medium': 'Médio', 'virtualEffort.high': 'Alto', 'virtualEffort.max': 'Máximo',
+      'defaultEffort.title': 'Nível de raciocínio do modelo virtual', 'defaultEffort.label': 'Nível padrão',
+      'defaultEffort.help': 'Automático = decidido dinamicamente pelo modelo virtual escolhido e pelo conteúdo da tarefa; um nível manual substitui a decisão automática.',
       'chains.cardTitle': 'Cadeias (ordem de alternância dos modelos)',
       'chains.plainTitle': 'Ordem de alternância dos modelos',
       'chains.plainExplain': 'O roteamento inteligente tenta estes modelos de cima para baixo e troca automaticamente se um falhar. São modelos que você já configurou no DSH — nada mais a ajustar.',
@@ -4703,6 +4802,12 @@ const ru = {
       'preset.speedSub': 'Предпочитать самые быстрые модели',
       'preset.applying': 'Сохранение вашего выбора…',
       'preset.applied': 'Переключено на «{name}» — применяется сразу',
+      'virtualModel.balanced': 'Сбалансированный', 'virtualModel.cost': 'Экономичный',
+      'virtualModel.speed': 'Эффективный', 'virtualModel.smart': 'Интеллектуальный',
+      'virtualEffort.auto': 'Авто', 'virtualEffort.off': 'Выключено', 'virtualEffort.low': 'Низкий',
+      'virtualEffort.medium': 'Средний', 'virtualEffort.high': 'Высокий', 'virtualEffort.max': 'Максимальный',
+      'defaultEffort.title': 'Уровень рассуждений виртуальной модели', 'defaultEffort.label': 'Уровень по умолчанию',
+      'defaultEffort.help': 'Авто = определяется динамически по выбранной виртуальной модели и содержимому задачи; ручной уровень переопределяет автоматический выбор.',
       'chains.cardTitle': 'Цепочки (порядок резервирования моделей)',
       'chains.plainTitle': 'Порядок резервирования моделей',
       'chains.plainExplain': 'Умная маршрутизация пробует их по порядку: сверху вниз, автоматически переключаясь при отказе. Это модели, уже настроенные вами в DSH — ничего дополнительно настраивать не нужно.',

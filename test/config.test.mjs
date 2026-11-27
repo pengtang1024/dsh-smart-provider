@@ -20,7 +20,7 @@ import { Config } from '../schema.js'
 const EXPECTED_KEYS = [
   'accounts', 'chains', 'costBatchSize', 'costDir', 'costEnabled',
   'costFlushIntervalMs', 'costPillEnabled', 'costPillPosition',
-  'costPillRefreshMs', 'health', 'ranking', 'routing',
+  'costPillRefreshMs', 'defaultEffort', 'health', 'ranking', 'routing',
 ]
 
 test('schema declares the three cost-pill fields as volatile with documented defaults', () => {
@@ -42,6 +42,17 @@ test('schema declares the three cost-pill fields as volatile with documented def
   }
   // The statistics start marker is state, not config: never let it sneak in.
   assert.equal(Object.hasOwn(dict, 'statStartAt'), false, 'statStartAt belongs in stats-state.json, not config')
+})
+
+test('schema declares defaultEffort with the 6-effort enum and auto default', () => {
+  const dict = Config.dict
+  assert.ok(dict.defaultEffort, 'defaultEffort must be declared in the config schema (SPEC §7)')
+  assert.equal(dict.defaultEffort.meta?.volatile, true, 'defaultEffort must be editable without a restart')
+  assert.equal(Config({}).defaultEffort.get(), 'auto', 'default strength is auto')
+  for (const effort of ['auto', 'off', 'low', 'medium', 'high', 'max']) {
+    assert.equal(Config({ defaultEffort: effort }).defaultEffort.get(), effort, `${effort} must be accepted`)
+  }
+  assert.throws(() => Config({ defaultEffort: 'ultra' }), /expected.*auto.*off.*low.*medium.*high.*max/)
 })
 
 test('client contribution declares both new stats descriptors as strict codec triads', () => {

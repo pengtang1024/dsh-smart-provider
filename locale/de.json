@@ -34,5 +34,19 @@
     "clearNote": "Damit wird nur der Anzeige-Startmarkierer zurückgesetzt. Das vollständige Ledger bleibt erhalten und die Zustandsbeweise sind nicht betroffen.",
     "cleared": "Neuer Statistikbeginn: {since}",
     "error": "Statistik konnte nicht gelesen oder aktualisiert werden. Bitte in Kürze erneut versuchen."
+  },
+  "virtualModel": {
+    "balanced": "Ausgewogen",
+    "cost": "Sparsam",
+    "speed": "Effizient",
+    "smart": "Intelligent"
+  },
+  "virtualEffort": {
+    "auto": "Automatisch",
+    "off": "Aus",
+    "low": "Niedrig",
+    "medium": "Mittel",
+    "high": "Hoch",
+    "max": "Maximal"
   }
 }

@@ -21,7 +21,7 @@ Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 - `账号池自动管理深化设计.md` —— L2 账号四状态与半开恢复、L2a 拓扑分类
 - `落地规格.md` —— 四稿合并后的分期规格与冲突裁决（开发强约束）
 
-**当前状态：插件已安装并启用，已设为默认模型，插件状态 ACTIVE。** 智能路由默认生效，省钱链路、配置页真读写、P1（资源自适应 / 中立默认 / 动态链）、P2（两层智能路由）、三层健康自动管理（默认开启）均已落地并独立验收。详见下文与 `docs/DETAIL.md`。
+**当前状态：插件已安装并启用，插件状态 ACTIVE；插件内默认虚拟模型为「智能」（`smart`），默认思考强度为 `auto`。** 宿主会话默认已落盘为智能虚拟模型：profile 的 `agent-default-model` 现为 `provider: smart` / `model: smart`（单段 catalog id）；思考强度由 `defaultEffort` 设置项决定，默认 `auto`；`smart/auto` 只是内部组合 id，不是 profile 里填的值。智能路由默认生效，省钱链路、配置页真读写、P1（资源自适应 / 中立默认 / 动态链）、P2（两层智能路由）、三层健康自动管理（默认开启）均已落地并独立验收。详见下文与 `docs/DETAIL.md`。
 
 ---
 
@@ -42,12 +42,26 @@ Português → [docs/DETAIL.pt.md](docs/DETAIL.pt.md)
 
 ## 一、已落地能力（有验收证据）
 
-- **智能路由默认生效。** `smart/auto` 是默认模型，已在真实会话中验证选路、回退、成本记录与会话记录。
-- **省钱真落地（用户可选，不是默认）。** 自建免费路由 `x-opencode-free`（`hy4-flash-free`）排在 `auto` 链首，真实账本里该路由的每一笔 `estimated_cost_usd` 都是 `0`（已核对 213+ 笔，最近一次全量统计 487 笔 cost=0）；遇到 402/配额错误自动 fallback 到付费路由（`opencode-go`）。免费档由 `registry/custom-routes.user.yaml` 的 `tier: free` 自动排首，不需要改代码。
+- **智能路由默认生效。** 插件内默认虚拟模型为智能（`smart` 单段 id），默认强度为 `auto`（由 `defaultEffort` 设置项决定）；组合 id `smart/auto` 保留作内部默认值与历史会话兼容，不再是 catalog 里的单段模型。宿主会话默认已落盘为智能虚拟模型：`agent-default-model` 现为 `provider: smart` / `model: smart`（单段 catalog id）；强度走 `defaultEffort`，默认 `auto`；`smart/auto` 只是内部组合 id，不是 profile 里填的值。选路、回退、成本记录与会话记录已在真实会话中验证。
+- **省钱真落地（用户可选，不是默认）。** 自建免费路由 `x-opencode-free`（`hy4-flash-free`）排在 `smart` 链首，真实账本里该路由的每一笔 `estimated_cost_usd` 都是 `0`（已核对 213+ 笔，最近一次全量统计 487 笔 cost=0）；遇到 402/配额错误自动 fallback 到付费路由（`opencode-go`）。链键按新契约改名，旧 `chains.auto` 自动迁移为 `chains.smart`。免费档由 `registry/custom-routes.user.yaml` 的 `tier: free` 自动排首，不需要改代码。
 - **配置页真读写（2.2.0 起为三个 Tab：总览 / 路由设置 / 花费与健康）。** 设置页展示来自 pi-ai 的真实资源（当前约 49 provider / 58 model，数量随你的 DSH 实时注册表变化）、真实凭据名与账号健康，并可写回插件配置；「花费与健康」走 `@Remote` 真账通道（`lib/cost-stats.js` 读真实 `cost.jsonl` + `lib/remote.js` 暴露 `smartProvider.cost()` / `costDetail()`），明细带 ttft 与 tok/s 两列，不再依赖硬编码或空壳状态。保存按钮常驻卡片头、有「未保存」标记、切 Tab 会拦住未保存草稿；删除一律二次确认；加载 / 空 / 错三态分家，诊断信息收进默认折叠区。详见 §六末的设置页结构说明。
-- **P1（资源自适应）。** `chains` 动态生成（`discoverAutoChain()` 从实时注册表按 provider/model 名排序建中立 `auto` 链，不内置任何具体用户的模型 id）；内置默认链刻意为空 `DEFAULT_CHAINS={auto:[]}`，没配时使用用户当前真实拥有的路由；老配置（`chains` / `accounts` / `custom-routes.user.yaml`）原样保留、不覆盖；定价表缺失字段有降级回退（reasoning / cacheOutput 回退到 output，cacheRead / cacheWrite 回退到 input）；策略默认中立 `.25`（`balanced`）。
+- **P1（资源自适应）。** `chains` 动态生成（`discoverAutoChain()` 从实时注册表按 provider/model 名排序建中立 `smart` 链，不内置任何具体用户的模型 id）；内置默认链刻意为空 `DEFAULT_CHAINS={smart:[]}`，没配时使用用户当前真实拥有的路由；老配置（`chains` / `accounts` / `custom-routes.user.yaml`）原样保留、不覆盖；定价表缺失字段有降级回退（reasoning / cacheOutput 回退到 output，cacheRead / cacheWrite 回退到 input）；策略默认中立 `.25`（`balanced`）。
 - **三层健康自动管理默认开启。** 模型层（L1 `availability.js`）、账号层（L2 `account-health.js`）、拓扑层（L2a `provider-topology.js`）分开记账，注册表与设置页首屏共享同一对象引用。关键纠偏：参数不兼容/缺 header 的 4xx **不再连累模型健康**；冷却到期只变 `HALF_OPEN`，要一次真实请求成功才回到 `ACTIVE`（没有证据就没有恢复）；自带账号池的路由不会被再套一层。默认开启、可显式 opt-out，关闭后逐字节回 legacy。详见 §六。
 - **P2（两层智能路由）。** `lib/routing.js` 四个纯函数：`classifyTask`（请求分类）、`derivePosition`（模型位置标签）、`selectTiers`（层一候选层选择）、`resolveRoutingPolicy`（预设解析）。**默认启用、中立等权（`balanced`）；可显式关闭**：`ranking.routing.enabled=false` 时该代码路径逐字节等于现状（legacy），不选路、不加评分；默认开启时也不偏向省钱 / 速度，四因子等权 .25。支持的策略预设共 8 种：`balanced` / `cost-first` / `speed-first` / `reasoning-first` / `longctx-first` / `vision-first` / `legacy` / `custom`。
+
+### 虚拟模型与思考强度（2026-11-27 规格反转 · 唯一契约）
+
+> 本节以 `SPEC-2026-11-27-smart-provider.md` 为唯一契约来源，取代旧设计稿「3 档 × 3 强度 = 9 组合 id / 否决第 4 档与 auto 强度 / 中文只放自由文本不进 locale」的定稿结论。
+
+| 维度 | 新契约 |
+|---|---|
+| 虚拟模型 | **4 个**：均衡 `balanced` / 省钱 `cost` / 效率 `speed` / 智能 `smart`；**默认智能**（`DEFAULT_MODEL_TIER='smart'`） |
+| 思考强度 | **6 档**：`auto`（默认）+ 手动档 关闭 `off` / 低 `low` / 中 `medium` / 高 `high` / 极高 `max`；`medium` 中文是「中」，「均衡」只指 `balanced` 模型，不再撞名 |
+| 目录形态 | host 目录**只列 4 个单段模型**；强度通过 `defaultEffort` 设置项独立选择（枚举 `auto/off/low/medium/high/max`，默认 `auto`）。`<model>/<effort>` 的 24 个组合 id（如 `smart/auto`）**仅作内部解析与历史兼容**，不是 catalog 条目 |
+| `auto` 语义 | 根据所选虚拟模型给出**强度偏向（软权重）**，再叠加 `lib/routing.js::classifyTask()` 的任务内容信号动态裁决，并受链路真实支持的 effort 集合约束；**不是模型→固定强度的死映射**，任务信号可以推翻偏向。用户手动选任意手动档时**完全覆盖** auto 的偏向与任务信号 |
+| 名称本地化 | 模型名 / 强度名走 i18n：`virtualModel.balanced/cost/speed/smart` 与 `virtualEffort.auto/off/low/medium/high/max` 共 10 个键，zh / en / de / es / fr / pt / ru 七语；缺键回退 en，仍缺回退原始 id，**不再回退中文自由文本** |
+| 旧 id 迁移 | 旧默认模型 `auto` 经别名归一到 `smart`（`auto/off`、`auto/medium`、`auto/high` → `smart/*`）；历史组合 id 后缀可继续解析，`parsed.effort ?? config.defaultEffort` 兼顾旧会话与新配置；持久化 `chains.auto` 需迁移为 `chains.smart` |
+| 默认模型两层 | **插件内**：默认虚拟模型智能 + 默认强度 `auto`（走 `defaultEffort`）；**宿主会话**：已落盘为 `agent-default-model` 的 `provider: smart` / `model: smart`（单段 catalog id），强度走 `defaultEffort` 默认 `auto`；`smart/auto` 只是内部组合 id，不是 profile 里填的值 |
 
 ---
 
@@ -129,7 +143,7 @@ dsh-smart-provider/
 
 `SmartAdapter` 覆写了以下方法：
 
-- `listModels()` —— 对外声明 `smart/auto` 以及每一条已配置链的 key，让图形界面、ACP 与子代理的模型发现都能选中它。
+- `listModels()` —— 对外声明 4 个单段虚拟模型（均衡 `balanced` / 省钱 `cost` / 效率 `speed` / 智能 `smart`，默认智能）以及每一条已配置链的 key，让图形界面、ACP 与子代理的模型发现都能选中它；思考强度不进目录，由 `defaultEffort` 设置项选择，`smart/auto` 等组合 id 仅保留内部解析与历史兼容。
 - `imageRequestPricing()` —— 委托给第一跳真实 hop 的适配器，避免图片请求被 “4 chars/token” 兜底启发式错误计价。
 - `providerRetryPolicy()` —— 返回 P0-1 解析出的零重试策略。
 
@@ -164,7 +178,7 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 
 ### 选择逻辑（两层）
 
-1. **模型层** —— `resolveChain(outerModel, chains)` 产出有序的 `{provider, model}` 跳次；未配置 chains 时用 `discoverAutoChain()` 从实时注册表生成的中立 `auto` 链。
+1. **模型层** —— `resolveChain(outerModel, chains)` 产出有序的 `{provider, model}` 跳次；未配置 chains 时用 `discoverAutoChain()` 从实时注册表生成的中立 `smart` 链（旧 `chains.auto` 迁移为 `chains.smart`）。
 2. **账号层** —— 对每一跳的模型，池把它展开为该模型所有健康账号，排序规则：本跳自身路由上的账号优先，然后最少使用优先（轮询）。转向下一个模型之前，会尝试该模型的每一个健康账号。
 3. **冷却是账号级的** —— 只以 `SmartAdapter.cooldowns` 中的 `accountId` 为键（原来是 `provider/model`）。账号 A 上的 402 只跳过 A；同模型的账号 B、C 仍然可选。
 4. 一旦有任意内容块（content chunk）发出，响应即提交 —— 仅在建立前回退的规则不变。
@@ -176,7 +190,7 @@ DSH/pi-ai 每条 provider 路由只绑定一个 key（单 `apiKeyEnv` —— 已
 ```json
 {
   "chains": {
-    "auto": [{ "provider": "opencode-go", "model": "deepseek-v4.1-flash" }]
+    "smart": [{ "provider": "opencode-go", "model": "deepseek-v4.1-flash" }]
   },
   "accounts": [
     { "id": "go-primary", "provider": "opencode-go",     "credentialRef": "OPENCODE_GO_API_KEY",  "models": ["deepseek-v4.1-flash", "glm-5.3-flash"] },
@@ -325,7 +339,7 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 | Tab | 内容 | 写什么 |
 |---|---|---|
 | **总览** | 当前链路与模型池状态、账号健康摘要、探测结论、一键策略预设（`balanced` / `cost-first` / `speed-first`）、花费入口 | 预设按钮同时写 `ranking.strategy`、`ranking.routing.strategy`（层一档位读的是后者，只写前者等于「点了一键预设但档位没变」）与该预设权重；首屏常驻，不必先滚到别的卡 |
-| **路由设置** | **模型定位只读展示**：静态识别规则（三句说明 + 四档）+ 逐台真实定位表（`modelPositions()`，只读，详见 §七）<br>切换链卡：按模型分组的跳次编辑、保存、**清空自定义链路**（二次确认后写 `chains: {}`，回到默认空 `auto` 链 + 自动发现）<br>账号池与择优卡：账号行（`id` / `provider` / `credentialRef` / `models` / 等级与计费细节）/ 排序策略与权重 / 精选权重 | 模型定位区只读、无手填控件（手填仍走配置）；两张卡各写各的键；账号卡只有在你真的改过 `ranking` / `routing` 时才写该键，加个账号不会顺手关掉择优 |
+| **路由设置** | **模型定位只读展示**：静态识别规则（三句说明 + 四档）+ 逐台真实定位表（`modelPositions()`，只读，详见 §七）<br>切换链卡：按模型分组的跳次编辑、保存、**清空自定义链路**（二次确认后写 `chains: {}`，回到默认空 `smart` 链 + 自动发现）<br>账号池与择优卡：账号行（`id` / `provider` / `credentialRef` / `models` / 等级与计费细节）/ 排序策略与权重 / 精选权重 | 模型定位区只读、无手填控件（手填仍走配置）；两张卡各写各的键；账号卡只有在你真的改过 `ranking` / `routing` 时才写该键，加个账号不会顺手关掉择优 |
 | **花费与健康** | 成本概览（总花费 / 笔数 / 免费·付费·失败 / 按 provider）+ 逐笔明细（时间 / 模型 / tokens / **ttft** / **tok/s** / 花费 / 状态）+ 账号健康与冷却面板（见下） | 只读（`@Remote` 真账 + 实时注册表），唯一写操作是手动「重新读取」 |
 
 交互约定（2.2.0 一并落地，都锁在 `client.js` 里、不需要配置）：
@@ -336,6 +350,7 @@ smart health hydrate: cost.jsonl rows=224 replayed(L1)=224 skipped(L1)=0 (malfor
 - **加载 / 空 / 错三态分家**：加载中、真的没有数据、通道出错各有各的文案与颜色，不拿空表冒充「没有数据」。
 - **诊断折叠**：`form` / `state` / 错误码这类内部串收进默认折叠的「诊断」，只有失败时默认展开。
 - **对话页预估总额 pill（2.4.0，2.4.1 补齐设置入口）**：三个 volatile 配置项 `costPillEnabled`（默认 `false`，只有显式 `true` 才显示）、`costPillPosition`（默认 `conversation.input.right`；可选 `conversation.session.header.utilities` 会话标题栏工具区 / `conversation.input.dock` 输入框上方条目；非法值回落默认）、`costPillRefreshMs`（默认 60000 毫秒，最小 1000 毫秒）。2.4.1 起总览首屏有「对话页消耗显示」卡片，三个字段都有控件且即时写回，不必再手改配置。显示的是 `@Remote` 真账 `statsSince()` 的两位小数美元累计值与当前统计起点；「立即刷新」按钮常驻，定时刷新只在配置了间隔后运行且页面不可见时暂停。详见 §六末「对话页预估总额 pill」。
+- **对话框原生强度控件现在显示（2026-11-28 口径）**：`lib/tier-ids.js::virtualReasoningDeclaration()` 声明 6 档 `reasoning.efforts`（auto + 关闭/低/中/高/极高，默认 auto），`lib/adapter.js` 的 `listModels`/`resolveModel` 给 smart 条目补上 `reasoning` 字段，满足宿主 `ModelSelect.tsx:498` 的 `reasoning !== undefined` 条件——对话框原生 Effort 行出现，用户可在原位置像其他模型一样选强度。auto 涵盖 off：默认档省略参数、按模型与任务动态裁决；手动选档若首跳不支持（免费首跳只有 off）则降级注入合法的 off 档，不硬发高档。原生 effort 名受宿主 codec（`z.string()`）限制：zh 显示中文、其余语种英文回退；设置页 7 语 `virtualEffort.*` 文案键保留不动。不改选路链路、不换首跳。详见 `SPEC-2026-11-27-smart-provider.md` §7.1。
 - **账号字段可编辑且不丢未知字段**：`speedTier` / `priceTier` / `costModel` / `quotaCost` / `priority` 直接在账号行里改（取值来自 `lib/ranking.js` 的 `ACCOUNT_RANKING_FIELDS`，与 Host 同源）；`quotaCost` 只在 `costModel=subscription` 时写入；整行按「展开原对象再覆盖」重建，用户手写的其他键原样保留。
 - **`credentialRef` 可输入**（只写引用名，绝不写明文 key；留空表示用 DSH 已登录账号），模型选择器支持关键字搜索 / 只看免费 / 全选。
 - **不完整行不再静默丢弃**：账号行缺 `id` 或缺 `provider` 会被标红并拦住整次保存，而不是被 `filter` 掉还提示「已保存」。
@@ -513,7 +528,7 @@ latency (per route):
 
 ## 九、配置说明
 
-默认链在 `lib/chains.js`，内置表刻意为空；未配置时由 `discoverAutoChain()` 从实时 DSH 注册表生成中立 `auto` 链。插件配置的 `chains` / `accounts` / `ranking.routing` 都是 volatile（配置页改完即时生效，无需重启）。
+默认链在 `lib/chains.js`，内置表刻意为空；未配置时由 `discoverAutoChain()` 从实时 DSH 注册表生成中立 `smart` 链（旧 `chains.auto` 迁移为 `chains.smart`）。插件配置的 `chains` / `accounts` / `ranking.routing` 都是 volatile（配置页改完即时生效，无需重启）。
 
 自建路由（如 `x-opencode-free`）只在 `registry/custom-routes.user.yaml` 声明（唯一人工编辑点），改完跑 `node scripts/validate-custom-routes.mjs` 与 `node scripts/gen-custom-routes.mjs --write`；`credentialRef` 只放凭据引用名，绝不放明文 key。
 
@@ -607,11 +622,11 @@ FX3-5 是 `test/free-ui-chain.test.mjs` 的三处版本一致性门禁（package
 
 此前两套门禁并发跑会出现偶发假红：`--unit` 里的探针 TTL 用例用 5ms TTL 卡「刚写完还算新鲜」的边界，与 `appendFile` 的落盘排队竞速（verifier 复现 25 次跑 2 次红）。该用例已改为**注入时钟**推进 —— TTL 判定是纯 `probedAt + ttl > Date.now()` 比较，用例内把 `Date.now` 换成可控值并在 `finally` 还原，过期靠推进时钟而不是睡眠，语义不变、不再依赖真实时序。并发跑也不会再假红；仍建议串行，便于读数对账。
 
-运行时冒烟验证了：`LlmRuntime.prototype.resolveModel` 不存在而 `resolveModelInfo` 存在（task-25 的 bug）；零重试策略；`listModels` 中的 `smart/auto`；仅在建立前回退（AUTH 切跳、发出内容后的错误不切、ABORTED 永不切）；带 `usage_complete` 的 JSONL 行写入；真实会话中出现的 `plugin:dsh-smart-provider/hop-selected` 记录；以及该记录在会话恢复时被保留。
+运行时冒烟验证了：`LlmRuntime.prototype.resolveModel` 不存在而 `resolveModelInfo` 存在（task-25 的 bug）；零重试策略；`listModels` 中的虚拟模型（该次冒烟按旧 id 口径记录为 `smart/auto`；2026-11-27 规格反转后目录为 4 个单段模型，默认 `smart`，强度由 `defaultEffort` 决定）；仅在建立前回退（AUTH 切跳、发出内容后的错误不切、ABORTED 永不切）；带 `usage_complete` 的 JSONL 行写入；真实会话中出现的 `plugin:dsh-smart-provider/hop-selected` 记录；以及该记录在会话恢复时被保留。
 
 加载路径的 4 条断言（`test/loading.test.mjs`，需 Electron runtime）锁住两个真实缺陷：`inject` 只能有 `llm`（否则最小 profile 会卡在 `waiting for service`），以及 `lib/remote.js` 能在「profile 没有该包」时经锚点回退拿到 Typert 基类。
 
-真实端到端（本机实测，2026-11-25）：用一个最小 headless profile（`@deepseek-ai/dsh-base` + `dsh-headless` + 本包 + 一条真实 provider 连接器）把默认模型指向 `smart/auto`，执行 `dsh --profile headless --patch <overlay> "<prompt>"`。两次提问都拿到真实回答；`~/.dsh/smart-provider/cost.jsonl` 记下 5 行，`outer_model=auto`，实际路由为 `workbuddy/deepseek-v4-flash` 与 `workbuddy/deepseek-v4-pro`（链在两条真实跳次之间选择），最后一笔 `input=349 / output=11 / price_known=true / usage_complete=true / estimated_cost_usd=0.00096` —— 选路、真实调用、usage 捕获与计价全链路跑通。
+真实端到端（本机实测，2026-11-25，按当时旧 id 口径）：用一个最小 headless profile（`@deepseek-ai/dsh-base` + `dsh-headless` + 本包 + 一条真实 provider 连接器）把默认模型指向 `smart/auto`，执行 `dsh --profile headless --patch <overlay> "<prompt>"`。两次提问都拿到真实回答；`~/.dsh/smart-provider/cost.jsonl` 记下 5 行，`outer_model=auto`，实际路由为 `workbuddy/deepseek-v4-flash` 与 `workbuddy/deepseek-v4-pro`（链在两条真实跳次之间选择），最后一笔 `input=349 / output=11 / price_known=true / usage_complete=true / estimated_cost_usd=0.00096` —— 选路、真实调用、usage 捕获与计价全链路跑通（历史验收；新契约下插件内默认虚拟模型为单段 `smart`、强度 `auto` 由 `defaultEffort` 决定，宿主 profile 默认模型层已落盘为 `provider: smart` / `model: smart`。历史注：早期 profile 曾用免费路由 `x-opencode-free` / `hy4-flash-free`，现已迁到 `smart`）。
 
 复现这个端到端（不需要碰 desktop profile）：
 
@@ -621,7 +636,7 @@ ASAR="/Applications/DSH NEXT.app/Contents/Resources/app.asar"
 # 1) 建最小 headless profile，装本包 + 一条真实 provider 连接器
 ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/plugin-cli.js" headless add "link:$PWD"
 ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/plugin-cli.js" headless add <provider 连接器包@版本>
-# 2) overlay 把默认模型指到 smart/auto
+# 2) overlay 把默认模型指到 smart/auto（旧 id 口径的历史脚本；新契约下插件内默认单段模型为 smart、强度 auto 由 defaultEffort 决定，宿主 profile 默认模型层已落盘为 provider: smart / model: smart；smart/auto 只是内部组合 id，不是 profile 里填的值）
 printf '%s\n' '- id: agent-default-model' '  name: "@deepseek-ai/dsh-agent-default-model"' \
   '  config: { provider: smart, model: auto }' > /tmp/smart-override.yml
 # 3) 一次性提问，答案经 smart 的链路由返回
@@ -658,12 +673,13 @@ ELECTRON_RUN_AS_NODE=1 "$NODE" "$ASAR/lib/desktop-cli.js" --profile headless \
 - **`yaml` 依赖的探测链（无写死家目录）**：`registry/registry-lib.mjs` 只在 DSH profile 里找 `yaml`，按 `DSH_HOME` → `HOME` → `os.homedir()` 的优先级组候选锚点（三者都指向**当前用户**，重复项去重后逐个尝试）。全部失败时抛错并列出试过的每个锚点，提示用 `DSH_HOME` 指安装根；**不再**回退到任何写死的他人家目录。该文件没有独立测试文件，因此这条改动靠全量门禁的语法检查 + 本机三种环境（普通 `HOME`、`env -u HOME -u DSH_HOME`、显式 `DSH_HOME`）的加载冒烟来守。
 - **仓库目录移动后插件不加载（link 指向旧路径）**：profile 里用 `link:` 装本包时记录的是安装当时的绝对路径，仓库被移动 / 改名 / 重新克隆后这条 link 仍指向旧目录 —— 表现为设置页分区消失、插件状态不是 ACTIVE、日志里找不到 `plugin:dsh-smart-provider` 而是加载失败。修法：在 profile 上重新 link 到新路径（`dsh plugin --profile <p> add link:<新路径>`，或编辑 profile 清单里那条 link 指向），然后**重启 App**（或触发一次 profile 重组合）让宿主重新解析。注意 HMR 也救不了这种情况：监听的是旧路径。
 - **桌面壳的 locale preference 当前读不到（宿主限制，待验证）**：DSH 桌面壳目前把 locale preference 读数恒定为 `null`，插件无法从该字段判断用户指定语言，因此界面语言跟随系统 / 浏览器设置（由 Host 的 locale 链决定），而不是用户在壳里选的语言。这是当前宿主的实际表现，插件不做 hack 去猜测或强行覆盖；宿主未来是否提供可读取、可指定的语言设置**尚待验证**，届时再按官方通道接入。
+- **对话框原生强度控件现在显示（2026-11-28 口径）**：`lib/tier-ids.js::virtualReasoningDeclaration()` 声明 6 档 `reasoning.efforts`（auto + 关闭/低/中/高/极高，默认 auto），`lib/adapter.js` 的 `listModels`/`resolveModel` 给 smart 条目补上 `reasoning` 字段，满足宿主 `ModelSelect.tsx:498` 的 `reasoning !== undefined` 条件，对话框原生 Effort 行出现，用户可在原位置像其他模型一样选强度。auto 涵盖 off：默认档省略参数、按模型与任务动态裁决；手动档若首跳不支持（免费首跳只有 off）则降级注入合法的 off 档。原生 effort 名受宿主 codec（`z.string()`）限制，zh 显示中文、其余语种英文回退；设置页 7 语 `virtualEffort.*` 文案键保留不动。此前「原生控件不显示、强度仅由设置页决定」的旧口径已作废；不改链路、不换首跳。详见 `SPEC-2026-11-27-smart-provider.md` §7.1。
 
 ---
 
 ## English summary (secondary)
 
-`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. It is **installed and enabled** as the default model. Verified capabilities include: `smart/auto` in real sessions, the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources plus a read-only model-positioning view (the static four-rule task-recognition note promoted out of the collapsed advanced area, and a per-model real positioning table read through the new `@Remote modelPositions()` Host projection that shows each model's tags and source `auto`/`user`/`mixed`, shows an unconfirmed empty state when the per-model data cannot be read, and adds no manual-entry UI — overrides still go through `ranking.routing.positionOverrides` / `registry/position-overrides.user.yaml`), visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (318 full-suite / 260 pure-logic assertions across 24 / 17 suites, measured 2026-11-26, exit 0; 1 expected FX3-5 version-consistency failure in each before the CHANGELOG heading landed, green after the doc fix), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
+`smart` is a DSH meta-provider that fails over across your already-configured provider routes with an offline cost meter. It is a **general intelligent router** (goals: cost / speed / capability / composite), neutral by default in code — saving-first is an opt-in user config. The 2026-11-27 spec reversal defines **4 virtual models** (Balanced `balanced` / Economy `cost` / Efficient `speed` / Smart `smart`, default Smart) and **6 thinking efforts** (`auto` + off/low/medium/high/max, default `auto`); the catalog lists only the 4 single-segment models and effort is configured via `defaultEffort`, while `auto` is a per-model + per-task dynamic bias rather than a fixed mapping, manual efforts fully override it, and all names are localized in 7 languages via `virtualModel.*` / `virtualEffort.*` keys (the 24 `<model>/<effort>` combinations remain for internal parsing and legacy compatibility only). It is **installed and enabled**; inside the plugin the default virtual model is Smart (`smart`) with `auto` effort, while the host-session default has now landed on the Smart virtual model: the profile `agent-default-model` is `provider: smart` / `model: smart` (single-segment catalog id), effort is set by the `defaultEffort` setting (default `auto`), and `smart/auto` is only an internal combined id, not the value filled into the profile. Verified capabilities include: `smart/auto` in real sessions (old-id-era verification), the `x-opencode-free` free first hop (cost=0, 213+ real ledger rows) with 402→paid fallback, a three-tab settings page (overview / routing / cost & health) with real pi-ai resources plus a read-only model-positioning view (the static four-rule task-recognition note promoted out of the collapsed advanced area, and a per-model real positioning table read through the new `@Remote modelPositions()` Host projection that shows each model's tags and source `auto`/`user`/`mixed`, shows an unconfirmed empty state when the per-model data cannot be read, and adds no manual-entry UI — overrides still go through `ranking.routing.positionOverrides` / `registry/position-overrides.user.yaml`), visible save buttons with an unsaved-changes marker, a switch-tab guard, two-step deletes, honest loading/empty/error states, collapsed diagnostics, and an `@Remote` real-ledger cost tab whose detail table carries ttft and tok/s columns and whose degraded payload matches the strict codec field-for-field, P1 resource adaptation (dynamic neutral chains, neutral .25 default, backward-compatible migration), P2 default-on, neutral-equal-weight two-layer routing (explicit `ranking.routing.enabled=false` returns byte-for-byte legacy, 8 presets; tier selection explains every relax with the missing tag, each candidate's real tags, a copy-pasteable positionOverrides snippet in either documented shape, and never blocks the request), and cold-start health hydration that replays cost.jsonl / probe-cache.jsonl into the same L1/L2 registries (read-only, bounded to a 4 MiB / 5000-line tail window, tolerant of missing, corrupt and half-written rows, never overwriting newer live evidence, and now distinguishing declared zero prices from the no-price-table placeholder so an estimated 0 never turns into a free claim), so a reload no longer erases proven health. The test gate auto-discovers every test/*.test.mjs (no registration) and fails when a file under test/ would never run (318 full-suite / 260 pure-logic assertions across 24 / 17 suites, measured 2026-11-26, exit 0; 1 expected FX3-5 version-consistency failure in each before the CHANGELOG heading landed, green after the doc fix), and a settings-page "account health / cooldown" panel that renders the live runtime registry over `@Remote` `smartProvider.accountHealth()` (zero samples read "no data yet" in a neutral colour — never "unavailable", never a fabricated green; a disabled health layer says so instead of pretending; cooling and degraded states use the warning colour, never red; refresh is a snapshot timestamp plus a manual button, deliberately not a setInterval). Account-level ranking also defines `costModel` (`metered` / `subscription` / `free`, default `metered`; subscription uses quota cost instead of price) and `quotaCost` (a number in 0–1, shown only when `costModel` is `subscription`). See `docs/DETAIL.md` for the plugin detail page and the design docs under `docs/` for the full design rationale.
 
 ---
 
