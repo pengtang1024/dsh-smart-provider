@@ -2,6 +2,10 @@
   "name": "dsh-smart-provider",
   "displayName": "DSH 智能模型路由（Smart Provider）",
   "version": "2.10.3",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pengtang1024/dsh-smart-provider.git"
+  },
   "type": "module",
   "scripts": {
     "test": "node scripts/run-tests.mjs",
