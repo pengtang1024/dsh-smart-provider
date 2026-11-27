@@ -244,8 +244,10 @@ test('never throws and never invents a tier on absent task/positions', () => {
   assert.doesNotThrow(() => selectTiers(undefined, undefined, ['alpha-route'], {}))
   assert.doesNotThrow(() => selectTiers(undefined, undefined, [], {}))
   assert.doesNotThrow(() => selectTiers(reasoningTask(), undefined, ['alpha-route']))
-  // A "none" effort is NOT a reasoning request — no tier is invented upstream either.
+  // Both "none" (wire sentinel) and "off" (DSH canonical value) mean OFF —
+  // no reasoning tier is invented upstream either; "high" is a real signal.
   assert.equal(classifyTask({ messages: [{ content: 'hi' }], reasoningEffort: 'none' }).kind, 'general')
+  assert.equal(classifyTask({ messages: [{ content: 'hi' }], reasoningEffort: 'off' }).kind, 'general')
   assert.equal(classifyTask({ messages: [{ content: 'hi' }], reasoningEffort: 'high' }).kind, 'reasoning')
 })
 

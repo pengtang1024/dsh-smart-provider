@@ -624,7 +624,18 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'glm-5.3': 'GLM 5.3',
       'mimo-v2.6-flash': '小米 MiMo V2.6 Flash（便宜）',
     }
-    const modelLabel = id => MODEL_LABELS[str(id)] || str(id)
+    // Combined virtual tier ids (smart/<tier>/<effort>) are display-only: the
+    // adapter's listModels.name is the authoritative free-text label (Chinese
+    // names live there, NOT in t()/locale). This fallback covers early snapshots
+    // where only the raw id reached the client, without adding any i18n key.
+    const TIER_LABELS = { auto: '智能档', cost: '省钱档', balanced: '平衡档' }
+    const EFFORT_LABELS = { off: '关闭', medium: '均衡', high: '高' }
+    const tierIdLabel = id => {
+      const parts = str(id).split('/')
+      if (parts.length !== 2 || !TIER_LABELS[parts[0]] || !EFFORT_LABELS[parts[1]]) return null
+      return 'Smart ' + TIER_LABELS[parts[0]] + ' · ' + EFFORT_LABELS[parts[1]] + '强度'
+    }
+    const modelLabel = id => MODEL_LABELS[str(id)] || tierIdLabel(id) || str(id)
 
     // ---- tiny helpers -----------------------------------------------------
     const arr = v => (Array.isArray(v) ? v : [])

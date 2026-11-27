@@ -42,6 +42,7 @@ const UNIT_TESTS = [
   'test/pricing.test.mjs',
   'test/query-cost.test.mjs',
   'test/routing-tier.test.mjs',
+  'test/tier-ids.test.mjs',
   'test/persistence.test.mjs',
   'test/hydration-billing.test.mjs',
   'test/health-snapshot.test.mjs',
