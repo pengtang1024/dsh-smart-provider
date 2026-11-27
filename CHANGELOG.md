@@ -2,6 +2,20 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.8.1
+
+修复版本（`2.8.0` → `2.8.1`，2026-11-27）：修复第二次打开设置页空白；按语义化版本 patch 递增。
+
+### 修复
+
+- **第二次打开设置页空白**：删除 AccountsTab 内 12 行重复的一键预设按钮块，消除未定义 `choices`/`strategy` 引发的 ReferenceError 与 `settings.section` slot 永久 abdicate。
+
+### 验证
+
+- `node --check client.js` 退出码 0；`node scripts/run-tests.mjs`（full）；`npm run test:unit`；独立验收 PASS。
+
+---
+
 ## 2.8.0
 
 功能版本（`2.7.0` → `2.8.0`，2026-11-27）：本轮把虚拟模型收敛为组合式档位 id；按语义化版本 minor 递增。
