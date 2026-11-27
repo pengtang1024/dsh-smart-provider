@@ -2274,12 +2274,12 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
             accounts.length === 0
               ? h('div', { style: { ...S.empty, marginTop: 8 } }, t('health.empty'))
               : h('div', { style: tableBlock, overflowX: 'auto' },
-                h('table', { style: { ...S.table, minWidth: 560 } },
+                h('table', { style: { ...S.table, minWidth: 640 } },
                 h('thead', null, h('tr', null,
                   h('th', { style: S.th, scope: 'col' }, t('health.id')),
                   h('th', { style: S.th, scope: 'col' }, t('health.state')),
                   h('th', { style: S.th, scope: 'col' }, t('health.billing')),
-                  h('th', { style: S.th, scope: 'col' }, t('health.samples')),
+                  h('th', { style: { ...S.th, whiteSpace: 'nowrap' }, scope: 'col' }, t('health.samples')),
                 )),
                 h('tbody', null, accounts.map((a, i) => {
                   const row = obj(a)
@@ -2316,7 +2316,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
                       ),
                     ),
                     h('td', { style: S.td }, freeTagText(t, freeForAccount(row))),
-                    h('td', { style: S.td }, samplesText(t, row.samples)),
+                    h('td', { style: { ...S.td, whiteSpace: 'nowrap' } }, samplesText(t, row.samples)),
                   )
                 })),
                 ),
