@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const ENTRY = 'smart-provider'
     // 与 package.json 的 version 保持同步（浏览器模块无法 require package.json，
     // 故按本项目 STATIC_* 惯例内联）。改版本时两处都要更新。
-    const PLUGIN_VERSION = '2.8.1'
+    const PLUGIN_VERSION = '2.9.0'
 
     // Generated custom-route candidate lists must live inside the factory:
     // HMR re-evaluates the module, so top-level consts here would throw

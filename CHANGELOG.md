@@ -2,10 +2,13 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布（Unreleased）
+## 2.9.0
+
+功能版本（`2.8.1` → `2.9.0`，2026-11-27）：设置页新增模型定位只读展示，置顶任务识别四档规则与逐台真实定位表（Host @Remote modelPositions，读不到标未确认）；按语义化版本 minor 递增。
 
 ### 新增
 
+- **模型定位只读展示**：设置页置顶展示任务识别四档规则与逐台真实定位表（@Remote modelPositions，读不到标未确认）。
 - **发布到插件市场章节**：README 在「兼容性与分类」之后补充社区市场上架入口与条目格式、安装来源优先级、可选 `tarball` / `icon` 约束，以及官方 format-1 索引与社区市场的区别（只写机制与操作步骤，不代表已完成上架）。
 - **`RELEASE.md` 发布指南**：说明 GitHub Release 与 `.tgz` 预构建包制作、awesome-dsh-plugin PR 步骤、CI 强制项清单和上架后验收要点。
 - **市场条目草稿**：新增 `marketplace/pengtang1024__dsh-smart-provider.yml`，按社区市场 YAML 格式填写 `url` / `name` / `category: model` / 中英单句描述；`icon` 因仓库仅有 SVG（非位图）暂不填，`tarball` 保持注释——v2.8.1 Release 已发布但尚无 `.tgz` 附件，待附件上传后再填。
