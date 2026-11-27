@@ -39,7 +39,7 @@
 - **P3 只取「非 none 即 reasoning」**：`lib/routing.js:155-158` —— `reasoningEffort !== undefined && !== null && !== 'none'` 就 `signals.push('reasoningEffort'); add('reasoning')`。`minimal` 与 `xhigh` 在这里**等价**。
 - `lib/adapter.js:581-620` 仅在 `routing.enabled === true` 时调用 `classifyTask(options, this.routing)`（`583`），把结果喂给 `selectTiers` 选候选 provider；`routing` 未开启时（`#applyRouting`，`231-239`）这段完全不跑。
 - `lib/ranking.js` 的 `reasoning` 只是推理输出的**计费字段**（回退 output 单价），与本维度无关（前一份简报 `§1.3` 已核实）。
-- 边界注意：P3 用 `'none'` 做「关」的哨兵，而 DSH 的规范 off 值是 `'off'`（`1900152`、`1894128`）。所以 `reasoningEffort:'off'` 在本插件里**会被误判为 reasoning**。这是暴露方案①时要在文档/测试里如实标注的语义缝隙（见 §6）。
+- 边界注意：P3 用 `'none'` 做「关」的哨兵，而 DSH 的规范 off 值是 `'off'`（`1900152`、`1894128`）。该语义缝隙已于本轮实施中修复（用户授权、commit `a578abcf`）：`lib/routing.js:157-158` 将 `off/none` 都判为关，`test/routing-tier.test.mjs:250` 新增 off→general 断言，既有 none→general / high→reasoning 断言保持绿（见 §6）。
 
 ### 1.3 关键事实：是否透传给底层模型 provider——**是，原样透传且真正生效**
 
@@ -113,7 +113,7 @@
 
 | # | 方案 | 思路 | 是否真正正交 | 实现成本 | 与现有契约冲突 | 结论 |
 |---|---|---|---|---|---|---|
-| ① | **宿主 effort 透传（事实底座，必须继承；「完全交给宿主原生」的暴露形态已被用户推翻）** | 不加 UI、不加配置：宿主已有并列的模型/强度菜单（asar `603190`、`603219`）；虚拟档通过 `resolveModel` 的首跳能力声明让强度菜单可见；请求里 effort 随 `...options` 透传（`lib/adapter.js:691-695`）。文档与测试只需把「off 哨兵」「首跳缺失不显示菜单」讲清。 | ✅ 完全正交：强度是请求字段，模型是 chain 选择，互不编码 | **0 行生产代码**；1 份文档 + 可选 1 条边界测试 | 零：不动 12-key schema（`schema.js:28-71`）、不动 6 策略/8 预设顺序（`test/ranking.test.mjs:52-54`、`lib/routing.js:349-362`）、不动 hint-not-fix 测试（`test/routing-tier.test.mjs:179-185,248-249`）、不动七语字典（`client.js:3139+`）。仅需在文档里补「`off` 会被 P3 误判为 reasoning」的已知缝隙（§6）。 | **事实继承、暴露形态被推翻**：effort 透传与语义仍然成立；但用户最终决策要求插件内组合 id，见 §4 与 combined-tier-ids.md |
+| ① | **宿主 effort 透传（事实底座，必须继承；「完全交给宿主原生」的暴露形态已被用户推翻）** | 不加 UI、不加配置：宿主已有并列的模型/强度菜单（asar `603190`、`603219`）；虚拟档通过 `resolveModel` 的首跳能力声明让强度菜单可见；请求里 effort 随 `...options` 透传（`lib/adapter.js:691-695`）。文档与测试只需把「off 哨兵」「首跳缺失不显示菜单」讲清。 | ✅ 完全正交：强度是请求字段，模型是 chain 选择，互不编码 | **0 行生产代码**；1 份文档 + 可选 1 条边界测试 | 零：不动 12-key schema（`schema.js:28-71`）、不动 6 策略/8 预设顺序（`test/ranking.test.mjs:52-54`、`lib/routing.js:349-362`）、不动 hint-not-fix 测试（`test/routing-tier.test.mjs:179-185,248-249`）、不动七语字典（`client.js:3139+`）。「`off` 被 P3 误判」的缝隙已于本轮修复（commit `a578abcf`，见 §6）。 | **事实继承、暴露形态被推翻**：effort 透传与语义仍然成立；但用户最终决策要求插件内组合 id，见 §4 与 combined-tier-ids.md |
 | ② | 虚拟提供商设置页加「全局默认思考强度」，写入 ranking 配置并注入请求 | 在 `client.js` 设置页加下拉，新配置 key（如 `ranking.effortDefault`），`#applyRouting` 后注入 `options.reasoningEffort`。 | ⚠️ 表面正交，实质**制造第二个强度权威**：宿主 session 选择与插件全局默认谁赢？注入值还会被 `classifyTask` 当分类信号，混在一起。 | 高：UI + 七语字典 + schema 第 13 key + 注入点 + 优先级规则 + 测试 | **多处冲突**：破 12-key schema（`schema.js:28-71`）；破七语字典（7 份翻译）；宿主明确规定 effort 是 per-model 能力、不做 provider 级控件（asar `705781`），插件做了就要自己承担「某些模型拒绝该值」的责任；且与 `resolveCallConfig` 的 model-owned default 语义（`1911798`）打架。 | 不推荐；与「管理所有提供商但不动宿主契约」的定位相悖 |
 | ③ | 把强度做成请求级参数（会话/每次请求覆盖全局默认） | 在插件里再造一层 effort 状态与覆盖通道。 | ✅ 概念正交 | 高 | 与宿主**已经实现**的会话级选择重复：`agent.model.select({provider,model,reasoningEffort?})`（asar `366003-012`）、`session/set_config_option` 的 `reasoning_effort`（`301550`、`301562`）、ACP 也支持（`301737`）。再造一套会产生两套状态源。 | 不做：宿主已提供，方案①天然包含它（见 §2 步骤 2）。若用户要「单次请求临时覆盖」，应走宿主 `model.select()` 而非插件配置 |
 | ④ | 组合式虚拟模型（`smart/<档>/<强度>`，如 `smart/cost/high`）——**目标方案（用户最终决策）** | 把强度作为正交维度编进虚拟模型 id（两级路径段 `/`），靠 chain 匹配；**不用 `+` 后缀**。 | ✅ 保留二维正交语义（模型轴 × 强度轴投影为一个 id）；历史否决理由中的「维度混淆」仅针对 `+` 后缀形态，路径段语法见 combined-tier-ids.md §2.1 | 高（新 chain 配置、`listModels` `318-331`、快照/测试）；强度 id 用宿主规范值 `off / medium / high`，不自造词汇 | 避开 `POSITION_TAGS` 白名单与 P0 解析契约（`:133-149`）：组合 id 不含 `+`；hint-not-fix（`test/routing-tier.test.mjs:179-185`）保留；组合数按用户决策定为全笛卡尔积 9 个 id，不是「组合爆炸」 | **由反方案改为目标方案**，避开历史否决理由里的 `+` 后缀陷阱；最终形态见 combined-tier-ids.md |
@@ -138,7 +138,7 @@
 - 插件**不会**替用户判断「这个问题值不值得思考」。`classifyTask` P3 只在调用方已经声明 effort 时把它转成路由提示；没有复杂度信号（前一份简报 `§1.1`）。自动化上限 = 0。
 - 插件**不保证**用户选的 effort 在 failover 的每一跳都可用。下游模型拒绝 `UNSUPPORTED_REASONING_EFFORT` 时按失败处理（`lib/adapter.js:712-764`），不静默降级成低强度。
 - 插件**不控制**宿主是否显示强度菜单：取决于 `resolveModel` 返回的首跳能力；首跳缺失就不显示。
-- `reasoningEffort:'off'` 与 P3 的 `'none'` 哨兵不一致（§1.2），当前会被误判成 reasoning。本期只文档化；是否修属于另一个任务（§6），组合 id 方案不改变该既有行为。
+- `reasoningEffort:'off'` 与 P3 的 `'none'` 哨兵不一致（§1.2）的语义缝隙已于本轮实施中修复（用户授权、commit `a578abcf`）：`lib/routing.js:157-158` 将 `off/none` 都判为关，`test/routing-tier.test.mjs:250` 新增 off→general 断言，既有断言保持绿（§6）；组合 id 方案不改变该既有行为。
 
 ---
 
@@ -147,7 +147,7 @@
 | 风险 | 概率 | 影响 | 缓解 |
 |---|---|---|---|
 | 用户以为选了虚拟档就「一定按所选强度思考」 | 中 | 中 | 文案明确 hint-not-fix：强度由组合 id 注入、宿主按确切模型能力校验，插件只透传；下游拒绝时按失败处理、不 clamp，不伪造 |
-| `'off'` 被 P3 误判为 reasoning（`lib/routing.js:156` 比 `'none'`） | 中 | 低 | 文档列为已知缝隙；不擅自改路由契约；交用户决定是否单开「off 兼容」任务并补测试 |
+| `'off'` 被 P3 误判为 reasoning（`lib/routing.js:156` 比 `'none'`） | 中 | 低 | 已于本轮实施中修复（用户授权、commit `a578abcf`）：`lib/routing.js:157-158` 将 `off/none` 都判为关，`test/routing-tier.test.mjs:250` 新增 off→general 断言，既有断言保持绿（§6） |
 | 首跳无 reasoning 元数据 → 无法确认强度支持，用户以为插件不支持正交强度 | 中 | 中 | 按 combined-tier-ids.md §2.2 收缩目录（该档不生成强度变体），UI 注明原因；不伪造能力 |
 | failover 到不支持所选 effort 的模型导致整条链失败 | 中 | 中 | 如实记录失败原因（`UNSUPPORTED_REASONING_EFFORT` 进入失败分类与日志），不静默 clamp；用户可在宿主改选更低强度 |
 | 未来有人据本文又提「第四档 / 全局强度开关」 | 中 | 中 | 方案②/③ 的否决理由写进本文 §3；引用「不做什么」清单；方案④仅采纳组合 id 形态、不用 `+` 后缀 |
@@ -161,10 +161,10 @@
 
 1. **暴露形态（已定稿）**：宿主 effort 透传与语义事实全部继承；但「完全交给宿主原生、插件零新增」被推翻——强度在插件内编入模型档 id，形成 `smart/<模型档>/<强度档>` 组合（强度 id 用宿主规范值 `off / medium / high`，中文展示「关闭 / 均衡 / 高」，全笛卡尔积 9 个 id），最终形态见 combined-tier-ids.md。
 3. **前两份简报的修订（已授权并执行）**：「第四档 reasoning 虚拟模型」推荐已收敛为组合 id 形态；「第四档 ≠ 强度维度」的事实保留，各文档顶部加定稿状态行。
+4. **`off` 哨兵缝隙（已定稿并已执行，commit `a578abcf`）**：用户于实施前明确授权本期一并修复；`lib/routing.js:157-158` 将 `off/none` 都判为关，`test/routing-tier.test.mjs:250` 新增 off→general 断言，既有 none→general / high→reasoning 断言保持绿。不再列为未决项。
 
 ### 6.2 仍未决
 
-2. **是否修 `off` 缝隙**：`lib/routing.js:156` 用 `'none'` 判关，而 DSH 规范 off 为 `'off'`。本期建议只文档化；若要求修，需单开任务并改 P3 判定 + 补测试（属于改 `.js`/测试，超出本文范围）。
 4. **UI 文案口径**：是否在插件设置页加一句静态说明（不新增控件、不新增 i18n key，复用现有说明位）告知「模型选择由虚拟提供商解决，思考强度由组合 id 的 `<档>/<强度>` 表达」？若要求多语，则需走七语字典（强度档中文展示已定稿为「关闭 / 均衡 / 高」）。
 5. **失败可见性**：是否要求把 `UNSUPPORTED_REASONING_EFFORT` 的 failover 原因呈现在设置页诊断区？本期建议只留在 DSH 日志与 hop 记录（`lib/adapter.js:411-430`），避免新增 UI 数据通道。
 

@@ -42,7 +42,7 @@
 > - 取值**没有全局枚举**，由确切模型能力声明决定（pi-ai 全集 `off/minimal/low/medium/high/xhigh/max`，DeepSeek `off/low/high/max`，Gemini `minimal/low/medium/high`，线级 sentinel `none`）。这是 §2.2 映射规则的根本约束。
 > - 宿主把强度菜单挂在确切模型的能力声明上（asar `603190, 603219, 61211-61220`）；虚拟提供商 `resolveModel` 首跳缺失或无 reasoning 元数据时宿主不显示强度菜单（`lib/adapter.js:373-390`）——这正是用户要插件自己接住强度的现实原因，也说明组合 id 下 `resolveModel` 必须继续返回确切首跳元数据（§2.4）。
 > - 插件当前从不设置 effort：`schema.js:28-71` 12 key 无 effort 字段，`lib/adapter.js` 全文无对 `reasoningEffort` 赋值。
-> - 路由层 P3 只把 effort 当「非 none 即 reasoning」二元信号（`lib/routing.js:155-158`）；用 `'none'` 判关而 DSH 规范 off 值是 `'off'`，`'off'` 会被误判成 reasoning（已记录缝隙，本设计不擅自修）。
+> - 路由层 P3 只把 effort 当「非 none 即 reasoning」二元信号（`lib/routing.js:155-158`）；用 `'none'` 判关而 DSH 规范 off 值是 `'off'`，`'off'` 会被误判成 reasoning（该缝隙已于本轮实施中经用户授权修复，commit `a578abcf`，见 §6.1）。
 > - hint-not-fix 硬边界：`test/routing-tier.test.mjs:179-185`（无标签不伪造档）、`:248-249`（none→general、high→reasoning）。
 > - `+tag` 是 P0 显式能力信号，白名单 `POSITION_TAGS = [thrifty, swift, reasoning, longctx, vision, tool, general]`（`lib/routing.js:22-24, 133-140`），`POSITION_TAGS.includes('high')` 为 false，`+high` 不进 P0 分支。
 
@@ -203,7 +203,7 @@ if (parsed.effort):
 |---|---|---|
 | `test/compaction.test.mjs:56-68` | fixture chains 含 `fast` 别名（:58），断言 `byId.get('fast').contextWindow===200000`（:64）与全部 provider=smart（:65-67）；档位收敛后 `fast` 不再枚举 | 改 fixture/断言为「固定档位集合（含组合 id）+ 无 `Smart / xxx`」；继续断言每档 contextWindow 是正整数且来自首跳缓存或 128000 floor（:71+ 的 floor 回退保持绿） |
 | `test/free-ui-chain.test.mjs:172-265`（I18N-2/3/4） | 若客户端为组合 id 新增档位 label 的 `t()`/`fmt()` key 而未同步 7 份字典，静态 key 子集 / key 集合一致 / 占位符一致三项全红 | 优先把组合 id 的展示放进 `listModels.name`（自由文本，不进 `t()`），从源头避免新 key；确需新增则一次同步 zh/en/de/es/fr/pt/ru，占位符一致 |
-| `test/routing-tier.test.mjs:248-249`（条件性） | 若实施时顺手修 `'off'` 哨兵缝隙（P3 判 `'none'`），`classifyTask({reasoningEffort:'off'})` 结果会变，可能影响现有断言 | 本轮**不修**该缝隙、保持现状以守绿；如单开任务修，须同步更新该测试的期望值 |
+| `test/routing-tier.test.mjs:248-249`（条件性） | 若实施时顺手修 `'off'` 哨兵缝隙（P3 判 `'none'`），`classifyTask({reasoningEffort:'off'})` 结果会变，可能影响现有断言 | 已随用户授权于本轮修复（commit `a578abcf`）：`lib/routing.js:157-158` 把 `off/none` 都判为关，并在 `test/routing-tier.test.mjs:250` 新增 off→general 断言；既有 none→general / high→reasoning 断言保持绿 |
 
 ### 3.2 必须保持绿（碰到即视为越界）
 
@@ -281,7 +281,7 @@ if (parsed.effort):
 | effort 注入后宿主 / 下游拒绝（支持集不一致） | 中 | 中 | §2.2 映射按首跳 `reasoning.efforts` 过滤；不静默 clamp；`UNSUPPORTED_REASONING_EFFORT` 走 switchable failover（`lib/chains.js:59`）+ 日志/hop 记录（`adapter.js:712-764`） |
 | catalog 数量失控（超出 9 个），重演老问题 | 中 | 中 | §2.5 定稿为全笛卡尔积 3 档 × 3 强度 = 9 个固定 id，不随 chains 增长；能力未知仅按 §2.2 收缩，不额外膨胀 |
 | `listModels` 被改成异步查能力，破坏零 I/O | 中 | 中 | 能力集只从 `this.routes` 缓存读（`adapter.js:341-354`），与 contextWindow 同源；`listModels` 保持同步返回 Promise.resolve |
-| `'off'` 被 P3 误判为 reasoning 的旧缝隙被放大 | 中 | 低 | 本轮不修路由契约，文档化；如单开任务修，同步 `test/routing-tier.test.mjs:248-249` 期望（§3.1） |
+| `'off'` 被 P3 误判为 reasoning 的旧缝隙被放大 | 中 | 低 | 已于本轮实施中修复（用户授权、commit `a578abcf`）：`lib/routing.js:157-158` 把 `off/none` 都判为关，`test/routing-tier.test.mjs:250` 新增 off→general 断言；既有 none→general / high→reasoning 断言保持绿（§3.1） |
 | 新增 label key 触动七语字典门禁 | 中 | 中 | 优先用 `listModels.name` 自由文本承载组合语义，不进 `t()`；确需新增则一次同步 7 语（`test/free-ui-chain.test.mjs:172-265`） |
 | 前三份文档与本设计并存造成读者混淆 | 高 | 中 | 已按用户授权执行 §4 收敛：三份事实段保留、推荐段改为组合 id 并标注「最终形态见 combined-tier-ids.md」，各文档顶部加定稿状态行 |
 | 虚拟副本隔离 / 版本 / schema / 6 策略等冻结项被误伤 | 低 | 高 | §3.2 逐条锁死；不新增 schema key / 策略 id / 远程方法 / 注册；不 bump 版本 |
@@ -298,11 +298,11 @@ if (parsed.effort):
 4. **catalog 规模（已定稿）**：全笛卡尔积 **9 个 id** = 3 模型档 × 3 强度档（`smart/auto/off` … `smart/balanced/high`，完整清单见 §2.5）；旧的「6 个 = 3 基础 + 3 high」裁决作废。
 5. **注入点（已定稿）**：在 `adapter.stream` 入口注入 `options.reasoningEffort`，`resolveModel` 仍按首跳返回真实能力声明供宿主校验/UI 使用（§2.3/§2.4）。
 6. **前三份文档收敛（已定稿）**：用户已授权并执行——三份简报按 §4 收敛修订，各加「定稿状态」行，事实底座与取证行号保留。
+7. **`off` 哨兵缝隙（已定稿并已执行，commit `a578abcf`）**：用户于实施前明确授权本期一并修复；`lib/routing.js:157-158` 将 `off/none` 都判为关，`test/routing-tier.test.mjs:250` 新增 off→general 断言；既有 none→general / high→reasoning 断言保持绿。不再列为未决项。
 
 ### 6.2 仍未决（不在本轮用户决策范围内）
 
-1. **`off` 哨兵缝隙**：本期只文档化（`lib/routing.js:156` 用 `'none'` 判关，规范 off 值 `'off'` 会被 P3 误判为 reasoning），还是单开任务修 P3 判定并同步 `test/routing-tier.test.mjs:248-249`？（本文建议：本期只文档化，不扩大冲击面。）
-2. **UI 文案载体**：组合 id 的中文展示名已定稿为「关闭 / 均衡 / 高」；但载体尚未拍板——只放进 `listModels.name`（不新增 `t()` key，不触动七语字典），还是要求多语 label（需同步 zh/en/de/es/fr/pt/ru 七份字典）？（本文建议：只放 `listModels.name`。）
+1. **UI 文案载体**：组合 id 的中文展示名已定稿为「关闭 / 均衡 / 高」；但载体尚未拍板——只放进 `listModels.name`（不新增 `t()` key，不触动七语字典），还是要求多语 label（需同步 zh/en/de/es/fr/pt/ru 七份字典）？（本文建议：只放 `listModels.name`。）
 
 ---
 
