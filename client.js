@@ -1769,18 +1769,6 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           h('div', { style: S.heroText }, t('accounts.plainExplain')),
           accountCountLine,
         ),
-        h('div', null,
-          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('preset.pick')),
-          h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
-            choices.map(c => h('button', {
-              key: c.id, type: 'button', disabled: !!working,
-              style: S.choiceBtn(strategy === c.id), onClick: () => applyPreset?.(c.id),
-            },
-              h('span', { style: S.choiceTitle }, c.title),
-              h('span', { style: S.choiceSub }, c.sub),
-            )),
-          ),
-        ),
         // 卡片头：保存入口 + 未保存标记（Advanced 默认折叠也看得见）。
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid var(--dsw-alias-border-l1)', paddingBottom: 10 } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
