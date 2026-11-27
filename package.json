@@ -1,7 +1,7 @@
 {
   "name": "dsh-smart-provider",
   "displayName": "DSH 智能模型路由（Smart Provider）",
-  "version": "2.10.1",
+  "version": "2.10.2",
   "type": "module",
   "scripts": {
     "test": "node scripts/run-tests.mjs",

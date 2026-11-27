@@ -2,6 +2,24 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.10.2
+
+文档版本（2.10.1 → 2.10.2，2026-11-28）：优化与美化项目文档，修正口径、统一七语、补现行规范索引；按语义 patch 递增。
+
+### 变更
+
+- **npm-first 安装口径**：README / RELEASE 按已发布的公共 npm 包（`dsh-smart-provider`、`publishConfig.access=public`）重述安装来源优先级；`tarball` 只在 GitHub Release 附件确实上传成功后填写、不写占位 URL，清掉「未发布 / private」旧口径。
+- **七语默认行为与本地化口径**：README 明确设置页不提供语言选择器、自动跟随 DSH 当前语言，zh / en / de / es / fr / pt / ru 七语共用同一活跃键集、缺键回退 en（不回退中文、不显示裸 key）；七语 `docs/DETAIL.<lang>.md` 与 locale 描述同步美化，英文插件描述把「cheap provider routes」修正为「configured provider routes」，不把省钱写成默认行为。
+- **卸载命令与状态口径**：按公共包名给出 `dsh plugin --profile <profile> remove dsh-smart-provider`；把「插件已安装启用 / 宿主会话默认智能」明确标注为本机开发环境实测，新安装用户以自身 profile 为准。
+- **现行规范索引**：SPEC 标题下标注「✅ 现行规范（CURRENT SPEC）」，README 新增「现行规范与历史过程文档」小节，区分唯一现行规范与只读历史过程稿，冲突时以 SPEC 为准。
+- **README 目录（TOC）与长段拆分**：新增折叠目录便于跳转；免费信号、positionOverrides、测试口径等长段按语义拆段，并同步 full 349 / unit 281 实测数与 `--outer smart` 示例。
+
+### 验证
+
+- `node --check client.js` 退出码 0；`node scripts/run-tests.mjs --unit` 281 tests / 281 pass / 0 fail；`DSH_NODE_EXECUTABLE='/opt/DSH NEXT/dsh-desktop-next' node scripts/run-tests.mjs`（full）349 tests / 349 pass / 0 fail；`git diff --check` 退出码 0；版本三处一致 `2.10.2`。
+
+---
+
 ## 2.10.1
 
 修复版本（`2.10.0` → `2.10.1`，2026-11-28）：修复上游遗留的 FX3-5 版本一致性测试陈旧断言，按语义 patch 递增。
