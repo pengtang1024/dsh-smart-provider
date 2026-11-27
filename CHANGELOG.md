@@ -2,6 +2,14 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.10.3
+
+发布版本（2.10.2 → 2.10.3，2026-11-28）：走 GitHub Actions 可信发布链路（OIDC provenance）发布当前代码；按语义 patch 递增。
+
+### 验证
+
+- CI：`npm run test:unit`（281 tests / 281 pass / 0 fail）、`node --check client.js`、`npm publish --provenance` 均由 GitHub Actions 执行；版本三处一致 `2.10.3`。
+
 ## 2.10.2
 
 文档版本（2.10.1 → 2.10.2，2026-11-28）：优化与美化项目文档，修正口径、统一七语、补现行规范索引；按语义 patch 递增。
