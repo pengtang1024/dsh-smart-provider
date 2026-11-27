@@ -27,6 +27,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { derivePosition, projectModelForPosition } from '../lib/routing.js'
+import { buildPositionSnapshot, MODEL_POSITION_TAGS } from '../lib/position-snapshot.js'
 
 const PKG = dirname(dirname(fileURLToPath(import.meta.url)))
 const REMOTE_SRC = readFileSync(join(PKG, 'lib', 'remote.js'), 'utf8')
@@ -34,7 +36,7 @@ const INDEX_SRC = readFileSync(join(PKG, 'index.js'), 'utf8')
 const CLIENT_SRC = readFileSync(join(PKG, 'client.js'), 'utf8')
 
 /** The frozen @Remote surface the client contribution declares. */
-const EXPECTED_METHODS = ['cost', 'costDetail', 'availabilityStatus', 'probeModels', 'accountHealth', 'statsSince', 'clearStats']
+const EXPECTED_METHODS = ['cost', 'costDetail', 'availabilityStatus', 'probeModels', 'accountHealth', 'modelPositions', 'statsSince', 'clearStats']
 
 // ---------------------------------------------------------------------------
 // Minimal JS-aware scanner. Regex counting is the trap this guard must avoid:
@@ -189,37 +191,53 @@ test('accountHealth() takes no parameters and forwards this.healthReader', () =>
   assert.match(body, /routes:\s*\[\]/)
 })
 
-test('constructor accepts all eight readers/writers in order', () => {
+test('modelPositions() takes no parameters and forwards this.positionReader', () => {
+  const { params, body } = methodBody(REMOTE_SRC, 'modelPositions')
+  // Same Gateway rule as accountHealth(): a zero-arg @Remote declares nothing.
+  assert.equal(params, '', 'a zero-parameter @Remote must declare no parameter')
+  assert.match(body, /this\.positionReader\?\.\(\)/, 'modelPositions() must read the injected reader')
+  assert.match(body, /catch/, 'a throwing reader must not propagate to the wire')
+  assert.match(body, /enabled:\s*false/)
+  assert.match(body, /rows:\s*\[\]/)
+  // No generatedAt on this wire shape — the client strict codec has no such key.
+  assert.doesNotMatch(body, /generatedAt/)
+})
+
+test('constructor accepts all nine readers/writers in order', () => {
   const match = /constructor\s*\(([^)]*)\)\s*\{/.exec(REMOTE_SRC)
   assert.ok(match, 'SmartProviderRemote constructor not found')
   // Comments may precede the JSDoc block; strip them before counting params.
   const raw = match[1]
   const params = raw.replace(/\/\*[\s\S]*?\*\//g, '').split(',').map(param => param.trim()).filter(Boolean)
   assert.deepEqual(params,
-    ['ctx', 'statsReader', 'costDir', 'registryReader', 'probeReader', 'healthReader', 'statsStateReader', 'statsStateWriter'],
-    'constructor must inject the stats-state reader/writer, not read the filesystem itself')
+    ['ctx', 'statsReader', 'costDir', 'registryReader', 'probeReader', 'healthReader', 'statsStateReader', 'statsStateWriter', 'positionReader'],
+    'constructor must inject the stats-state reader/writer and the position reader, not read the filesystem itself')
   assert.match(REMOTE_SRC, /this\.healthReader\s*=\s*healthReader/, 'the health reader must be stored for the method to read')
   assert.match(REMOTE_SRC, /this\.statsStateReader\s*=\s*statsStateReader/)
   assert.match(REMOTE_SRC, /this\.statsStateWriter\s*=\s*statsStateWriter/)
+  assert.match(REMOTE_SRC, /this\.positionReader\s*=\s*positionReader/, 'the position reader must be stored for modelPositions() to read')
 })
 
 // ---------------------------------------------------------------------------
-// The single construction site in index.js must pass all eight arguments.
+// The single construction site in index.js must pass all nine arguments.
 // ---------------------------------------------------------------------------
 
-test('index.js constructs SmartProviderRemote exactly once with eight arguments', () => {
+test('index.js constructs SmartProviderRemote exactly once with nine arguments', () => {
   const calls = constructionArgs(INDEX_SRC)
   assert.equal(calls.length, 1, `expected exactly one construction site, found ${calls.length}`)
   const args = calls[0]
-  assert.equal(args.length, 8, `expected 8 constructor arguments, got ${args.length}: ${args.join(' | ')}`)
+  assert.equal(args.length, 9, `expected 9 constructor arguments, got ${args.length}: ${args.join(' | ')}`)
   // Position 5 (0-based) is the health reader; it must be an identifier or
   // closure defined in this file, never an eagerly evaluated snapshot.
   assert.equal(args[5], 'healthReader', 'the sixth argument must be the lazy healthReader closure')
   assert.equal(args[6], 'statsStateReader', 'the seventh argument must be the stats-state reader')
   assert.equal(args[7], 'statsStateWriter', 'the eighth argument must be the stats-state writer')
+  assert.equal(args[8], 'positionReader', 'the ninth argument must be the lazy positionReader closure')
   assert.match(INDEX_SRC, /const healthReader\s*=\s*\(\)\s*=>/, 'healthReader must be a lazily-invoked closure')
   assert.match(INDEX_SRC, /const statsStateReader\s*=\s*\w+\s*=>/, 'statsStateReader must be a lazy closure')
   assert.match(INDEX_SRC, /const statsStateWriter\s*=\s*\w+\s*=>/, 'statsStateWriter must be a lazy closure')
+  assert.match(INDEX_SRC, /const positionReader\s*=\s*\(\)\s*=>/, 'positionReader must be a lazily-invoked closure')
+  assert.match(INDEX_SRC, /import \{ buildPositionSnapshot \} from '\.\/lib\/position-snapshot\.js'/)
 })
 
 /** Body of a `const name = (...) => { … }` declaration, bracket-balanced. */
@@ -270,6 +288,18 @@ test('healthReader is genuinely lazy: its only exit is the live builder call', (
   // No snapshot may be captured outside the closure and handed back later.
   assert.doesNotMatch(INDEX_SRC, /const\s+\w*[Ss]napshot\w*\s*=\s*buildHealthSnapshot\(/,
     'buildHealthSnapshot() must not be called outside the lazy reader')
+})
+
+test('positionReader is genuinely lazy and reads live routes + overrides', () => {
+  const body = arrowBody(INDEX_SRC, 'positionReader')
+  const returns = [...body.matchAll(/\breturn\b/g)]
+  assert.equal(returns.length, 1, `positionReader must have exactly one return, found ${returns.length}`)
+  const afterReturn = body.slice(returns[0].index + 'return'.length).trimStart()
+  assert.match(afterReturn, /^buildPositionSnapshot\(/, 'the single return must be the live builder call')
+  assert.match(body, /adapter\?\.routes/, 'routes must be read at call time, not captured at apply() time')
+  assert.match(body, /positionOverrides/, 'the effective override map the adapter uses must be forwarded')
+  assert.doesNotMatch(INDEX_SRC, /const\s+\w*[Ss]napshot\w*\s*=\s*buildPositionSnapshot\(/,
+    'the snapshot must never be built outside the lazy reader')
 })
 
 // ---------------------------------------------------------------------------
@@ -380,4 +410,129 @@ test('costDetail() catch path returns EMPTY_COST_DETAIL, never a partial literal
     'no inline savings literal in costDetail() — it drifted from the client schema once already')
   assert.doesNotMatch(body, /\bknown:\s*false/,
     'savings has no "known" key; the required keys are estimated/priceSource/note/models')
+})
+
+// ---------------------------------------------------------------------------
+// modelPositions() pure projection — the mapping rules are frozen here so a
+// Host field rename cannot silently degrade the table back to [tool, general].
+// ---------------------------------------------------------------------------
+
+test('projectModelForPosition maps real Host fields into derivePosition shape', () => {
+  const real = Object.freeze({
+    id: 'gpt-5',
+    name: 'GPT-5',
+    reasoning: Object.freeze({ efforts: Object.freeze([{ id: 'high' }]) }),
+    inputModalities: Object.freeze(['text', 'image']),
+    context: Object.freeze({ contextWindow: 256000 }),
+    toolUpdate: Object.freeze({ mode: 'replace' }),
+  })
+  assert.deepEqual(projectModelForPosition(real), {
+    id: 'gpt-5',
+    reasoning: true,
+    contextWindow: 256000,
+    input: ['image'],
+    tool: true,
+  })
+  // Pure: the input is frozen and must not be touched by the projection.
+  assert.equal(real.inputModalities.length, 2)
+
+  // toolUpdate is a schema-update policy, never a tool-capability boolean.
+  assert.equal(projectModelForPosition({ id: 'm', toolUpdate: { mode: 'noop' } }).tool, true)
+  // An explicit legacy tool:false still opts out — derivePosition semantics stay.
+  assert.equal(projectModelForPosition({ id: 'm', tool: false }).tool, false)
+
+  // Legacy catalog shape (used by existing routing tests) must keep working.
+  assert.deepEqual(projectModelForPosition({
+    id: 'legacy', reasoning: true, contextWindow: 300000, input: ['image'], tool: false,
+  }), { id: 'legacy', reasoning: true, contextWindow: 300000, input: ['image'], tool: false })
+
+  // Missing / malformed fields degrade conservatively and never throw.
+  assert.deepEqual(projectModelForPosition(null), {
+    id: '', reasoning: false, contextWindow: undefined, input: [], tool: true,
+  })
+  assert.deepEqual(projectModelForPosition({
+    id: 'x', reasoning: { efforts: [] }, context: {}, inputModalities: ['text'],
+  }), { id: 'x', reasoning: false, contextWindow: undefined, input: [], tool: true })
+  // Top-level contextWindow is the accepted fallback when context.contextWindow is absent.
+  assert.equal(projectModelForPosition({ id: 'y', contextWindow: 123456 }).contextWindow, 123456)
+})
+
+test('derivePosition sees real Host capabilities through the projection', () => {
+  const derived = derivePosition(projectModelForPosition({
+    id: 'r', reasoning: { efforts: [{ id: 'medium' }] },
+    inputModalities: ['text', 'image'], context: { contextWindow: 200000 },
+  }))
+  assert.ok(derived.tags.includes('reasoning'), 'reasoning.efforts must unlock the reasoning tier')
+  assert.ok(derived.tags.includes('longctx'), 'context.contextWindow must unlock longctx')
+  assert.ok(derived.tags.includes('vision'), 'inputModalities:image must unlock vision (renamed on the wire)')
+  assert.ok(derived.tags.includes('general'))
+  assert.equal(derived.source, 'auto')
+})
+
+test('buildPositionSnapshot projects routes into the closed five-tag wire vocabulary', () => {
+  const snapshot = buildPositionSnapshot({
+    routes: [
+      {
+        provider: 'openai',
+        models: [
+          {
+            id: 'gpt-5', name: 'GPT-5', reasoning: { efforts: [{ id: 'high' }] },
+            inputModalities: ['text', 'image'], context: { contextWindow: 256000 },
+          },
+          { id: 'cheap', name: 'Cheap' },
+          'bare-id',
+        ],
+      },
+      { provider: 'smart', models: [{ id: 'virtual' }] }, // virtual copy is skipped
+      { provider: 'anthropic', models: [] },
+    ],
+    overrides: { 'openai/cheap': ['thrifty', 'reasoning'] },
+  })
+  assert.equal(snapshot.enabled, true)
+  assert.deepEqual(snapshot.rows.map(row => row.id), ['gpt-5', 'cheap', 'bare-id'])
+  assert.deepEqual(snapshot.rows[0], {
+    id: 'gpt-5', name: 'GPT-5', group: 'openai',
+    tags: ['reasoning', 'longctx', 'multimodal', 'tool', 'general'], source: 'auto',
+  })
+  // thrifty is a valid routing tag but NOT on the wire; reasoning from the same
+  // override survives, and the source honestly reports a merge.
+  assert.deepEqual(snapshot.rows[1], {
+    id: 'cheap', name: 'Cheap', group: 'openai',
+    tags: ['tool', 'general', 'reasoning'], source: 'mixed',
+  })
+  assert.deepEqual(snapshot.rows[2], {
+    id: 'bare-id', name: 'bare-id', group: 'openai',
+    tags: ['tool', 'general'], source: 'auto',
+  })
+  for (const row of snapshot.rows) {
+    for (const tag of row.tags) {
+      assert.ok(MODEL_POSITION_TAGS.includes(tag), `unexpected wire tag: ${tag}`)
+    }
+    assert.ok(['auto', 'user', 'mixed'].includes(row.source))
+    // Strict codec: no functions, no classes, no undefined leak.
+    assert.deepEqual(Object.keys(row).sort(), ['group', 'id', 'name', 'source', 'tags'])
+    assert.ok(Object.values(row).every(value => typeof value !== 'function'))
+  }
+})
+
+test('buildPositionSnapshot honours Map overrides and provider-qualified keys first', () => {
+  const overrides = new Map([['p/m', ['reasoning']], ['m', ['longctx']]])
+  const snapshot = buildPositionSnapshot({ routes: [{ provider: 'p', models: [{ id: 'm' }] }], overrides })
+  assert.deepEqual(snapshot.rows[0].tags, ['tool', 'general', 'reasoning'])
+  assert.equal(snapshot.rows[0].source, 'mixed')
+  // Bare-id key is the fallback when no qualified key exists.
+  const bare = buildPositionSnapshot({ routes: [{ provider: 'p', models: [{ id: 'm' }] }], overrides: { m: ['longctx'] } })
+  assert.ok(bare.rows[0].tags.includes('longctx'))
+})
+
+test('buildPositionSnapshot degrades to a disabled empty table without throwing', () => {
+  const empty = { enabled: false, rows: [] }
+  assert.deepEqual(buildPositionSnapshot(), empty)
+  assert.deepEqual(buildPositionSnapshot(null), empty)
+  assert.deepEqual(buildPositionSnapshot({}), empty)
+  assert.deepEqual(buildPositionSnapshot({ routes: [] }), empty)
+  assert.deepEqual(buildPositionSnapshot({ routes: [{ provider: 'p', models: [{ name: 'no id' }] }] }), empty)
+  // A hostile getter can throw mid-projection; the whole table still degrades.
+  const hostile = { get models() { throw new Error('boom') } }
+  assert.deepEqual(buildPositionSnapshot({ routes: [{ provider: 'p' }, hostile] }), empty)
 })

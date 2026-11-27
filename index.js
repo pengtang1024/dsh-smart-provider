@@ -21,6 +21,7 @@ import { buildHealthDeps } from './lib/health-setup.js' // L7: three-layer healt
 import { hydrateHealthEvidence } from './lib/health-persistence.js' // task-6: cold-start replay of persisted health evidence
 import { createProbe } from './lib/probe.js' // task-107: minimal real probe replaces name guessing
 import { buildHealthSnapshot } from './lib/health-snapshot.js' // frozen accountHealth() wire shape (pure)
+import { buildPositionSnapshot } from './lib/position-snapshot.js' // frozen modelPositions() wire shape (pure)
 import { SmartProviderRemote, readCostStats } from './lib/remote.js'
 import { readStatsState, clearStatsState } from './lib/stats-state.js' // CF-1: statistics start marker (ledger is never truncated)
 import {
@@ -215,6 +216,18 @@ export function apply(ctx, config = Config({})) {
       now: Date.now(),
     })
   }
+  // modelPositions() snapshot reader. LAZY for the same reason as healthReader:
+  // `adapter` and the effective overrides are built further down, so an eager
+  // read would freeze the per-model table on empty for the whole session. The
+  // overrides are the SAME map layer-1 routing consumes (withRouting() merges
+  // the file reader at index.js:238-256 UNDER explicit config), so the table
+  // cannot disagree with the routing it describes. Pure builder; no I/O here.
+  const positionReader = () => {
+    return buildPositionSnapshot({
+      routes: adapter?.routes,
+      overrides: unwrap(ranking?.routing)?.positionOverrides ?? userPositionOverrides,
+    })
+  }
   // Kept as a handle: a cost* hot update repoints its ledger directory too.
   // stats-state readers stay DIRECT here (never config/volatile-update): a
   // statistics start is a user action, not a setting. They take the live
@@ -223,7 +236,7 @@ export function apply(ctx, config = Config({})) {
   const statsStateWriter = stateDir => clearStatsState(stateDir)
   const remote = new SmartProviderRemote(
     ctx, statsReader, dir, registryReader, () => adapter?.probe, healthReader,
-    statsStateReader, statsStateWriter,
+    statsStateReader, statsStateWriter, positionReader,
   )
 
   // ranking is volatile: normalize defensively (Config({}) in tests yields

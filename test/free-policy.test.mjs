@@ -84,7 +84,7 @@ test('availabilityStatus projection attaches exactly {free,level,source}|null pe
   assert.match(src, /priceForExact\(provider, modelId\)/)
   const methods = [...src.matchAll(/method:\s*'([^']+)'/g)].map(m => m[1])
   assert.deepEqual([...new Set(methods)].sort(),
-    ['accountHealth', 'availabilityStatus', 'clearStats', 'cost', 'costDetail', 'probeModels', 'statsSince'])
+    ['accountHealth', 'availabilityStatus', 'clearStats', 'cost', 'costDetail', 'modelPositions', 'probeModels', 'statsSince'])
 })
 
 test('pricing.js keeps its own price semantics; free-policy consumes a passed price object', () => {

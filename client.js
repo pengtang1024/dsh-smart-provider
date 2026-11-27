@@ -350,6 +350,26 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         accounts: z.array(account), routes: z.array(route),
       })
     })()
+    // 逐台定位快照（@Remote modelPositions）。Host 纯投影 adapter.routes，
+    // wire 上 tags 只会出现 reasoning/multimodal/tool/longctx/general 五种；
+    // 所有字段必填，strict zod 才会原样透传。读不到能力时 Host 返回
+    // { enabled:false, rows:[] }，客户端据此显示「未确认」，绝不伪造行。
+    const MODEL_POSITIONS_SCHEMA = (() => {
+      let zod
+      try { zod = require('zod') } catch { return null }
+      if (!zod?.object) return null
+      const z = zod.z ?? zod
+      return z.object({
+        enabled: z.boolean(),
+        rows: z.array(z.object({
+          id: z.string(),
+          name: z.string(),
+          group: z.string(),
+          tags: z.array(z.string()),
+          source: z.enum(['auto', 'user', 'mixed']),
+        })),
+      })
+    })()
     // $mount 的真实失败原因会写进这里，随成本页诊断文案一起显示，避免 err=? 静默。
     let mountDiag = 'unmounted'
     // CF-3: config keys/defaults mirror schema.js (volatile, off by default).
@@ -501,6 +521,26 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
           return receiver.accountHealth(signal)
         },
       }, {
+        // 逐台定位快照：零参数 direct，strict codec 三件套缺一整个 namespace 挂不上。
+        id: '@local/dsh-smart-provider#smartProvider/modelPositions',
+        service: 'smartProvider',
+        namespace: 'smartProvider',
+        method: 'modelPositions',
+        description: 'Read the per-model position projection (read-only)',
+        invocation: { kind: 'direct' },
+        parameters: [],
+        result: {
+          mode: 'strict',
+          typeSymbol: '@local/dsh-smart-provider/types#ModelPositionsSnapshot',
+          create: () => MODEL_POSITIONS_SCHEMA ?? { parse: v => v },
+          description: 'per-model position rows',
+        },
+        input() { return { create: () => ({ parse: v => v }) } },
+        invoke(remote, input, signal) {
+          const receiver = remote.smartProvider
+          return receiver.modelPositions(signal)
+        },
+      }, {
         // CF-2: statistics total from an explicit start or the persisted
         // marker. Same strict-codec 三件套 rule as every other descriptor:
         // without mode/typeSymbol/create the WHOLE namespace fails to mount.
@@ -584,12 +624,13 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       { id: 'legacy', label: '兼容旧行为', desc: '完全按旧方式：route 优先 + 最少使用' },
       { id: 'custom', label: '自定义', desc: '自己设定档位规则（高级）' },
     ]
-    // 任务识别规则（只读说明，来自 P2 classifyTask 的语义，不含原始字段名）
-    const TASK_RULES = [
-      ['带图片', '多模态档'],
-      ['要用工具', '工具型档'],
-      ['要推理', '深度思考档'],
-      ['内容超长', '长文本档'],
+    // 任务识别规则（只读说明，来自 P2 classifyTask 的语义，不含原始字段名）。
+    // 文案走 7 语字典；字面 key 便于 i18n 守卫静态扫描，四条说明置顶展示。
+    const taskRuleLines = t => [
+      `${t('routing.rule.image')} → ${t('routing.rule.multimodal')}`,
+      `${t('routing.rule.tool')} → ${t('routing.rule.toolKind')}`,
+      `${t('routing.rule.reason')} → ${t('routing.rule.reasoning')}`,
+      `${t('routing.rule.long')} → ${t('routing.rule.longctx')}`,
     ]
     const STATIC_DEFAULT_CHAINS = {
       auto: [
@@ -1516,15 +1557,92 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         ),
         h('div', { style: { ...S.muted, marginLeft: 96, minHeight: 18 } },
           selected ? str(selected.desc) : ''),
-        // 模型定位预览：当前无可读到每台模型定位的通道，诚实说明来源，不造假表。
-        h(Field, { label: t('routing.position'), help: t('routing.positionHelp') },
-          h('div', { style: { ...S.muted, lineHeight: '18px' } }, t('routing.positionExplain')),
-        ),
-        // 任务识别规则：只读说明，一眼能懂，不是可编辑 JSON。
-        h('div', { style: { marginLeft: 96, marginTop: 4 } },
+      )
+    }
+
+    // 置顶只读说明 + 逐台真实定位表。静态说明保持只读（不是可编辑表格）；
+    // 逐台数据只认 Host modelPositions()，读不到一律显示「未确认」，绝不造行。
+    function PositionCard({ t, costService }) {
+      const [state, setState] = useState({ status: 'loading' })
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          let next = { status: 'unavailable' }
+          try {
+            const res = await costService?.modelPositions?.()
+            if (res?.ok === true) {
+              const value = obj(res.value)
+              next = value.enabled === true && Array.isArray(value.rows)
+                ? { status: 'ok', rows: value.rows }
+                : { status: 'unavailable' }
+            }
+          } catch { next = { status: 'unavailable' } }
+          if (alive) setState(next)
+        }
+        void load()
+        return () => { alive = false }
+      }, [costService])
+
+      // 字面 key：i18n 守卫可静态扫描；未知 tag / source 一律显示「未确认」。
+      const tagLabels = {
+        reasoning: t('routing.tag.reasoning'),
+        multimodal: t('routing.tag.multimodal'),
+        tool: t('routing.tag.tool'),
+        longctx: t('routing.tag.longctx'),
+        general: t('routing.tag.general'),
+      }
+      const sourceLabels = {
+        auto: t('routing.source.auto'),
+        user: t('routing.source.user'),
+        mixed: t('routing.source.mixed'),
+      }
+      // 只给本表的表头加 nowrap/minWidth：共享 S.th/S.td 会波及成本表与路由表。
+      const head = { ...S.th, whiteSpace: 'nowrap' }
+      return h('div', { style: S.card },
+        h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('routing.position')),
+        h('div', { style: { ...S.muted, lineHeight: '18px' } }, t('routing.positionHelp')),
+        h('div', { style: { ...S.muted, lineHeight: '18px' } }, t('routing.positionExplain')),
+        h('div', { style: { marginTop: 8 } },
           h('div', { style: { fontWeight: 500, marginBottom: 4 } }, t('routing.rulesTitle')),
-          ...TASK_RULES.map(([cond, kind]) => h('div', { key: cond, style: { ...S.muted, padding: '2px 0' } },
-            `${cond} → ${kind}`)),
+          ...taskRuleLines(t).map((line, i) => h('div', { key: i, style: { ...S.muted, padding: '2px 0' } }, line)),
+        ),
+        h('div', { style: { borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: 10, paddingTop: 10 } },
+          h('div', { style: { ...S.sectionTitle, marginBottom: 8 } }, t('routing.posTitle')),
+          state.status === 'loading'
+            ? h('div', { style: S.muted }, t('routing.posLoading'))
+            : state.status !== 'ok' || state.rows.length === 0
+              ? h('div', { style: S.empty }, t('routing.posUnavailable'))
+              : h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { ...S.table, minWidth: 670 } },
+                  h('thead', null, h('tr', null,
+                    h('th', { style: { ...head, minWidth: 200 }, scope: 'col' }, t('routing.posCol.model')),
+                    h('th', { style: { ...head, minWidth: 130 }, scope: 'col' }, t('routing.posCol.group')),
+                    h('th', { style: { ...head, minWidth: 240 }, scope: 'col' }, t('routing.posCol.tags')),
+                    h('th', { style: { ...head, minWidth: 100 }, scope: 'col' }, t('routing.posCol.source')),
+                  )),
+                  h('tbody', null, state.rows.map((row, i) => {
+                    const r = obj(row)
+                    const tags = arr(r.tags).map(tag => str(tag))
+                      .filter(tag => Object.prototype.hasOwnProperty.call(tagLabels, tag))
+                    return h('tr', { key: i },
+                      h('td', { style: { ...S.td, minWidth: 200 } },
+                        h('div', null, str(r.name) || str(r.id)),
+                        h('div', { style: { ...S.muted, fontFamily: 'var(--ds-font-family-code, monospace)', fontSize: 11 } }, str(r.id)),
+                      ),
+                      h('td', { style: { ...S.td, minWidth: 130 } }, str(r.group)),
+                      h('td', { style: { ...S.td, minWidth: 240 } },
+                        tags.length
+                          ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+                            ...tags.map(tag => h('span', { key: tag, style: S.pill(true) }, tagLabels[tag])))
+                          : h('span', { style: S.muted }, t('routing.posUnconfirmed')),
+                      ),
+                      h('td', { style: { ...S.td, minWidth: 100, whiteSpace: 'nowrap' } },
+                        sourceLabels[str(r.source)] ?? t('routing.posUnconfirmed'),
+                      ),
+                    )
+                  })),
+                ),
+              ),
         ),
       )
     }
@@ -3110,6 +3228,7 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
         // 路由设置 = 先链路卡、后账号/择优卡，两张卡各自的保存按钮与语义不变。
         // 两张卡都上报 dirty，供切 Tab 前的确认条使用。
         tab === 'routing' ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+          h(PositionCard, { t, costService: activeCostService }),
           h(ChainsTab, { t, form, revision, mutate, config, pi, onDirty: v => reportDirty('chains', v) }),
           h(AccountsTab, { t, config, revision, mutate, applyPreset, working, pi, costService: activeCostService, onDirty: v => reportDirty('accounts', v), availProjection, probeVerdicts }),
         ) : null,
@@ -3235,8 +3354,21 @@ const CUSTOM_MODELS = ["hy4-flash-free","hy4flash-free","hy4-flash-free-trial-20
       'routing.enabled': '启用两层智能路由', 'routing.enabledHelp': '不勾选 = 关闭；从未设置时默认开启（勾选态即 Host 的默认值）。各策略中立等权、不偏向省钱或速度。',
       'routing.strategy': '选哪种路由风格',
       'routing.position': '模型定位', 'routing.positionHelp': '这是只读说明，不是可编辑的表格。',
-      'routing.positionExplain': '每台模型的定位由自身能力自动推导（如是否支持推理、图片、长上下文）；个别模型可另外手填。当前页面不读取逐台模型的定位结果。',
+      'routing.positionExplain': '每台模型的定位由自身能力自动推导（如是否支持推理、图片、长上下文）；个别模型可另外手填。下方逐台表格为后台真实读取；读不到时显示「未确认」。',
       'routing.rulesTitle': '任务怎么识别（只读）',
+      'routing.rule.image': '带图片', 'routing.rule.multimodal': '多模态档',
+      'routing.rule.tool': '要用工具', 'routing.rule.toolKind': '工具型档',
+      'routing.rule.reason': '要推理', 'routing.rule.reasoning': '深度思考档',
+      'routing.rule.long': '内容超长', 'routing.rule.longctx': '长文本档',
+      'routing.posTitle': '逐台模型定位（后台真实读取）',
+      'routing.posCol.model': '模型', 'routing.posCol.group': '路由组',
+      'routing.posCol.tags': '定位标签', 'routing.posCol.source': '来源',
+      'routing.posLoading': '正在读取逐台定位…',
+      'routing.posUnavailable': '逐台定位未确认：当前读不到后台定位数据（可能版本不支持或读取失败），不展示猜测结果。',
+      'routing.posUnconfirmed': '未确认',
+      'routing.source.auto': '自动推导', 'routing.source.user': '用户手填', 'routing.source.mixed': '混合',
+      'routing.tag.reasoning': '深度思考', 'routing.tag.multimodal': '多模态',
+      'routing.tag.tool': '工具型', 'routing.tag.longctx': '长文本', 'routing.tag.general': '通用',
       'cost.title': '花费与健康',
       'cost.plainExplain': '花费来自后台真实记账，这里只显示真实数字。',
       'cost.detailLoading': '正在读取明细…',
@@ -3418,8 +3550,21 @@ const en = {
       'routing.enabled': 'Enable two-layer routing', 'routing.enabledHelp': 'Unchecked = off; when never set it is ON by default (the checked state mirrors the Host default). Strategies are neutral and equal-weight — no bias toward cost or speed.',
       'routing.strategy': 'Routing style',
       'routing.position': 'Model position', 'routing.positionHelp': 'Read-only explanation, not an editable table.',
-      'routing.positionExplain': 'Each model position is derived from its own capabilities (reasoning, vision, long context); some can be declared manually. This page does not read per-model derived results.',
+      'routing.positionExplain': 'Each model position is derived from its own capabilities (reasoning, vision, long context); some can be declared manually. The per-model table below is read live from the Host; when unavailable it shows "Unconfirmed".',
       'routing.rulesTitle': 'How tasks are recognized (read-only)',
+      'routing.rule.image': 'Has images', 'routing.rule.multimodal': 'Multimodal tier',
+      'routing.rule.tool': 'Needs tools', 'routing.rule.toolKind': 'Tool tier',
+      'routing.rule.reason': 'Needs reasoning', 'routing.rule.reasoning': 'Deep-thinking tier',
+      'routing.rule.long': 'Very long content', 'routing.rule.longctx': 'Long-context tier',
+      'routing.posTitle': 'Per-model positions (read live from Host)',
+      'routing.posCol.model': 'Model', 'routing.posCol.group': 'Route group',
+      'routing.posCol.tags': 'Position tags', 'routing.posCol.source': 'Source',
+      'routing.posLoading': 'Reading per-model positions…',
+      'routing.posUnavailable': 'Per-model positions unconfirmed: Host data is unavailable (unsupported version or read failure). No guessed data is shown.',
+      'routing.posUnconfirmed': 'Unconfirmed',
+      'routing.source.auto': 'Auto-derived', 'routing.source.user': 'Manual', 'routing.source.mixed': 'Mixed',
+      'routing.tag.reasoning': 'Reasoning', 'routing.tag.multimodal': 'Multimodal',
+      'routing.tag.tool': 'Tool', 'routing.tag.longctx': 'Long context', 'routing.tag.general': 'General',
       'cost.title': 'Cost & health',
       'cost.plainExplain': 'Spend comes from the real Host ledger — no invented numbers.',
       'cost.detailLoading': 'Loading detail…',
@@ -3646,8 +3791,21 @@ const de = {
       'routing.strategy': 'Routing-Stil',
       'routing.position': 'Modellposition',
       'routing.positionHelp': 'Nur Lesetext, keine bearbeitbare Tabelle.',
-      'routing.positionExplain': 'Jede Modellposition ergibt sich aus den eigenen Fähigkeiten (Denken, Bildverarbeitung, langer Kontext); manche können manuell festgelegt werden. Diese Seite liest keine abgeleiteten Ergebnisse pro Modell.',
+      'routing.positionExplain': 'Jede Modellposition ergibt sich aus den eigenen Fähigkeiten (Denken, Bildverarbeitung, langer Kontext); manche können manuell festgelegt werden. Die Tabelle unten liest die echten Daten vom Host; bei Fehlschlag erscheint „Unbestätigt“.',
       'routing.rulesTitle': 'Wie Aufgaben erkannt werden (nur lesen)',
+      'routing.rule.image': 'Mit Bildern', 'routing.rule.multimodal': 'Multimodal-Stufe',
+      'routing.rule.tool': 'Werkzeuge nötig', 'routing.rule.toolKind': 'Werkzeug-Stufe',
+      'routing.rule.reason': 'Denken nötig', 'routing.rule.reasoning': 'Stufe für tiefes Denken',
+      'routing.rule.long': 'Sehr langer Inhalt', 'routing.rule.longctx': 'Stufe für langen Kontext',
+      'routing.posTitle': 'Position pro Modell (live vom Host gelesen)',
+      'routing.posCol.model': 'Modell', 'routing.posCol.group': 'Routengruppe',
+      'routing.posCol.tags': 'Positions-Tags', 'routing.posCol.source': 'Quelle',
+      'routing.posLoading': 'Positionen pro Modell werden gelesen…',
+      'routing.posUnavailable': 'Positionen pro Modell unbestätigt: Host-Daten nicht verfügbar (nicht unterstützte Version oder Lesefehler). Es werden keine geschätzten Daten angezeigt.',
+      'routing.posUnconfirmed': 'Unbestätigt',
+      'routing.source.auto': 'Automatisch abgeleitet', 'routing.source.user': 'Manuell', 'routing.source.mixed': 'Gemischt',
+      'routing.tag.reasoning': 'Denken', 'routing.tag.multimodal': 'Multimodal',
+      'routing.tag.tool': 'Werkzeug', 'routing.tag.longctx': 'Langer Kontext', 'routing.tag.general': 'Allgemein',
       'cost.title': 'Kosten & Zustand',
       'cost.plainExplain': 'Die Ausgaben stammen aus dem echten Host-Ledger – keine erfundenen Zahlen.',
       'cost.detailLoading': 'Details werden geladen…',
@@ -3914,8 +4072,21 @@ const es = {
       'routing.strategy': 'Estilo de enrutamiento',
       'routing.position': 'Posición del modelo',
       'routing.positionHelp': 'Texto informativo, no una tabla editable.',
-      'routing.positionExplain': 'La posición de cada modelo se deriva de sus capacidades (razonamiento, visión, contexto largo); algunas pueden declararse manualmente. Esta página no lee los resultados derivados por modelo.',
+      'routing.positionExplain': 'La posición de cada modelo se deriva de sus capacidades (razonamiento, visión, contexto largo); algunas pueden declararse manualmente. La tabla inferior lee los datos reales del Host; si no están disponibles muestra «Sin confirmar».',
       'routing.rulesTitle': 'Cómo se reconocen las tareas (solo lectura)',
+      'routing.rule.image': 'Con imágenes', 'routing.rule.multimodal': 'Nivel multimodal',
+      'routing.rule.tool': 'Necesita herramientas', 'routing.rule.toolKind': 'Nivel de herramientas',
+      'routing.rule.reason': 'Necesita razonamiento', 'routing.rule.reasoning': 'Nivel de razonamiento profundo',
+      'routing.rule.long': 'Contenido muy largo', 'routing.rule.longctx': 'Nivel de contexto largo',
+      'routing.posTitle': 'Posiciones por modelo (lectura real del Host)',
+      'routing.posCol.model': 'Modelo', 'routing.posCol.group': 'Grupo de ruta',
+      'routing.posCol.tags': 'Etiquetas de posición', 'routing.posCol.source': 'Origen',
+      'routing.posLoading': 'Leyendo posiciones por modelo…',
+      'routing.posUnavailable': 'Posiciones por modelo sin confirmar: no se pueden leer los datos del Host (versión no compatible o error de lectura). No se muestran datos inventados.',
+      'routing.posUnconfirmed': 'Sin confirmar',
+      'routing.source.auto': 'Derivado automáticamente', 'routing.source.user': 'Manual', 'routing.source.mixed': 'Mixto',
+      'routing.tag.reasoning': 'Razonamiento', 'routing.tag.multimodal': 'Multimodal',
+      'routing.tag.tool': 'Herramienta', 'routing.tag.longctx': 'Contexto largo', 'routing.tag.general': 'General',
       'cost.title': 'Coste y estado',
       'cost.plainExplain': 'El gasto viene del registro real del Host: no hay cifras inventadas.',
       'cost.detailLoading': 'Cargando detalles…',
@@ -4137,8 +4308,21 @@ const es = {
       'routing.enabled': 'Activer le routage à deux niveaux', 'routing.enabledHelp': 'Non coché = désactivé ; jamais défini = activé par défaut (la case reflète la valeur par défaut de l’hôte). Les stratégies sont neutres et de poids égal — aucune préférence pour le coût ou la vitesse.',
       'routing.strategy': 'Style de routage',
       'routing.position': 'Position du modèle', 'routing.positionHelp': 'Explication en lecture seule, tableau non modifiable.',
-      'routing.positionExplain': 'Chaque position d’un modèle découle de ses propres capacités (raisonnement, vision, contexte long) ; certaines peuvent être déclarées manuellement. Cette page ne lit pas les résultats calculés par modèle.',
+      'routing.positionExplain': 'Chaque position d’un modèle découle de ses propres capacités (raisonnement, vision, contexte long) ; certaines peuvent être déclarées manuellement. Le tableau ci-dessous lit les données réelles de l’hôte ; en cas d’indisponibilité il affiche « Non confirmé ».',
       'routing.rulesTitle': 'Comment les tâches sont reconnues (lecture seule)',
+      'routing.rule.image': 'Avec des images', 'routing.rule.multimodal': 'Niveau multimodal',
+      'routing.rule.tool': 'Nécessite des outils', 'routing.rule.toolKind': 'Niveau outil',
+      'routing.rule.reason': 'Nécessite du raisonnement', 'routing.rule.reasoning': 'Niveau raisonnement profond',
+      'routing.rule.long': 'Contenu très long', 'routing.rule.longctx': 'Niveau contexte long',
+      'routing.posTitle': 'Positions par modèle (lecture réelle depuis l’hôte)',
+      'routing.posCol.model': 'Modèle', 'routing.posCol.group': 'Groupe de route',
+      'routing.posCol.tags': 'Étiquettes de position', 'routing.posCol.source': 'Source',
+      'routing.posLoading': 'Lecture des positions par modèle…',
+      'routing.posUnavailable': 'Positions par modèle non confirmées : données de l’hôte indisponibles (version non prise en charge ou échec de lecture). Aucune donnée inventée.',
+      'routing.posUnconfirmed': 'Non confirmé',
+      'routing.source.auto': 'Dérivé automatiquement', 'routing.source.user': 'Manuel', 'routing.source.mixed': 'Mixte',
+      'routing.tag.reasoning': 'Raisonnement', 'routing.tag.multimodal': 'Multimodal',
+      'routing.tag.tool': 'Outil', 'routing.tag.longctx': 'Contexte long', 'routing.tag.general': 'Général',
       'cost.title': 'Coûts et santé',
       'cost.plainExplain': 'Les dépenses proviennent du registre réel de l’hôte — aucun chiffre inventé.',
       'cost.detailLoading': 'Chargement du détail…',
@@ -4320,8 +4504,21 @@ const es = {
       'routing.enabled': 'Ativar roteamento em duas camadas', 'routing.enabledHelp': 'Desmarcado = desativado; nunca definido = ativado por padrão (a marcação reflete o padrão do Host). As estratégias são neutras e de peso igual — sem viés para custo ou velocidade.',
       'routing.strategy': 'Estilo de roteamento',
       'routing.position': 'Posição do modelo', 'routing.positionHelp': 'Explicação somente leitura, não é uma tabela editável.',
-      'routing.positionExplain': 'Cada posição do modelo deriva de suas próprias capacidades (raciocínio, visão, contexto longo); algumas podem ser declaradas manualmente. Esta página não lê resultados derivados por modelo.',
+      'routing.positionExplain': 'Cada posição do modelo deriva de suas próprias capacidades (raciocínio, visão, contexto longo); algumas podem ser declaradas manualmente. A tabela abaixo lê os dados reais do Host; quando indisponíveis, mostra «Não confirmado».',
       'routing.rulesTitle': 'Como as tarefas são reconhecidas (somente leitura)',
+      'routing.rule.image': 'Com imagens', 'routing.rule.multimodal': 'Nível multimodal',
+      'routing.rule.tool': 'Precisa de ferramentas', 'routing.rule.toolKind': 'Nível de ferramentas',
+      'routing.rule.reason': 'Precisa de raciocínio', 'routing.rule.reasoning': 'Nível de raciocínio profundo',
+      'routing.rule.long': 'Conteúdo muito longo', 'routing.rule.longctx': 'Nível de contexto longo',
+      'routing.posTitle': 'Posições por modelo (leitura real do Host)',
+      'routing.posCol.model': 'Modelo', 'routing.posCol.group': 'Grupo de rota',
+      'routing.posCol.tags': 'Etiquetas de posição', 'routing.posCol.source': 'Origem',
+      'routing.posLoading': 'Lendo posições por modelo…',
+      'routing.posUnavailable': 'Posições por modelo não confirmadas: dados do Host indisponíveis (versão não suportada ou falha de leitura). Nenhum dado inventado é exibido.',
+      'routing.posUnconfirmed': 'Não confirmado',
+      'routing.source.auto': 'Derivado automaticamente', 'routing.source.user': 'Manual', 'routing.source.mixed': 'Misto',
+      'routing.tag.reasoning': 'Raciocínio', 'routing.tag.multimodal': 'Multimodal',
+      'routing.tag.tool': 'Ferramenta', 'routing.tag.longctx': 'Contexto longo', 'routing.tag.general': 'Geral',
       'cost.title': 'Custos e saúde',
       'cost.plainExplain': 'Os gastos vêm do registro real do Host — nenhum número inventado.',
       'cost.detailLoading': 'Carregando detalhes…',
@@ -4548,8 +4745,21 @@ const ru = {
       'routing.strategy': 'Стиль маршрутизации',
       'routing.position': 'Позиция модели',
       'routing.positionHelp': 'Описание только для чтения, не редактируемая таблица.',
-      'routing.positionExplain': 'Позиция каждой модели определяется её возможностями (рассуждение, зрение, длинный контекст); часть можно задать вручную. Эта страница не читает вычисленные для каждой модели результаты.',
+      'routing.positionExplain': 'Позиция каждой модели определяется её возможностями (рассуждение, зрение, длинный контекст); часть можно задать вручную. Таблица ниже читает реальные данные от Host; при недоступности показывает «Не подтверждено».',
       'routing.rulesTitle': 'Как распознаются задачи (только для чтения)',
+      'routing.rule.image': 'С изображениями', 'routing.rule.multimodal': 'Мультимодальный уровень',
+      'routing.rule.tool': 'Нужны инструменты', 'routing.rule.toolKind': 'Уровень инструментов',
+      'routing.rule.reason': 'Нужно рассуждение', 'routing.rule.reasoning': 'Уровень глубокого рассуждения',
+      'routing.rule.long': 'Очень длинный текст', 'routing.rule.longctx': 'Уровень длинного контекста',
+      'routing.posTitle': 'Позиции по моделям (реальное чтение от Host)',
+      'routing.posCol.model': 'Модель', 'routing.posCol.group': 'Группа маршрута',
+      'routing.posCol.tags': 'Метки позиции', 'routing.posCol.source': 'Источник',
+      'routing.posLoading': 'Чтение позиций по моделям…',
+      'routing.posUnavailable': 'Позиции по моделям не подтверждены: данные Host недоступны (неподдерживаемая версия или ошибка чтения). Выдуманные данные не показываются.',
+      'routing.posUnconfirmed': 'Не подтверждено',
+      'routing.source.auto': 'Автоматически выведено', 'routing.source.user': 'Вручную', 'routing.source.mixed': 'Смешанный',
+      'routing.tag.reasoning': 'Рассуждение', 'routing.tag.multimodal': 'Мультимодальность',
+      'routing.tag.tool': 'Инструменты', 'routing.tag.longctx': 'Длинный контекст', 'routing.tag.general': 'Общий',
       'cost.title': 'Расходы и состояние',
       'cost.plainExplain': 'Расходы берутся из реального журнала Host — без выдуманных чисел.',
       'cost.detailLoading': 'Загрузка деталей…',
