@@ -1,12 +1,12 @@
 {
-  "name": "@local/dsh-smart-provider",
+  "name": "dsh-smart-provider",
   "displayName": "DSH 智能模型路由（Smart Provider）",
   "version": "2.10.1",
-  "private": true,
   "type": "module",
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "test:unit": "node scripts/run-tests.mjs --unit"
+    "test:unit": "node scripts/run-tests.mjs --unit",
+    "prepublishOnly": "npm test"
   },
   "engines": {
     "node": ">=20",
@@ -49,10 +49,10 @@
     "client.js",
     "schema.js",
     "lib",
+    "locale/*.json",
     "registry",
     "cordis.patch.yml",
-    "README.md",
-    "locale/*.json",
+    "README*.md",
     "docs",
     "scripts",
     "icon.svg"
@@ -69,5 +69,8 @@
         "@deepseek-ai/dsh-api-remotes"
       ]
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
