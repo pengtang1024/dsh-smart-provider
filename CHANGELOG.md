@@ -2,6 +2,20 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.10.1
+
+修复版本（`2.10.0` → `2.10.1`，2026-11-28）：修复上游遗留的 FX3-5 版本一致性测试陈旧断言，按语义 patch 递增。
+
+### 修复
+
+- **FX3-5 版本字面量同步**：把 FX3-5 的版本字面量从 `2.9.0` 同步到 `2.10.1`（含正则转义形式），恢复版本三处一致门禁；不改动测试断言逻辑。
+
+### 验证
+
+- `node --check client.js` 退出码 0；`node scripts/run-tests.mjs`（full）349 tests / 349 pass / 0 fail；`git diff --check` 退出码 0；版本三处一致 `2.10.1`。
+
+---
+
 ## 2.10.0（2026-11-28）
 
 ### 变更
