@@ -2,6 +2,31 @@
 
 本文档记录 `dsh-smart-provider` 的发布变更。版本号采用语义化版本（SemVer）。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 2.8.0
+
+功能版本（`2.7.0` → `2.8.0`，2026-11-27）：本轮把虚拟模型收敛为组合式档位 id；按语义化版本 minor 递增。
+
+### 新增
+
+- **组合式虚拟档位 id**：模型档 `auto` / `cost` / `balanced` × 强度 `off` / `medium` / `high`，全笛卡尔积 9 个 id，一次选择即完成模型档 + 思考强度。强度 id 采用宿主 `ReasoningEffortId` 规范值，中文展示走 `listModels.name` 自由文本、不进本地化字典；按首跳能力收缩，不支持不伪造不 clamp。
+
+### 变更
+
+- **虚拟模型目录不再随 chains 生成 `Smart/xxx`**：注册面不变（单 smart adapter），schema 12 key 不变，6 策略 / 8 预设顺序不变。
+
+### 修复
+
+- **off 哨兵缝隙**：`off` / `none` 都判为关，新增 off→general 断言。
+- **compaction fixture 同步 9 组合 id**。
+
+### 验证
+
+- `node --check client.js` 退出码 0。
+- `node scripts/run-tests.mjs` 退出码 0，full **331/331** 全绿、fail 0；unit **269/269** 全绿、fail 0（实施与独立验收均已跑）。
+- 版本号三处一致：`package.json` / `client.js` 的 `PLUGIN_VERSION` / 本文档均为 `2.8.0`（`test/free-ui-chain.test.mjs` 的 FX3-5 同步更新）。
+
+---
+
 ## 2.7.0
 
 功能版本（`2.6.2` → `2.7.0`，2026-11-26）：设置页视觉精修与本地化 star 引导，并在 rebase 后恢复 v2.6.2 的 HIG 交互、修复账号健康表资费列错位；按语义化版本 minor 递增。
